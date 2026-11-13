@@ -101,19 +101,30 @@ impl Planted {
 /// If `l` is below 3, where a periodic lattice has degenerate plaquettes.
 #[must_use]
 pub fn frustrated_loops(l: usize, loops: usize, seed: u64) -> Planted {
-    assert!(l >= 3, "a periodic lattice smaller than 3x3 has degenerate plaquettes");
-    assert!(loops >= 1, "an instance with no frustration is a ferromagnet");
+    assert!(
+        l >= 3,
+        "a periodic lattice smaller than 3x3 has degenerate plaquettes"
+    );
+    assert!(
+        loops >= 1,
+        "an instance with no frustration is a ferromagnet"
+    );
     let n = l * l;
     let mut rng = Pcg::new(seed, 0);
 
     // The planted state, chosen before any coupling exists.
-    let sigma: Vec<i8> = (0..n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+    let sigma: Vec<i8> = (0..n)
+        .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+        .collect();
 
     let at = |x: usize, y: usize| (y % l) * l + (x % l);
     let mut b = GraphBuilder::new(n);
 
     for _ in 0..loops {
-        let (x, y) = ((rng.f64() * l as f64) as usize % l, (rng.f64() * l as f64) as usize % l);
+        let (x, y) = (
+            (rng.f64() * l as f64) as usize % l,
+            (rng.f64() * l as f64) as usize % l,
+        );
         // the four corners of one plaquette, in cycle order
         let c = [at(x, y), at(x + 1, y), at(x + 1, y + 1), at(x, y + 1)];
         let broken = (rng.f64() * 4.0) as usize % 4;
@@ -200,7 +211,10 @@ mod tests {
         let b = frustrated_loops(6, 30, 42);
         let c = frustrated_loops(6, 30, 43);
         assert_eq!(a.ground_state, b.ground_state, "same seed must reproduce");
-        assert_ne!(a.ground_state, c.ground_state, "different seeds must differ");
+        assert_ne!(
+            a.ground_state, c.ground_state,
+            "different seeds must differ"
+        );
     }
 
     #[test]
@@ -209,9 +223,20 @@ mod tests {
         // anything, and at these sizes it must not come close.
         for l in [6, 10] {
             let p = frustrated_loops(l, l * l * 2, 9);
-            let (s, _) = RandomGuess { tries: 20_000, seed: 2 }.solve(&p.graph);
-            assert!(!p.solved(&s), "random guessing solved a planted instance at l={l}");
-            assert!(p.excess(&s) > 0.2, "noise should be far off, was {}", p.excess(&s));
+            let (s, _) = RandomGuess {
+                tries: 20_000,
+                seed: 2,
+            }
+            .solve(&p.graph);
+            assert!(
+                !p.solved(&s),
+                "random guessing solved a planted instance at l={l}"
+            );
+            assert!(
+                p.excess(&s) > 0.2,
+                "noise should be far off, was {}",
+                p.excess(&s)
+            );
         }
     }
 
@@ -219,8 +244,22 @@ mod tests {
     fn a_real_method_gets_much_closer_than_noise() {
         // The instance has to be solvable in principle, or it measures nothing either.
         let p = frustrated_loops(8, 128, 4);
-        let noise = p.excess(&RandomGuess { tries: 20_000, seed: 2 }.solve(&p.graph).0);
-        let greedy = p.excess(&SteepestDescent { restarts: 200, seed: 2 }.solve(&p.graph).0);
+        let noise = p.excess(
+            &RandomGuess {
+                tries: 20_000,
+                seed: 2,
+            }
+            .solve(&p.graph)
+            .0,
+        );
+        let greedy = p.excess(
+            &SteepestDescent {
+                restarts: 200,
+                seed: 2,
+            }
+            .solve(&p.graph)
+            .0,
+        );
         let annealed = p.excess(
             &crate::oracle::Annealer {
                 schedule: crate::schedule::Schedule::geometric(0.05, 6.0, 120, 40),
@@ -231,8 +270,14 @@ mod tests {
         );
         assert!(greedy < noise, "greedy {greedy} vs noise {noise}");
         assert!(annealed < noise);
-        assert!(greedy < 0.20, "greedy should stay within 20% even near the hard peak, was {greedy}");
-        assert!(annealed < 0.10, "annealing should land within 10% of the optimum, got {annealed}");
+        assert!(
+            greedy < 0.20,
+            "greedy should stay within 20% even near the hard peak, was {greedy}"
+        );
+        assert!(
+            annealed < 0.10,
+            "annealing should land within 10% of the optimum, got {annealed}"
+        );
     }
 
     #[test]
@@ -246,7 +291,11 @@ mod tests {
             for iseed in 1..=4u64 {
                 let p = frustrated_loops(8, loops, iseed);
                 for sseed in 1..=4u64 {
-                    let (s, _) = SteepestDescent { restarts: 50, seed: sseed }.solve(&p.graph);
+                    let (s, _) = SteepestDescent {
+                        restarts: 50,
+                        seed: sseed,
+                    }
+                    .solve(&p.graph);
                     total += 1;
                     if p.solved(&s) {
                         solved += 1;
@@ -259,10 +308,22 @@ mod tests {
         let sparse = rate(16);
         let peak = rate(128);
         let dense = rate(512);
-        assert_eq!(sparse, 1.0, "a sparsely frustrated instance should always be solved");
-        assert_eq!(dense, 1.0, "a saturated instance relaxes to a gauged ferromagnet");
-        assert!(peak < 0.5, "the peak should defeat greedy more often than not, got {peak}");
-        assert!(peak < sparse && peak < dense, "difficulty must peak in the middle");
+        assert_eq!(
+            sparse, 1.0,
+            "a sparsely frustrated instance should always be solved"
+        );
+        assert_eq!(
+            dense, 1.0,
+            "a saturated instance relaxes to a gauged ferromagnet"
+        );
+        assert!(
+            peak < 0.5,
+            "the peak should defeat greedy more often than not, got {peak}"
+        );
+        assert!(
+            peak < sparse && peak < dense,
+            "difficulty must peak in the middle"
+        );
     }
 }
 
@@ -321,7 +382,9 @@ pub fn wishart(n: usize, alpha: f64, seed: u64) -> Planted {
     let m = ((alpha * n as f64).round() as usize).max(1);
     let mut rng = Pcg::new(seed, 0);
 
-    let t: Vec<i8> = (0..n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+    let t: Vec<i8> = (0..n)
+        .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+        .collect();
 
     // Columns of W, each orthogonal to the planted state.
     let mut w = vec![0.0f64; n * m];
@@ -403,7 +466,11 @@ mod wishart_tests {
     #[test]
     fn it_is_dense_where_the_lattice_family_is_sparse() {
         let p = wishart(40, 1.0, 1);
-        assert_eq!(p.graph.max_degree(), 39, "every spin should couple to every other");
+        assert_eq!(
+            p.graph.max_degree(),
+            39,
+            "every spin should couple to every other"
+        );
     }
 
     #[test]
@@ -415,7 +482,11 @@ mod wishart_tests {
             for iseed in 1..=4u64 {
                 let p = wishart(24, alpha, iseed);
                 for sseed in 1..=4u64 {
-                    let (s, _) = SteepestDescent { restarts: 100, seed: sseed }.solve(&p.graph);
+                    let (s, _) = SteepestDescent {
+                        restarts: 100,
+                        seed: sseed,
+                    }
+                    .solve(&p.graph);
                     total += 1;
                     if p.solved(&s) {
                         solved += 1;
@@ -435,7 +506,11 @@ mod wishart_tests {
     #[test]
     fn noise_never_solves_one() {
         let p = wishart(40, 0.5, 3);
-        let (s, _) = RandomGuess { tries: 50_000, seed: 1 }.solve(&p.graph);
+        let (s, _) = RandomGuess {
+            tries: 50_000,
+            seed: 1,
+        }
+        .solve(&p.graph);
         assert!(!p.solved(&s));
         assert!(p.excess(&s) > 0.1, "noise was only {} off", p.excess(&s));
     }

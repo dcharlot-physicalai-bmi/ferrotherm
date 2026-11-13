@@ -116,9 +116,33 @@ impl Sim {
         let g = Box::new(graph);
         // SAFETY of the self-reference dance avoided: store state, rebuild Sampler per call.
         let sampler = Sampler::new(&g, beta, seed);
-        Box::into_raw(Box::new(Sim { sampler_state: sampler.s.clone(), graph: g, beta, seed, sweeps_done: 0,
-            threads_used: 0, ledger: Ledger::default(), gpu: None, ground: None, cert: None, tb: None, bl: None, pc: None, tor: None, gw: None, ic: None, pa: None,
-            fe: None, bb: None, hf: None, sm: None, qubits: Vec::new(), copies: Vec::new(), sparsify_offset: 0.0, emb: None }))
+        Box::into_raw(Box::new(Sim {
+            sampler_state: sampler.s.clone(),
+            graph: g,
+            beta,
+            seed,
+            sweeps_done: 0,
+            threads_used: 0,
+            ledger: Ledger::default(),
+            gpu: None,
+            ground: None,
+            cert: None,
+            tb: None,
+            bl: None,
+            pc: None,
+            tor: None,
+            gw: None,
+            ic: None,
+            pa: None,
+            fe: None,
+            bb: None,
+            hf: None,
+            sm: None,
+            qubits: Vec::new(),
+            copies: Vec::new(),
+            sparsify_offset: 0.0,
+            emb: None,
+        }))
     }
 
     /// As [`Sim::new`], keeping the device topology's own qubit numbering. See [`ft_qubit`].
@@ -280,8 +304,15 @@ mod topology_ffi_tests {
         // qubit 30, not their qubit 0 -- which is the whole reason this accessor exists.
         assert_eq!(ft_qubit(p, 0), 30);
         assert_eq!(ft_qubit(p, 5639), 5729);
-        assert!((0..5640).all(|i| ft_qubit(p, i) < ft_qubit(p, i + 1)), "strictly increasing");
-        assert_eq!(ft_qubit(p, 5640), u32::MAX, "past the end is not qubit zero");
+        assert!(
+            (0..5640).all(|i| ft_qubit(p, i) < ft_qubit(p, i + 1)),
+            "strictly increasing"
+        );
+        assert_eq!(
+            ft_qubit(p, 5640),
+            u32::MAX,
+            "past the end is not qubit zero"
+        );
 
         // It samples like any other graph.
         ft_sweep(p, 20);
@@ -302,7 +333,11 @@ mod topology_ffi_tests {
     fn a_graph_without_a_device_numbering_refuses_the_question() {
         let s = ft_ising2d_new(4, 1.0, 0.5, 1);
         assert_eq!(ft_len(s), 16);
-        assert_eq!(ft_qubit(s, 0), u32::MAX, "a lattice has no vendor qubit numbers");
+        assert_eq!(
+            ft_qubit(s, 0),
+            u32::MAX,
+            "a lattice has no vendor qubit numbers"
+        );
         ft_free(s);
         assert_eq!(ft_qubit(core::ptr::null(), 0), u32::MAX);
     }
@@ -310,7 +345,10 @@ mod topology_ffi_tests {
     #[test]
     fn a_size_with_no_qubits_is_null_rather_than_an_empty_simulation() {
         for m in [0u32, 1] {
-            assert!(ft_pegasus_new(m, 1.0, 0.5, 1).is_null(), "P{m} has no qubits");
+            assert!(
+                ft_pegasus_new(m, 1.0, 0.5, 1).is_null(),
+                "P{m} has no qubits"
+            );
         }
         assert!(ft_zephyr_new(0, 4, 1.0, 0.5, 1).is_null());
         assert!(ft_zephyr_new(4, 0, 1.0, 0.5, 1).is_null());
@@ -339,7 +377,9 @@ mod topology_ffi_tests {
 /// disagreed, and price it with [`ft_sparsify_offset`].
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_sparsify(sim: *const Sim, budget: u32) -> *mut Sim {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return core::ptr::null_mut() };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return core::ptr::null_mut();
+    };
     let Ok(sp) = crate::sparsify::sparsify(&s.graph, budget as usize) else {
         return core::ptr::null_mut();
     };
@@ -364,8 +404,12 @@ pub extern "C" fn ft_sparsify_variables(sim: *const Sim) -> u32 {
 /// the count needed when `out` is NULL.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_sparsify_copies(sim: *const Sim, v: u32, out: *mut u32, cap: u32) -> u32 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
-    let Some(set) = s.copies.get(v as usize) else { return 0 };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return 0;
+    };
+    let Some(set) = s.copies.get(v as usize) else {
+        return 0;
+    };
     if out.is_null() {
         return set.len() as u32;
     }
@@ -394,13 +438,18 @@ pub extern "C" fn ft_sparsify_offset(sim: *const Sim) -> f64 {
 /// checking it is reading a majority vote as though it were one.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_sparsify_project(sim: *const Sim, out: *mut i8, cap: u32) -> u32 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return u32::MAX };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return u32::MAX;
+    };
     if s.copies.is_empty() || out.is_null() || (cap as usize) < s.copies.len() {
         return u32::MAX;
     }
     let mut broken = 0u32;
     for (v, set) in s.copies.iter().enumerate() {
-        let up = set.iter().filter(|&&n| s.sampler_state[n as usize] > 0).count();
+        let up = set
+            .iter()
+            .filter(|&&n| s.sampler_state[n as usize] > 0)
+            .count();
         if up != 0 && up != set.len() {
             broken += 1;
         }
@@ -425,14 +474,25 @@ mod sparsify_ffi_tests {
         }
         let dense = ft_builder_build(b, 0.5, 7);
         assert_eq!(ft_len(dense), 12);
-        assert_eq!(ft_sparsify_variables(dense), 0, "a model nobody sparsified has no copy map");
+        assert_eq!(
+            ft_sparsify_variables(dense),
+            0,
+            "a model nobody sparsified has no copy map"
+        );
         assert_eq!(ft_sparsify_offset(dense), 0.0);
 
         let sparse = ft_sparsify(dense, 4);
         assert!(!sparse.is_null());
         assert!(ft_len(sparse) > 12, "splitting adds nodes");
-        assert_eq!(ft_sparsify_variables(sparse), 12, "one entry per logical variable");
-        assert!(ft_sparsify_offset(sparse) > 0.0, "copy couplings cost a constant");
+        assert_eq!(
+            ft_sparsify_variables(sparse),
+            12,
+            "one entry per logical variable"
+        );
+        assert!(
+            ft_sparsify_offset(sparse) > 0.0,
+            "copy couplings cost a constant"
+        );
 
         // The copy sets partition the sparsified nodes: every node belongs to exactly one variable.
         let mut owned = vec![0u32; ft_len(sparse) as usize];
@@ -448,8 +508,15 @@ mod sparsify_ffi_tests {
             total += need as usize;
         }
         assert_eq!(total, ft_len(sparse) as usize);
-        assert!(owned.iter().all(|&c| c == 1), "every node belongs to exactly one variable");
-        assert_eq!(ft_sparsify_copies(sparse, 12, core::ptr::null_mut(), 0), 0, "no variable 12");
+        assert!(
+            owned.iter().all(|&c| c == 1),
+            "every node belongs to exactly one variable"
+        );
+        assert_eq!(
+            ft_sparsify_copies(sparse, 12, core::ptr::null_mut(), 0),
+            0,
+            "no variable 12"
+        );
 
         // Anneal it cold, then read it back as twelve logical spins.
         ft_anneal(sparse, 0.05, 8.0, 200, 40);
@@ -458,12 +525,21 @@ mod sparsify_ffi_tests {
         assert!(broken != u32::MAX, "a real answer, not a refusal");
         assert!(logical.iter().all(|&s| s == 1 || s == -1));
         // Annealed at the derived copy strength, nothing should have come apart.
-        assert_eq!(broken, 0, "{broken} of 12 variables had their copies disagree");
+        assert_eq!(
+            broken, 0,
+            "{broken} of 12 variables had their copies disagree"
+        );
 
         // A buffer too small is refused rather than written past.
-        assert_eq!(ft_sparsify_project(sparse, logical.as_mut_ptr(), 11), u32::MAX);
-        assert_eq!(ft_sparsify_project(dense, logical.as_mut_ptr(), 12), u32::MAX,
-                   "a model that was never sparsified has no logical state to project to");
+        assert_eq!(
+            ft_sparsify_project(sparse, logical.as_mut_ptr(), 11),
+            u32::MAX
+        );
+        assert_eq!(
+            ft_sparsify_project(dense, logical.as_mut_ptr(), 12),
+            u32::MAX,
+            "a model that was never sparsified has no logical state to project to"
+        );
         ft_free(sparse);
         ft_free(dense);
     }
@@ -472,7 +548,10 @@ mod sparsify_ffi_tests {
     fn a_budget_that_cannot_work_is_null_rather_than_a_wrong_model() {
         let s = ft_ising2d_new(4, 1.0, 0.5, 1);
         for budget in [0u32, 1, 2] {
-            assert!(ft_sparsify(s, budget).is_null(), "budget {budget} cannot be met by splitting");
+            assert!(
+                ft_sparsify(s, budget).is_null(),
+                "budget {budget} cannot be met by splitting"
+            );
         }
         assert!(ft_sparsify(core::ptr::null(), 4).is_null());
         // A lattice already fits a budget of 4, so this is the identity and still valid.
@@ -515,15 +594,21 @@ mod sparsify_ffi_tests {
 /// given clique can exist.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_clique_embed(logical: *mut Sim, hardware: *const Sim, n_out: *mut u32) -> u32 {
-    let Some(hw) = (unsafe { hardware.as_ref() }) else { return 0 };
-    let Some(lg) = (unsafe { logical.as_mut() }) else { return 0 };
+    let Some(hw) = (unsafe { hardware.as_ref() }) else {
+        return 0;
+    };
+    let Some(lg) = (unsafe { logical.as_mut() }) else {
+        return 0;
+    };
     // The construction needs the DEVICE parameters, which the graph alone does not carry -- a
     // Zephyr graph and an arbitrary graph of the same size are indistinguishable here. So it is
     // gated on the vendor numbering being present and the site count matching a Z_{m,t}. This is
     // deliberately conservative: a graph that merely looks Zephyr-shaped is refused rather than
     // mis-embedded, because Embedding::verify would catch a wrong guess but a wrong guess should
     // not reach it.
-    let Some(e) = structured_clique_for(hw) else { return 0 };
+    let Some(e) = structured_clique_for(hw) else {
+        return 0;
+    };
     let n = e.chains.len() as u32;
     if !n_out.is_null() {
         unsafe { *n_out = n };
@@ -555,9 +640,10 @@ fn structured_clique_for(s: &Sim) -> Option<crate::embed::Embedding> {
     };
     for m in 1..=64usize {
         if 16 * m * (2 * m + 1) == n
-            && let Some(e) = crate::embed::zephyr_clique(m, 4).and_then(sealed) {
-                return Some(e);
-            }
+            && let Some(e) = crate::embed::zephyr_clique(m, 4).and_then(sealed)
+        {
+            return Some(e);
+        }
         if m >= 3 && 8 * (m - 1) * (3 * m - 1) == n {
             // The fragment construction is at busclique's frontier at every size; the whole-qubit
             // one stays as the fallback because it is the one with a machine-checked ceiling, and a
@@ -595,10 +681,18 @@ pub extern "C" fn ft_embed(
     rounds: u32,
     budget: u64,
 ) -> u32 {
-    let Some(hw) = (unsafe { hardware.as_ref() }) else { return 0 };
-    let Some(lg) = (unsafe { logical.as_mut() }) else { return 0 };
+    let Some(hw) = (unsafe { hardware.as_ref() }) else {
+        return 0;
+    };
+    let Some(lg) = (unsafe { logical.as_mut() }) else {
+        return 0;
+    };
     let rounds = if rounds == 0 { 10 } else { rounds as usize };
-    let budget = if budget == 0 { crate::embed::DEFAULT_SEARCH_BUDGET } else { budget };
+    let budget = if budget == 0 {
+        crate::embed::DEFAULT_SEARCH_BUDGET
+    } else {
+        budget
+    };
     match crate::embed::embed_bounded(&lg.graph, &hw.graph, seed, rounds, budget) {
         Some(e) => {
             lg.emb = Some(e);
@@ -613,7 +707,9 @@ pub extern "C" fn ft_embed(
 pub extern "C" fn ft_embed_sites(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }
         .and_then(|s| s.emb.as_ref())
-        .map_or(0, |e| e.chains.iter().map(std::vec::Vec::len).sum::<usize>() as u32)
+        .map_or(0, |e| {
+            e.chains.iter().map(std::vec::Vec::len).sum::<usize>() as u32
+        })
 }
 
 /// The longest chain, which is the number that decides whether an answer survives.
@@ -625,15 +721,21 @@ pub extern "C" fn ft_embed_sites(sim: *const Sim) -> u32 {
 pub extern "C" fn ft_embed_longest(sim: *const Sim) -> u32 {
     unsafe { sim.as_ref() }
         .and_then(|s| s.emb.as_ref())
-        .map_or(0, |e| e.chains.iter().map(std::vec::Vec::len).max().unwrap_or(0) as u32)
+        .map_or(0, |e| {
+            e.chains.iter().map(std::vec::Vec::len).max().unwrap_or(0) as u32
+        })
 }
 
 /// Copy the sites holding logical variable `v` into `out`; entries written, or the count needed
 /// when `out` is NULL.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_embed_chain(sim: *const Sim, v: u32, out: *mut u32, cap: u32) -> u32 {
-    let Some(e) = unsafe { sim.as_ref() }.and_then(|s| s.emb.as_ref()) else { return 0 };
-    let Some(chain) = e.chains.get(v as usize) else { return 0 };
+    let Some(e) = unsafe { sim.as_ref() }.and_then(|s| s.emb.as_ref()) else {
+        return 0;
+    };
+    let Some(chain) = e.chains.get(v as usize) else {
+        return 0;
+    };
     if out.is_null() {
         return chain.len() as u32;
     }
@@ -675,7 +777,9 @@ pub extern "C" fn ft_embed_apply(
     let (Some(lg), Some(hw)) = (unsafe { logical.as_ref() }, unsafe { hardware.as_ref() }) else {
         return core::ptr::null_mut();
     };
-    let Some(e) = lg.emb.as_ref() else { return core::ptr::null_mut() };
+    let Some(e) = lg.emb.as_ref() else {
+        return core::ptr::null_mut();
+    };
     let out = crate::embed::apply_with(&lg.graph, &hw.graph, e, chain_strength);
     let embedding = out.embedding;
     let p = Sim::new(out.graph, lg.beta, lg.seed);
@@ -695,8 +799,12 @@ pub extern "C" fn ft_embed_apply(
 /// a shorter chain.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_unembed(sim: *const Sim, out: *mut i8, cap: u32) -> u32 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return u32::MAX };
-    let Some(e) = s.emb.as_ref() else { return u32::MAX };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return u32::MAX;
+    };
+    let Some(e) = s.emb.as_ref() else {
+        return u32::MAX;
+    };
     if out.is_null() || (cap as usize) < e.chains.len() {
         return u32::MAX;
     }
@@ -718,7 +826,10 @@ mod free_energy_ffi_tests {
         let beta = 0.5;
         let truth = crate::free_energy::exact_log_z(unsafe { &(*s).graph }, beta);
         let exact = ft_ln_z_exact(s, beta);
-        assert!((exact - truth).abs() < 1e-9, "elimination {exact} vs enumeration {truth}");
+        assert!(
+            (exact - truth).abs() < 1e-9,
+            "elimination {exact} vs enumeration {truth}"
+        );
 
         assert!(ft_ln_z_ais_lower(s, 0.05).is_nan(), "no run yet");
         let a = ft_ln_z_ais(s, beta, 0, 0, 0);
@@ -735,19 +846,33 @@ mod free_energy_ffi_tests {
         // The deterministic bound sits below the truth with no probability attached; Bethe on a
         // torus is close but not exact.
         let mf = ft_ln_z_mean_field(s, beta);
-        assert!(mf <= truth && truth - mf < 3.0, "mean-field bound {mf} vs {truth}");
+        assert!(
+            mf <= truth && truth - mf < 3.0,
+            "mean-field bound {mf} vs {truth}"
+        );
         // Bethe is close in the disordered phase and degrades past criticality (beta_c = 0.44 on
         // the square lattice): within 0.5 at beta 0.3, off by more than 1 at beta 0.5 -- the
         // second fact is as much the finding as the first.
         let (t3, b3) = (ft_ln_z_exact(s, 0.3), ft_ln_z_bethe(s, 0.3));
-        assert!((b3 - t3).abs() < 0.5 && (b3 - t3).abs() > 1e-9, "Bethe {b3} vs {t3} at beta 0.3");
+        assert!(
+            (b3 - t3).abs() < 0.5 && (b3 - t3).abs() > 1e-9,
+            "Bethe {b3} vs {t3} at beta 0.3"
+        );
         let be = ft_ln_z_bethe(s, beta);
-        assert!((be - truth).abs() > 1.0, "Bethe {be} vs {truth} at beta 0.5: expected loopy BP to degrade in the ordered phase");
-        assert!(ft_ln_z_mean_field(core::ptr::null(), beta).is_nan() && ft_ln_z_bethe(s, -1.0).is_nan());
+        assert!(
+            (be - truth).abs() > 1.0,
+            "Bethe {be} vs {truth} at beta 0.5: expected loopy BP to degrade in the ordered phase"
+        );
+        assert!(
+            ft_ln_z_mean_field(core::ptr::null(), beta).is_nan() && ft_ln_z_bethe(s, -1.0).is_nan()
+        );
 
         let mut se = f64::NAN;
         let b = ft_ln_z_bar(s, beta, 16, 100, 500, &mut se);
-        assert!((b - truth).abs() < 0.3 + 4.0 * se, "bar {b} +- {se} vs {truth}");
+        assert!(
+            (b - truth).abs() < 0.3 + 4.0 * se,
+            "bar {b} +- {se} vs {truth}"
+        );
         assert!(se.is_finite() && se > 0.0);
 
         assert!(ft_ln_z_exact(s, -1.0).is_nan() && ft_ln_z_ais(s, 0.0, 0, 0, 0).is_nan());
@@ -780,7 +905,10 @@ mod embed_ffi_tests {
         };
         let mut n: u32 = 0;
         assert_eq!(ft_clique_embed(logical, hw, &mut n), 1);
-        assert_eq!(n, 56, "K_{{2t(2m-1)}} = K_56 on Z_4, the busclique frontier size");
+        assert_eq!(
+            n, 56,
+            "K_{{2t(2m-1)}} = K_56 on Z_4, the busclique frontier size"
+        );
         assert_eq!(ft_embed_sites(logical), 56 * 5, "56 chains of 5");
         assert_eq!(ft_embed_longest(logical), 5, "uniform m+1 = 5");
 
@@ -816,8 +944,15 @@ mod embed_ffi_tests {
         assert_eq!(ft_clique_embed(lg, hw, &mut n), 1);
         // The size is the MACHINE's, not the request's: the caller asked for 28 variables and the
         // fabric offers 32, which is what the ABI reports and what the accessors read back.
-        assert_eq!(n, 36, "K_{{12(m-1)}} = K_36 on P_4, which is busclique's frontier exactly");
-        assert_eq!(ft_embed_longest(lg), 5, "chain m+1 = 5, busclique's chain length too");
+        assert_eq!(
+            n, 36,
+            "K_{{12(m-1)}} = K_36 on P_4, which is busclique's frontier exactly"
+        );
+        assert_eq!(
+            ft_embed_longest(lg),
+            5,
+            "chain m+1 = 5, busclique's chain length too"
+        );
         ft_free(lg);
         ft_free(hw);
     }
@@ -828,7 +963,11 @@ mod embed_ffi_tests {
         let s = ft_ising2d_new(8, 1.0, 0.5, 1); // 64 sites, no vendor numbering
         let lg = ft_ising2d_new(2, 1.0, 0.5, 1);
         let mut n: u32 = 7;
-        assert_eq!(ft_clique_embed(lg, s, &mut n), 0, "a lattice is not Zephyr-shaped");
+        assert_eq!(
+            ft_clique_embed(lg, s, &mut n),
+            0,
+            "a lattice is not Zephyr-shaped"
+        );
         assert_eq!(ft_clique_embed(lg, s, core::ptr::null_mut()), 0);
         assert_eq!(ft_clique_embed(core::ptr::null_mut(), s, &mut n), 0);
         assert_eq!(ft_clique_embed(lg, core::ptr::null(), &mut n), 0);
@@ -858,12 +997,18 @@ mod embed_ffi_tests {
         // The proof-carrying question first: K_12 needs far fewer sites than P6 has.
         let lb = ft_site_lower_bound(logical, hw);
         assert!(lb >= 12, "at least one site per variable, got {lb}");
-        assert!(lb <= ft_len(hw), "K_12 is not impossible on a 680-site machine");
+        assert!(
+            lb <= ft_len(hw),
+            "K_12 is not impossible on a 680-site machine"
+        );
 
         assert_eq!(ft_embed(logical, hw, 7, 0, 0), 1);
         let sites = ft_embed_sites(logical);
         let longest = ft_embed_longest(logical);
-        assert!(sites >= lb, "a placement cannot beat the lower bound: {sites} < {lb}");
+        assert!(
+            sites >= lb,
+            "a placement cannot beat the lower bound: {sites} < {lb}"
+        );
         assert!(longest >= 1 && (longest as usize) <= sites as usize);
 
         // Chains partition the sites they use: no site holds two variables.
@@ -881,12 +1026,20 @@ mod embed_ffi_tests {
             total += need as usize;
         }
         assert_eq!(total, sites as usize);
-        assert_eq!(ft_embed_chain(logical, 12, core::ptr::null_mut(), 0), 0, "no variable 12");
+        assert_eq!(
+            ft_embed_chain(logical, 12, core::ptr::null_mut(), 0),
+            0,
+            "no variable 12"
+        );
 
         // Now build the model that actually runs on the machine, and solve it.
         let embedded = ft_embed_apply(logical, hw, 0.0);
         assert!(!embedded.is_null());
-        assert_eq!(ft_len(embedded), ft_len(hw), "it runs over the hardware's sites");
+        assert_eq!(
+            ft_len(embedded),
+            ft_len(hw),
+            "it runs over the hardware's sites"
+        );
         ft_anneal(embedded, 0.05, 8.0, 300, 40);
 
         let mut out = vec![0i8; 12];
@@ -897,7 +1050,11 @@ mod embed_ffi_tests {
 
         // A buffer too small, and a simulation with no placement, are refusals rather than writes.
         assert_eq!(ft_unembed(embedded, out.as_mut_ptr(), 11), u32::MAX);
-        assert_eq!(ft_unembed(hw, out.as_mut_ptr(), 12), u32::MAX, "the machine holds no placement");
+        assert_eq!(
+            ft_unembed(hw, out.as_mut_ptr(), 12),
+            u32::MAX,
+            "the machine holds no placement"
+        );
 
         ft_free(embedded);
         ft_free(hw);
@@ -918,7 +1075,10 @@ mod embed_ffi_tests {
         assert_eq!(ft_len(hw), 40);
         let lb = ft_site_lower_bound(logical, hw);
         assert_eq!(lb, 48, "24 variables at 2 sites each");
-        assert!(lb > ft_len(hw), "K_24 needs {lb} sites of 40, so no embedding exists");
+        assert!(
+            lb > ft_len(hw),
+            "K_24 needs {lb} sites of 40, so no embedding exists"
+        );
         // And the search agrees, by failing -- but its failure is the weaker statement.
         assert_eq!(ft_embed(logical, hw, 1, 0, 5_000), 0);
         ft_free(hw);
@@ -940,8 +1100,14 @@ mod embed_ffi_tests {
 /// Run `n` chromatic Gibbs sweeps. Returns the total sweeps done so far, or 0 on null.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_sweep(sim: *mut Sim, n: u32) -> u64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
-    let mut smp = Sampler::new(&s.graph, s.beta, s.seed ^ s.sweeps_done.wrapping_mul(0x9E3779B97F4A7C15));
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return 0;
+    };
+    let mut smp = Sampler::new(
+        &s.graph,
+        s.beta,
+        s.seed ^ s.sweeps_done.wrapping_mul(0x9E3779B97F4A7C15),
+    );
     smp.s.copy_from_slice(&s.sampler_state);
     for _ in 0..n {
         smp.sweep(Some(&mut s.ledger));
@@ -979,8 +1145,15 @@ pub extern "C" fn ft_hardware_threads() -> u32 {
 /// `threads` of 0 means "ask the machine", which is [`ft_hardware_threads`].
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_sweep_par(sim: *mut Sim, n: u32, threads: u32) -> u64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
-    let threads = if threads == 0 { ft_hardware_threads() } else { threads }.max(1) as usize;
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return 0;
+    };
+    let threads = if threads == 0 {
+        ft_hardware_threads()
+    } else {
+        threads
+    }
+    .max(1) as usize;
     let mut smp = Sampler::new(
         &s.graph,
         s.beta,
@@ -1116,7 +1289,9 @@ pub extern "C" fn ft_builder_new(n: u32) -> *mut GraphBuilder {
 /// equals `j`, or the weight is not finite.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_builder_couple(b: *mut GraphBuilder, i: u32, j: u32, w: f64) -> u32 {
-    let Some(b) = (unsafe { b.as_mut() }) else { return 0 };
+    let Some(b) = (unsafe { b.as_mut() }) else {
+        return 0;
+    };
     if i == j || !w.is_finite() || i as usize >= b.n() || j as usize >= b.n() {
         return 0;
     }
@@ -1127,7 +1302,9 @@ pub extern "C" fn ft_builder_couple(b: *mut GraphBuilder, i: u32, j: u32, w: f64
 /// Add a bias. Returns 1 on success, 0 on a null handle, an out-of-range index, or a non-finite h.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_builder_bias(b: *mut GraphBuilder, i: u32, h: f64) -> u32 {
-    let Some(bb) = (unsafe { b.as_mut() }) else { return 0 };
+    let Some(bb) = (unsafe { b.as_mut() }) else {
+        return 0;
+    };
     if !h.is_finite() || i as usize >= bb.n() {
         return 0;
     }
@@ -1163,13 +1340,17 @@ pub extern "C" fn ft_anneal(
     stages: u32,
     sweeps_per_stage: u32,
 ) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     if !(beta_min > 0.0 && beta_max > beta_min) || stages < 2 || sweeps_per_stage == 0 {
         return f64::NAN;
     }
     let ladder = geometric_ladder(beta_min, beta_max, stages as usize);
-    let schedule: Vec<(f64, usize)> =
-        ladder.iter().map(|&b| (b, sweeps_per_stage as usize)).collect();
+    let schedule: Vec<(f64, usize)> = ladder
+        .iter()
+        .map(|&b| (b, sweeps_per_stage as usize))
+        .collect();
     let seed = s.seed ^ s.sweeps_done.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let (best, e) = anneal(&s.graph, &schedule, seed, Some(&mut s.ledger));
     s.sampler_state.copy_from_slice(&best);
@@ -1250,7 +1431,7 @@ mod builder_tests {
 // rectangle, and the colour classes. All three come from here rather than being rebuilt in
 // JavaScript, so there is one source of truth and the tested Rust layout is the one that ships.
 
-use crate::wgsl::{sweep_shader, GpuModel};
+use crate::wgsl::{GpuModel, sweep_shader};
 
 fn ensure_gpu(s: &mut Sim) -> &GpuModel {
     if s.gpu.is_none() {
@@ -1308,7 +1489,10 @@ pub extern "C" fn ft_gpu_classes(sim: *mut Sim) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_gpu_class_len(sim: *mut Sim, c: u32) -> u32 {
     match unsafe { sim.as_mut() } {
-        Some(s) => ensure_gpu(s).classes.get(c as usize).map_or(0, |v| v.len() as u32),
+        Some(s) => ensure_gpu(s)
+            .classes
+            .get(c as usize)
+            .map_or(0, |v| v.len() as u32),
         None => 0,
     }
 }
@@ -1317,7 +1501,10 @@ pub extern "C" fn ft_gpu_class_len(sim: *mut Sim, c: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_gpu_class_ptr(sim: *mut Sim, c: u32) -> *const u32 {
     match unsafe { sim.as_mut() } {
-        Some(s) => ensure_gpu(s).classes.get(c as usize).map_or(core::ptr::null(), std::vec::Vec::as_ptr),
+        Some(s) => ensure_gpu(s)
+            .classes
+            .get(c as usize)
+            .map_or(core::ptr::null(), std::vec::Vec::as_ptr),
         None => core::ptr::null(),
     }
 }
@@ -1326,7 +1513,9 @@ pub extern "C" fn ft_gpu_class_ptr(sim: *mut Sim, c: u32) -> *const u32 {
 /// certified or annealed by exactly the same code that handles a CPU result.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_set_spins(sim: *mut Sim, ptr: *const i8, len: u32) -> u32 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return 0;
+    };
     if ptr.is_null() || len as usize != s.sampler_state.len() {
         return 0;
     }
@@ -1367,9 +1556,19 @@ mod gpu_tests {
     fn the_gpu_view_matches_the_graph() {
         let sim = ft_ising2d_new(8, 1.0, 0.44, 1);
         assert_eq!(ft_gpu_k(sim), 4, "a square lattice has degree 4");
-        assert_eq!(ft_gpu_classes(sim), 2, "a bipartite lattice has two colours");
-        let total: u32 = (0..ft_gpu_classes(sim)).map(|c| ft_gpu_class_len(sim, c)).sum();
-        assert_eq!(total, ft_len(sim), "every node belongs to exactly one class");
+        assert_eq!(
+            ft_gpu_classes(sim),
+            2,
+            "a bipartite lattice has two colours"
+        );
+        let total: u32 = (0..ft_gpu_classes(sim))
+            .map(|c| ft_gpu_class_len(sim, c))
+            .sum();
+        assert_eq!(
+            total,
+            ft_len(sim),
+            "every node belongs to exactly one class"
+        );
         assert!(!ft_gpu_nbr(sim).is_null() && !ft_gpu_w(sim).is_null());
         ft_free(sim);
     }
@@ -1380,7 +1579,10 @@ mod gpu_tests {
         let src = unsafe { core::slice::from_raw_parts(ft_shader(), len) };
         let s = core::str::from_utf8(src).expect("the shader must be valid UTF-8");
         assert!(s.contains("@compute"), "not a compute shader");
-        assert!(s.contains("1.0 / (1.0 + exp(-2.0 * P.ctl.x * f))"), "the update must survive");
+        assert!(
+            s.contains("1.0 / (1.0 + exp(-2.0 * P.ctl.x * f))"),
+            "the update must survive"
+        );
     }
 
     #[test]
@@ -1389,7 +1591,11 @@ mod gpu_tests {
         let n = ft_len(sim) as usize;
         let up = vec![1i8; n];
         assert_eq!(ft_set_spins(sim, up.as_ptr(), n as u32), 1);
-        assert_eq!(ft_energy(sim), -2.0 * n as f64, "all aligned on a degree-4 lattice");
+        assert_eq!(
+            ft_energy(sim),
+            -2.0 * n as f64,
+            "all aligned on a degree-4 lattice"
+        );
         // and malformed input is refused rather than absorbed
         let bad = vec![0i8; n];
         assert_eq!(ft_set_spins(sim, bad.as_ptr(), n as u32), 0);
@@ -1483,16 +1689,26 @@ mod planted_ffi_tests {
     fn a_wishart_instance_is_dense_and_carries_its_optimum() {
         let sim = ft_planted_wishart(24, 0.5, 1, 1.0);
         assert!(ft_ground_energy(sim).is_finite());
-        assert_eq!(ft_gpu_k(sim), 23, "dense: every spin couples to every other");
+        assert_eq!(
+            ft_gpu_k(sim),
+            23,
+            "dense: every spin couples to every other"
+        );
         ft_free(sim);
     }
 
     #[test]
     fn an_ordinary_simulation_has_no_known_optimum() {
         let sim = ft_ising2d_new(8, 1.0, 0.44, 1);
-        assert!(ft_ground_energy(sim).is_nan(), "only planted instances know their optimum");
+        assert!(
+            ft_ground_energy(sim).is_nan(),
+            "only planted instances know their optimum"
+        );
         ft_free(sim);
-        assert!(ft_planted_frustrated(2, 1, 0, 1.0).is_null(), "too small to have plaquettes");
+        assert!(
+            ft_planted_frustrated(2, 1, 0, 1.0).is_null(),
+            "too small to have plaquettes"
+        );
     }
 }
 
@@ -1531,11 +1747,17 @@ pub extern "C" fn ft_certify(sim: *mut Sim, draws: u32, thin: u32) -> u32 {
 /// construction.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_collect(sim: *mut Sim, burn_in: u32, draws: u32, thin: u32) -> u32 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return 0 };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return 0;
+    };
     if draws < 16 {
         return 0; // certifying 15 samples is theatre; certify::TooFewSamples says so too
     }
-    let mut smp = Sampler::new(&s.graph, s.beta, s.seed ^ s.sweeps_done.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    let mut smp = Sampler::new(
+        &s.graph,
+        s.beta,
+        s.seed ^ s.sweeps_done.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+    );
     smp.s.copy_from_slice(&s.sampler_state);
     let plan = crate::samples::Plan::new(burn_in as usize, draws as usize, thin.max(1) as usize);
     let set = smp.collect(&plan, Some(&mut s.ledger));
@@ -1549,7 +1771,9 @@ pub extern "C" fn ft_collect(sim: *mut Sim, burn_in: u32, draws: u32, thin: u32)
 /// States held by the last [`ft_collect`]. Zero when nothing has been collected.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_len(sim: *const Sim) -> u32 {
-    unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(0, |m| m.len() as u32)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.sm.as_ref())
+        .map_or(0, |m| m.len() as u32)
 }
 
 /// How many of those states were DISTINCT.
@@ -1558,7 +1782,9 @@ pub extern "C" fn ft_samples_len(sim: *const Sim) -> u32 {
 /// draws of which 3 are distinct has told you about 3 states, whatever its draw count says.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_distinct(sim: *const Sim) -> u32 {
-    unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(0, |m| m.distinct().len() as u32)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.sm.as_ref())
+        .map_or(0, |m| m.distinct().len() as u32)
 }
 
 /// Lowest energy in the collected set, or NaN if nothing has been collected.
@@ -1586,7 +1812,9 @@ pub extern "C" fn ft_samples_degeneracy(sim: *const Sim, tol: f64) -> u32 {
 /// NaN when nothing has been collected.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_chain_tau(sim: *const Sim) -> f64 {
-    unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()).map_or(f64::NAN, super::samples::SampleSet::chain_tau)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.sm.as_ref())
+        .map_or(f64::NAN, super::samples::SampleSet::chain_tau)
 }
 
 /// Copy state `k` into `out`, which must hold at least `cap` entries. Returns the number written.
@@ -1594,8 +1822,12 @@ pub extern "C" fn ft_samples_chain_tau(sim: *const Sim) -> f64 {
 /// With a NULL `out` it returns the width and writes nothing, so a caller can size its buffer.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_state(sim: *const Sim, k: u32, out: *mut i8, cap: u32) -> u32 {
-    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
-    let Some(st) = m.states().get(k as usize) else { return 0 };
+    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else {
+        return 0;
+    };
+    let Some(st) = m.states().get(k as usize) else {
+        return 0;
+    };
     if out.is_null() {
         return st.len() as u32;
     }
@@ -1640,7 +1872,9 @@ fn write_estimate(
 /// Returns 0 if nothing has been collected, `i` is out of range, or `out` is NULL.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_mean_spin(sim: *const Sim, i: u32, out: *mut f64) -> u32 {
-    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
+    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else {
+        return 0;
+    };
     if i as usize >= m.n_spins() {
         return 0;
     }
@@ -1652,7 +1886,9 @@ pub extern "C" fn ft_samples_mean_spin(sim: *const Sim, i: u32, out: *mut f64) -
 /// This and the single-site mean are the two moments contrastive divergence matches.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_correlation(sim: *const Sim, i: u32, j: u32, out: *mut f64) -> u32 {
-    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
+    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else {
+        return 0;
+    };
     if i as usize >= m.n_spins() || j as usize >= m.n_spins() {
         return 0;
     }
@@ -1666,14 +1902,18 @@ pub extern "C" fn ft_samples_correlation(sim: *const Sim, i: u32, j: u32, out: *
 /// machine is holding, and a draw from a distribution is not an estimate of its mean.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_mean_energy(sim: *const Sim, out: *mut f64) -> u32 {
-    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
+    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else {
+        return 0;
+    };
     write_estimate(m.mean_energy(), out)
 }
 
 /// The order parameter `(1/n) sum_i <s_i>`, in the same four-double layout.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_samples_magnetization(sim: *const Sim, out: *mut f64) -> u32 {
-    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else { return 0 };
+    let Some(m) = unsafe { sim.as_ref() }.and_then(|s| s.sm.as_ref()) else {
+        return 0;
+    };
     write_estimate(m.magnetization(), out)
 }
 
@@ -1689,11 +1929,18 @@ mod sample_tests {
         assert_eq!(ft_samples_len(sim), 0, "nothing collected yet");
         assert!(ft_samples_best_energy(sim).is_nan());
         let mut out = [0.0f64; 4];
-        assert_eq!(ft_samples_mean_spin(sim, 0, out.as_mut_ptr()), 0, "and no estimate either");
+        assert_eq!(
+            ft_samples_mean_spin(sim, 0, out.as_mut_ptr()),
+            0,
+            "and no estimate either"
+        );
 
         assert_eq!(ft_collect(sim, 1_000, 8_000, 1), 1);
         assert_eq!(ft_samples_len(sim), 8_000);
-        assert!(ft_samples_distinct(sim) > 1, "a chain that visits one state is not sampling");
+        assert!(
+            ft_samples_distinct(sim) > 1,
+            "a chain that visits one state is not sampling"
+        );
         assert!(ft_samples_distinct(sim) <= 8_000);
         assert!(ft_samples_chain_tau(sim) >= 0.5);
 
@@ -1701,9 +1948,17 @@ mod sample_tests {
         let truth = crate::samples::enumerate(g, 0.4).expect("9 spins enumerates");
         for i in 0..9u32 {
             assert_eq!(ft_samples_mean_spin(sim, i, out.as_mut_ptr()), 1);
-            let e = crate::samples::Estimate { value: out[0], stderr: out[1], ess: out[2], tau_int: out[3] };
+            let e = crate::samples::Estimate {
+                value: out[0],
+                stderr: out[1],
+                ess: out[2],
+                tau_int: out[3],
+            };
             let exact = truth.mean_spin(i as usize).unwrap().value;
-            assert!(e.covers(exact), "site {i}: ABI {e} does not cover the enumerated {exact:.5}");
+            assert!(
+                e.covers(exact),
+                "site {i}: ABI {e} does not cover the enumerated {exact:.5}"
+            );
         }
         assert_eq!(ft_samples_correlation(sim, 0, 1, out.as_mut_ptr()), 1);
         assert_eq!(ft_samples_magnetization(sim, out.as_mut_ptr()), 1);
@@ -1711,11 +1966,25 @@ mod sample_tests {
         // the expectation this field asks for most, and the one a single returned state cannot
         // give: `ft_energy` reports the energy of the ONE configuration the machine is holding.
         assert_eq!(ft_samples_mean_energy(sim, out.as_mut_ptr()), 1);
-        let mean_e = crate::samples::Estimate { value: out[0], stderr: out[1], ess: out[2], tau_int: out[3] };
-        assert!(mean_e.stderr > 0.0, "an error bar of exactly zero on a moving chain is a bug");
+        let mean_e = crate::samples::Estimate {
+            value: out[0],
+            stderr: out[1],
+            ess: out[2],
+            tau_int: out[3],
+        };
+        assert!(
+            mean_e.stderr > 0.0,
+            "an error bar of exactly zero on a moving chain is a bug"
+        );
         let exact_e = truth.mean_energy().unwrap().value;
-        assert!(mean_e.covers(exact_e), "<E>: ABI {mean_e} does not cover the enumerated {exact_e:.5}");
-        assert!(out[1] > 0.0, "an error bar of exactly zero on a moving chain is a bug");
+        assert!(
+            mean_e.covers(exact_e),
+            "<E>: ABI {mean_e} does not cover the enumerated {exact_e:.5}"
+        );
+        assert!(
+            out[1] > 0.0,
+            "an error bar of exactly zero on a moving chain is a bug"
+        );
 
         // Out of range and null are refusals, not answers.
         assert_eq!(ft_samples_mean_spin(sim, 9, out.as_mut_ptr()), 0);
@@ -1728,7 +1997,11 @@ mod sample_tests {
         let mut st = [0i8; 9];
         assert_eq!(ft_samples_state(sim, 0, st.as_mut_ptr(), 9), 9);
         assert!(st.iter().all(|&v| v == 1 || v == -1));
-        assert_eq!(ft_samples_state(sim, 8_000, st.as_mut_ptr(), 9), 0, "no such draw");
+        assert_eq!(
+            ft_samples_state(sim, 8_000, st.as_mut_ptr(), 9),
+            0,
+            "no such draw"
+        );
 
         ft_free(sim);
     }
@@ -1753,7 +2026,11 @@ mod sample_tests {
         let base = raw.as_mut_ptr();
         let off = (4 + 8 - (base as usize % 8)) % 8;
         let odd = unsafe { base.add(off) }.cast::<f64>();
-        assert_ne!(odd as usize % 8, 0, "this test is vacuous unless the pointer is misaligned");
+        assert_ne!(
+            odd as usize % 8,
+            0,
+            "this test is vacuous unless the pointer is misaligned"
+        );
         assert_eq!(ft_samples_mean_spin(sim, 0, odd), 1);
 
         for k in 0..4 {
@@ -1785,8 +2062,11 @@ mod sample_tests {
         assert_eq!(ft_model_compile(m), 6);
         assert_eq!(ft_model_solve_with(m, 12, 0.0, 0.0, 0, 0), 1);
 
-        let (samples, reads, tries) =
-            (ft_model_cost_samples(m), ft_model_cost_reads(m), ft_model_tries(m));
+        let (samples, reads, tries) = (
+            ft_model_cost_samples(m),
+            ft_model_cost_reads(m),
+            ft_model_tries(m),
+        );
         assert_eq!(tries, 12);
         assert!(samples > 0 && reads > 0);
 
@@ -1794,7 +2074,11 @@ mod sample_tests {
         let mut seen = 0;
         while ft_model_select_optimum(m, seen, 1e-9) == 1 {
             assert_eq!(
-                (ft_model_cost_samples(m), ft_model_cost_reads(m), ft_model_tries(m)),
+                (
+                    ft_model_cost_samples(m),
+                    ft_model_cost_reads(m),
+                    ft_model_tries(m)
+                ),
                 (samples, reads, tries),
                 "selecting optimum {seen} changed what the search cost"
             );
@@ -1852,7 +2136,11 @@ mod sample_tests {
                 ft_model_cost_samples(m),
                 rust.cost.samples
             );
-            assert_eq!(ft_model_tries(m), tries, "every try must be counted at {tries}");
+            assert_eq!(
+                ft_model_tries(m),
+                tries,
+                "every try must be counted at {tries}"
+            );
             assert_eq!((ft_model_agreed(m), ft_model_tries(m)), rust.agreement);
             // And the receipt must actually GROW with the work, which is the property the shared
             // number 19,200 quietly violated at every try count.
@@ -1887,7 +2175,10 @@ mod sample_tests {
                 found_measured = true;
                 assert!((ft_prices_e_sample(i) - 1.0848e-11).abs() < 1e-20);
                 // Reads and writes were never exercised on that board: unstated, NOT zero.
-                assert!(ft_prices_e_read(i).is_nan(), "an unmeasured price read as a number");
+                assert!(
+                    ft_prices_e_read(i).is_nan(),
+                    "an unmeasured price read as a number"
+                );
                 assert!(ft_prices_e_write(i).is_nan());
                 assert!(source.contains("MEASURED"));
             }
@@ -1895,7 +2186,10 @@ mod sample_tests {
                 assert!(ft_prices_e_sample(i).is_nan());
             }
         }
-        assert!(found_measured, "the only measured entry fell out of the catalogue");
+        assert!(
+            found_measured,
+            "the only measured entry fell out of the catalogue"
+        );
 
         // Past the end is NaN and an empty name, never entry 0's numbers wearing a bad index.
         assert_eq!(ft_prices_name(n, core::ptr::null_mut(), 0), 0);
@@ -1945,13 +2239,22 @@ macro_rules! cert_field {
     };
 }
 
-cert_field!(ft_cert_beta_eff, |c: &crate::certify::Certificate| c.beta_eff);
-cert_field!(ft_cert_beta_lo, |c: &crate::certify::Certificate| c.beta_ci.0);
-cert_field!(ft_cert_beta_hi, |c: &crate::certify::Certificate| c.beta_ci.1);
+cert_field!(ft_cert_beta_eff, |c: &crate::certify::Certificate| c
+    .beta_eff);
+cert_field!(ft_cert_beta_lo, |c: &crate::certify::Certificate| c
+    .beta_ci
+    .0);
+cert_field!(ft_cert_beta_hi, |c: &crate::certify::Certificate| c
+    .beta_ci
+    .1);
 cert_field!(ft_cert_tau, |c: &crate::certify::Certificate| c.tau_int);
 cert_field!(ft_cert_ess, |c: &crate::certify::Certificate| c.ess);
-cert_field!(ft_cert_tv, |c: &crate::certify::Certificate| c.tv_exact.unwrap_or(f64::NAN));
-cert_field!(ft_cert_floor, |c: &crate::certify::Certificate| c.noise_floor.unwrap_or(f64::NAN));
+cert_field!(ft_cert_tv, |c: &crate::certify::Certificate| c
+    .tv_exact
+    .unwrap_or(f64::NAN));
+cert_field!(ft_cert_floor, |c: &crate::certify::Certificate| c
+    .noise_floor
+    .unwrap_or(f64::NAN));
 
 /// 1 if the run certified clean, 0 if it has findings, and 0 with no certificate present.
 #[unsafe(no_mangle)]
@@ -1975,8 +2278,12 @@ pub extern "C" fn ft_cert_findings(sim: *const Sim) -> u32 {
 /// `buf` is null, or 0 if there is no such finding.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_cert_finding(sim: *const Sim, i: u32, buf: *mut u8, cap: u32) -> u32 {
-    let Some(c) = unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) else { return 0 };
-    let Some(f) = c.findings.get(i as usize) else { return 0 };
+    let Some(c) = unsafe { sim.as_ref() }.and_then(|s| s.cert.as_ref()) else {
+        return 0;
+    };
+    let Some(f) = c.findings.get(i as usize) else {
+        return 0;
+    };
     let text = f.to_string();
     let bytes = text.as_bytes();
     if buf.is_null() {
@@ -1992,23 +2299,31 @@ pub extern "C" fn ft_cert_finding(sim: *const Sim, i: u32, buf: *mut u8, cap: u3
 /// This is the oracle that makes a claim checkable on graphs far too large to enumerate.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_exact_ground(sim: *const Sim, max_width: u32) -> f64 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
-    crate::exact::Elimination { max_width: max_width as usize }
-        .ground_state(&s.graph)
-        .ok()
-        .and_then(|e| e.ground_energy)
-        .unwrap_or(f64::NAN)
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return f64::NAN;
+    };
+    crate::exact::Elimination {
+        max_width: max_width as usize,
+    }
+    .ground_state(&s.graph)
+    .ok()
+    .and_then(|e| e.ground_energy)
+    .unwrap_or(f64::NAN)
 }
 
 /// Exact `log Z` at `beta`, or NaN if too wide.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_exact_log_z(sim: *const Sim, beta: f64, max_width: u32) -> f64 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
-    crate::exact::Elimination { max_width: max_width as usize }
-        .log_partition(&s.graph, beta)
-        .ok()
-        .and_then(|e| e.log_z)
-        .unwrap_or(f64::NAN)
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return f64::NAN;
+    };
+    crate::exact::Elimination {
+        max_width: max_width as usize,
+    }
+    .log_partition(&s.graph, beta)
+    .ok()
+    .and_then(|e| e.log_z)
+    .unwrap_or(f64::NAN)
 }
 
 /// Induced width of the elimination order. Cost of exact inference is `2^width`, so this is the
@@ -2032,11 +2347,15 @@ pub extern "C" fn ft_exact_ground_state(
     out: *mut i8,
     len: u32,
 ) -> u32 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return 0;
+    };
     if out.is_null() || len as usize != s.graph.n {
         return 0;
     }
-    let el = crate::exact::Elimination { max_width: max_width as usize };
+    let el = crate::exact::Elimination {
+        max_width: max_width as usize,
+    };
     match el.ground_state(&s.graph) {
         Ok(e) => match e.ground_state {
             Some(st) => {
@@ -2068,11 +2387,15 @@ pub extern "C" fn ft_exact_marginals(
     out: *mut f64,
     len: u32,
 ) -> u32 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return 0 };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return 0;
+    };
     if out.is_null() || len as usize != s.graph.n || !beta.is_finite() {
         return 0;
     }
-    let el = crate::exact::Elimination { max_width: max_width as usize };
+    let el = crate::exact::Elimination {
+        max_width: max_width as usize,
+    };
     match el.marginals(&s.graph, beta) {
         Ok(m) => {
             unsafe { core::ptr::copy_nonoverlapping(m.as_ptr(), out, m.len()) };
@@ -2098,7 +2421,10 @@ mod exact_marginal_ffi {
         let n = ft_len(sim) as usize;
 
         let mut m = vec![0.0f64; n];
-        assert_eq!(ft_exact_marginals(sim, 0.7, 24, m.as_mut_ptr(), n as u32), 1);
+        assert_eq!(
+            ft_exact_marginals(sim, 0.7, 24, m.as_mut_ptr(), n as u32),
+            1
+        );
         assert!(m.iter().all(|p| (0.0..=1.0).contains(p)), "{m:?}");
         // The biased node must lean the way its field points, or the sign convention is inverted
         // and every comparison built on this would inherit it.
@@ -2118,7 +2444,11 @@ mod exact_marginal_ffi {
         }
         for i in 0..n {
             let got = up[i] as f64 / draws as f64;
-            assert!((got - m[i]).abs() < 0.03, "node {i}: sampled {got:.4} vs exact {:.4}", m[i]);
+            assert!(
+                (got - m[i]).abs() < 0.03,
+                "node {i}: sampled {got:.4} vs exact {:.4}",
+                m[i]
+            );
         }
         ft_free(sim);
     }
@@ -2128,13 +2458,25 @@ mod exact_marginal_ffi {
         let sim = ft_ising2d_new(4, 1.0, 0.5, 1);
         let n = ft_len(sim) as usize;
         let mut m = vec![0.0f64; n];
-        assert_eq!(ft_exact_marginals(sim, 0.5, 24, m.as_mut_ptr(), (n - 1) as u32), 0);
-        assert_eq!(ft_exact_marginals(sim, 0.5, 24, core::ptr::null_mut(), n as u32), 0);
-        assert_eq!(ft_exact_marginals(sim, f64::NAN, 24, m.as_mut_ptr(), n as u32), 0);
+        assert_eq!(
+            ft_exact_marginals(sim, 0.5, 24, m.as_mut_ptr(), (n - 1) as u32),
+            0
+        );
+        assert_eq!(
+            ft_exact_marginals(sim, 0.5, 24, core::ptr::null_mut(), n as u32),
+            0
+        );
+        assert_eq!(
+            ft_exact_marginals(sim, f64::NAN, 24, m.as_mut_ptr(), n as u32),
+            0
+        );
         // max_width 0 refuses everything that is not already trivial.
         assert_eq!(ft_exact_marginals(sim, 0.5, 0, m.as_mut_ptr(), n as u32), 0);
         assert!(m.iter().all(|&x| x == 0.0), "a refusal must not write");
-        assert_eq!(ft_exact_marginals(core::ptr::null(), 0.5, 24, m.as_mut_ptr(), n as u32), 0);
+        assert_eq!(
+            ft_exact_marginals(core::ptr::null(), 0.5, 24, m.as_mut_ptr(), n as u32),
+            0
+        );
         ft_free(sim);
     }
 }
@@ -2148,12 +2490,21 @@ mod exact_state_ffi {
         let sim = ft_planted_frustrated(4, 12, 3, 1.0);
         let n = ft_len(sim) as usize;
         let mut out = vec![0i8; n];
-        assert_eq!(ft_exact_ground_state(sim, 20, out.as_mut_ptr(), n as u32), 1);
+        assert_eq!(
+            ft_exact_ground_state(sim, 20, out.as_mut_ptr(), n as u32),
+            1
+        );
         assert!(out.iter().all(|&v| v == 1 || v == -1));
         assert_eq!(ft_set_spins(sim, out.as_ptr(), n as u32), 1);
         let e = ft_energy(sim);
-        assert!((e - ft_exact_ground(sim, 20)).abs() < 1e-9, "state {e} vs energy");
-        assert!((e - ft_ground_energy(sim)).abs() < 1e-9, "and it is the planted optimum");
+        assert!(
+            (e - ft_exact_ground(sim, 20)).abs() < 1e-9,
+            "state {e} vs energy"
+        );
+        assert!(
+            (e - ft_ground_energy(sim)).abs() < 1e-9,
+            "and it is the planted optimum"
+        );
         ft_free(sim);
     }
 
@@ -2220,7 +2571,9 @@ pub extern "C" fn ft_model_free(m: *mut ModelHandle) {
 /// Declare a `k`-valued variable. Returns its index, or `u32::MAX` on failure.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_categorical(m: *mut ModelHandle, k: u32) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return u32::MAX;
+    };
     if k < 2 {
         return u32::MAX;
     }
@@ -2232,7 +2585,9 @@ pub extern "C" fn ft_model_categorical(m: *mut ModelHandle, k: u32) -> u32 {
 /// Declare an integer in `lo..=hi`.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_integer(m: *mut ModelHandle, lo: i64, hi: i64) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return u32::MAX;
+    };
     if hi <= lo {
         return u32::MAX;
     }
@@ -2244,20 +2599,24 @@ pub extern "C" fn ft_model_integer(m: *mut ModelHandle, lo: i64, hi: i64) -> u32
 /// Declare a 0/1 variable.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_binary(m: *mut ModelHandle) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return u32::MAX;
+    };
     let n = h.model.len();
     h.model.binary(&format!("v{n}"));
     n as u32
 }
 
 fn var_of(h: &ModelHandle, i: u32) -> Option<crate::model::Var> {
-    (( i as usize) < h.model.len()).then(|| h.model.var_at(i as usize))
+    ((i as usize) < h.model.len()).then(|| h.model.var_at(i as usize))
 }
 
 /// `a != b`. Returns 1 on success.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_not_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     match (var_of(h, a), var_of(h, b)) {
         (Some(x), Some(y)) if a != b => {
             h.model.constrain(Constraint::NotEqual(x, y));
@@ -2269,7 +2628,9 @@ pub extern "C" fn ft_model_not_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32
         // empty. The two refusals are different mistakes and read differently.
         _ => {
             h.last_error = if a == b {
-                format!("'not_equal' needs two DIFFERENT variables; both arguments are variable {a}")
+                format!(
+                    "'not_equal' needs two DIFFERENT variables; both arguments are variable {a}"
+                )
             } else {
                 format!(
                     "'not_equal' names variable {}, which is not declared; {} exist",
@@ -2285,7 +2646,9 @@ pub extern "C" fn ft_model_not_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32
 /// `a == b`.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     match (var_of(h, a), var_of(h, b)) {
         (Some(x), Some(y)) if a != b => {
             h.model.constrain(Constraint::Equal(x, y));
@@ -2313,7 +2676,9 @@ pub extern "C" fn ft_model_equal(m: *mut ModelHandle, a: u32, b: u32) -> u32 {
 /// Pin a variable to a value.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_fix(m: *mut ModelHandle, v: u32, value: i64) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     match var_of(h, v) {
         Some(x) if check_value(h, x, value) => {
             h.model.constrain(Constraint::Fix(x, value));
@@ -2347,7 +2712,9 @@ pub extern "C" fn ft_model_objective_term(
     v: u32,
     value: i64,
 ) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     let Some(x) = var_of(h, v) else { return 0 };
     if !coeff.is_finite() || !check_value(h, x, value) {
         return 0;
@@ -2355,8 +2722,13 @@ pub extern "C" fn ft_model_objective_term(
     // Straight into the model, which accumulates and folds the sense in per term. This used to keep
     // a second copy here and re-push the whole thing under the latest call's sense, so a minimising
     // term arriving after maximising ones re-interpreted every one of them.
-    let sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
-    h.model.objective(sense, Expr::lit(coeff, Lit::Is(x, value)));
+    let sense = if maximize != 0 {
+        Sense::Maximize
+    } else {
+        Sense::Minimize
+    };
+    h.model
+        .objective(sense, Expr::lit(coeff, Lit::Is(x, value)));
     1
 }
 
@@ -2371,7 +2743,9 @@ pub extern "C" fn ft_model_objective_pair(
     b: u32,
     bv: i64,
 ) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     // FIVE CAUSES USED TO SHARE ONE SILENT `return 0`. Python surfaced them all as the fallback
     // text "the library refused that objective", which names nothing a caller can act on, while
     // this function's own sibling `ft_model_objective_product` sets a reason for every refusal.
@@ -2405,8 +2779,13 @@ pub extern "C" fn ft_model_objective_pair(
         h.last_error = format!("{bv} is not a value variable {b} can take");
         return 0;
     }
-    let sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
-    h.model.objective(sense, Expr::pair(coeff, Lit::Is(x, av), Lit::Is(y, bv)));
+    let sense = if maximize != 0 {
+        Sense::Maximize
+    } else {
+        Sense::Minimize
+    };
+    h.model
+        .objective(sense, Expr::pair(coeff, Lit::Is(x, av), Lit::Is(y, bv)));
     1
 }
 
@@ -2430,7 +2809,9 @@ pub extern "C" fn ft_model_objective_product(
     maximize: u32,
     coeff: f64,
 ) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     let lits = core::mem::take(&mut h.lits);
     h.coeffs.clear();
     if lits.is_empty() {
@@ -2441,7 +2822,11 @@ pub extern "C" fn ft_model_objective_product(
         h.last_error = format!("an objective coefficient must be a real number, not {coeff}");
         return 0;
     }
-    let sense = if maximize != 0 { Sense::Maximize } else { Sense::Minimize };
+    let sense = if maximize != 0 {
+        Sense::Maximize
+    } else {
+        Sense::Minimize
+    };
     h.model.objective(sense, Expr::product(coeff, &lits));
     1
 }
@@ -2450,7 +2835,9 @@ pub extern "C" fn ft_model_objective_product(
 /// [`ft_model_error`].
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_compile(m: *mut ModelHandle) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     // Nothing to push: every objective term went straight into the model as it arrived, which is
     // also why `ft_model_penalty` answers correctly before compiling rather than only after.
     match h.model.compile() {
@@ -2479,8 +2866,12 @@ pub extern "C" fn ft_model_compile(m: *mut ModelHandle) -> u32 {
 /// Anneal the compiled model, keeping the best of `tries`. Returns 1 on success.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_solve(m: *mut ModelHandle, tries: u32) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
-    let Some(c) = h.compiled.as_ref() else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
+    let Some(c) = h.compiled.as_ref() else {
+        return 0;
+    };
     let (lo, hi, n, w) = crate::model::Compiled::DEFAULT_LADDER;
     // The default ladder, spelled out, so this keeps every try the way `ft_model_solve_with` does.
     // `solve_best_of` runs the same seeds on the same schedule and returns only the winner; going
@@ -2508,8 +2899,12 @@ pub extern "C" fn ft_model_solve_with(
     stages: u32,
     sweeps: u32,
 ) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
-    let Some(c) = h.compiled.as_ref() else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
+    let Some(c) = h.compiled.as_ref() else {
+        return 0;
+    };
     // NaN must be refused, not defaulted. `NaN > 0.0` is false, so a naive "positive means the
     // caller meant it" test would send a NaN quietly down the default path and return an answer
     // computed on a ladder the caller never asked for.
@@ -2566,8 +2961,14 @@ pub extern "C" fn ft_model_answers(m: *const ModelHandle) -> u32 {
 /// on the compiled Ising energy, which folds in every penalty; `1e-9` is the value for exact ties.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_optima(m: *const ModelHandle, tol: f64) -> u32 {
-    let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
-    let tol = if tol.is_finite() && tol >= 0.0 { tol } else { 0.0 };
+    let Some(h) = (unsafe { m.as_ref() }) else {
+        return 0;
+    };
+    let tol = if tol.is_finite() && tol >= 0.0 {
+        tol
+    } else {
+        0.0
+    };
     crate::model::distinct_optima(&h.answers, tol).len() as u32
 }
 
@@ -2594,7 +2995,11 @@ mod optima_tests {
 
         assert_eq!(ft_model_solve_with(m, 40, 0.0, 0.0, 0, 0), 1);
         assert_eq!(ft_model_answers(m), 40, "one answer per try, kept");
-        assert_eq!(ft_model_optima(m, 1e-9), 3, "exactly-one over three has three ways");
+        assert_eq!(
+            ft_model_optima(m, 1e-9),
+            3,
+            "exactly-one over three has three ways"
+        );
 
         // Each one reads back by name through the accessors that already exist, and each is a
         // DIFFERENT assignment with exactly one variable on.
@@ -2603,7 +3008,11 @@ mod optima_tests {
             assert_eq!(ft_model_select_optimum(m, i, 1e-9), 1);
             assert_eq!(ft_model_feasible(m), 1);
             let vals: Vec<i64> = (0..3).map(|v| ft_model_value(m, v)).collect();
-            assert_eq!(vals.iter().filter(|&&x| x == 1).count(), 1, "exactly one on: {vals:?}");
+            assert_eq!(
+                vals.iter().filter(|&&x| x == 1).count(),
+                1,
+                "exactly one on: {vals:?}"
+            );
             assert!(seen.insert(vals), "the same assignment was listed twice");
         }
         assert_eq!(ft_model_select_optimum(m, 3, 1e-9), 0, "there is no fourth");
@@ -2614,7 +3023,10 @@ mod optima_tests {
         // were the same and passed by coincidence until a colouring change moved the trajectory.
         assert_eq!(ft_model_solve_with(m, 40, 0.0, 0.0, 0, 0), 1);
         let solved = (0..3).map(|v| ft_model_value(m, v)).collect::<Vec<_>>();
-        assert!(seen.contains(&solved), "solve returned {solved:?}, which is not among the optima");
+        assert!(
+            seen.contains(&solved),
+            "solve returned {solved:?}, which is not among the optima"
+        );
         // And the list itself is deterministic: same tries, same order.
         let mut again = Vec::new();
         for i in 0..3u32 {
@@ -2622,7 +3034,10 @@ mod optima_tests {
             again.push((0..3).map(|v| ft_model_value(m, v)).collect::<Vec<_>>());
         }
         assert_eq!(again.len(), 3);
-        assert!(again.windows(2).all(|w| w[0] != w[1]), "three distinct assignments");
+        assert!(
+            again.windows(2).all(|w| w[0] != w[1]),
+            "three distinct assignments"
+        );
 
         // Recompiling invalidates them: an optimum belongs to the model it was solved from.
         assert!(ft_model_compile(m) > 0);
@@ -2646,7 +3061,11 @@ mod optima_tests {
         assert!(ft_model_compile(m) > 0);
         assert_eq!(ft_model_solve(m, 24), 1);
         assert_eq!(ft_model_answers(m), 24);
-        assert_eq!(ft_model_optima(m, 1e-9), 2, "exactly-one over two has two ways");
+        assert_eq!(
+            ft_model_optima(m, 1e-9),
+            2,
+            "exactly-one over two has two ways"
+        );
 
         // A single-method solve replaces the list rather than leaving the previous one behind.
         assert_eq!(ft_model_solve_by(m, 3, 0), 1, "branch and bound");
@@ -2680,8 +3099,14 @@ mod optima_tests {
 /// Returns 1 on success, 0 for a null handle or an index past the count.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_select_optimum(m: *mut ModelHandle, i: u32, tol: f64) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
-    let tol = if tol.is_finite() && tol >= 0.0 { tol } else { 0.0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
+    let tol = if tol.is_finite() && tol >= 0.0 {
+        tol
+    } else {
+        0.0
+    };
     let opt = crate::model::distinct_optima(&h.answers, tol);
     match opt.into_iter().nth(i as usize) {
         Some(mut s) => {
@@ -2713,8 +3138,12 @@ pub extern "C" fn ft_model_select_optimum(m: *mut ModelHandle, i: u32, tol: f64)
 /// The solved value of variable `v`, or `i64::MIN` if it did not decode.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_value(m: *const ModelHandle, v: u32) -> i64 {
-    let Some(h) = (unsafe { m.as_ref() }) else { return i64::MIN };
-    let Some(s) = h.solution.as_ref() else { return i64::MIN };
+    let Some(h) = (unsafe { m.as_ref() }) else {
+        return i64::MIN;
+    };
+    let Some(s) = h.solution.as_ref() else {
+        return i64::MIN;
+    };
     // By the variable's CURRENT name, which `ft_model_name` may have changed. Reconstructing the
     // synthetic `v{index}` here would silently stop finding anything the caller had renamed.
     if (v as usize) >= h.model.len() {
@@ -2745,8 +3174,12 @@ pub extern "C" fn ft_model_feasible(m: *const ModelHandle) -> u32 {
 /// inspection and must not be added on top. See [`crate::ommx`].
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_ommx(m: *const ModelHandle, buf: *mut u8, cap: u32) -> u32 {
-    let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
-    let Some(c) = h.compiled.as_ref() else { return 0 };
+    let Some(h) = (unsafe { m.as_ref() }) else {
+        return 0;
+    };
+    let Some(c) = h.compiled.as_ref() else {
+        return 0;
+    };
     let e = crate::ommx::export(&c.graph);
     if buf.is_null() {
         return e.bytes.len() as u32;
@@ -2791,7 +3224,9 @@ pub extern "C" fn ft_model_caveats(m: *const ModelHandle) -> u32 {
 /// certify its own answer.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_solve_by(m: *mut ModelHandle, method: u32, effort: u64) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     let Some(c) = h.compiled.as_ref() else {
         h.last_error = "compile the model before solving it".into();
         return 0;
@@ -2872,15 +3307,16 @@ pub extern "C" fn ft_model_has_objective(m: *const ModelHandle) -> u32 {
 
 /// Copy caveat `i` as UTF-8; same two-call protocol as the other text getters.
 #[unsafe(no_mangle)]
-pub extern "C" fn ft_model_caveat(
-    m: *const ModelHandle,
-    i: u32,
-    buf: *mut u8,
-    cap: u32,
-) -> u32 {
-    let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
-    let Some(c) = h.compiled.as_ref() else { return 0 };
-    let Some(text) = c.caveats.get(i as usize) else { return 0 };
+pub extern "C" fn ft_model_caveat(m: *const ModelHandle, i: u32, buf: *mut u8, cap: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_ref() }) else {
+        return 0;
+    };
+    let Some(c) = h.compiled.as_ref() else {
+        return 0;
+    };
+    let Some(text) = c.caveats.get(i as usize) else {
+        return 0;
+    };
     let b = text.as_bytes();
     if buf.is_null() {
         return b.len() as u32;
@@ -2916,14 +3352,13 @@ pub extern "C" fn ft_model_violations(m: *const ModelHandle) -> u32 {
 
 /// Copy violation `i` as UTF-8; same two-call protocol as the other text getters.
 #[unsafe(no_mangle)]
-pub extern "C" fn ft_model_violation(
-    m: *const ModelHandle,
-    i: u32,
-    buf: *mut u8,
-    cap: u32,
-) -> u32 {
-    let Some(s) = unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) else { return 0 };
-    let Some(v) = s.violated.get(i as usize) else { return 0 };
+pub extern "C" fn ft_model_violation(m: *const ModelHandle, i: u32, buf: *mut u8, cap: u32) -> u32 {
+    let Some(s) = unsafe { m.as_ref() }.and_then(|h| h.solution.as_ref()) else {
+        return 0;
+    };
+    let Some(v) = s.violated.get(i as usize) else {
+        return 0;
+    };
     let b = v.detail.as_bytes();
     if buf.is_null() {
         return b.len() as u32;
@@ -3137,7 +3572,9 @@ pub extern "C" fn ft_model_penalty(m: *const ModelHandle) -> f64 {
 /// Copy the last compile error into `buf`; returns bytes written, or the length needed if null.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_error(m: *const ModelHandle, buf: *mut u8, cap: u32) -> u32 {
-    let Some(h) = (unsafe { m.as_ref() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_ref() }) else {
+        return 0;
+    };
     let b = h.last_error.as_bytes();
     if buf.is_null() {
         return b.len() as u32;
@@ -3150,7 +3587,9 @@ pub extern "C" fn ft_model_error(m: *const ModelHandle, buf: *mut u8, cap: u32) 
 /// The compiled program as `.ftp` text; same buffer protocol as [`ft_model_error`].
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_ftp(m: *const ModelHandle, buf: *mut u8, cap: u32) -> u32 {
-    let Some(c) = unsafe { m.as_ref() }.and_then(|h| h.compiled.as_ref()) else { return 0 };
+    let Some(c) = unsafe { m.as_ref() }.and_then(|h| h.compiled.as_ref()) else {
+        return 0;
+    };
     let text = c.program.to_ftp();
     let b = text.as_bytes();
     if buf.is_null() {
@@ -3165,7 +3604,10 @@ pub extern "C" fn ft_model_ftp(m: *const ModelHandle, buf: *mut u8, cap: u32) ->
 mod model_ffi_tests {
     use super::*;
 
-    fn text(m: *const ModelHandle, f: unsafe extern "C" fn(*const ModelHandle, *mut u8, u32) -> u32) -> String {
+    fn text(
+        m: *const ModelHandle,
+        f: unsafe extern "C" fn(*const ModelHandle, *mut u8, u32) -> u32,
+    ) -> String {
         let need = unsafe { f(m, core::ptr::null_mut(), 0) } as usize;
         let mut buf = vec![0u8; need];
         let got = unsafe { f(m, buf.as_mut_ptr(), need as u32) } as usize;
@@ -3184,15 +3626,25 @@ mod model_ffi_tests {
         assert_eq!(ft_model_not_equal(m, b, c), 1);
         assert_eq!(ft_model_not_equal(m, a, c), 1);
 
-        assert_eq!(ft_model_compile(m), 9, "three one-hot variables of three values");
+        assert_eq!(
+            ft_model_compile(m),
+            9,
+            "three one-hot variables of three values"
+        );
         assert_eq!(ft_model_solve(m, 12), 1);
         assert_eq!(ft_model_feasible(m), 1);
 
-        let (va, vb, vc) = (ft_model_value(m, a), ft_model_value(m, b), ft_model_value(m, c));
-        assert!(va != vb && vb != vc && va != vc, "a triangle needs three colours: {va} {vb} {vc}");
+        let (va, vb, vc) = (
+            ft_model_value(m, a),
+            ft_model_value(m, b),
+            ft_model_value(m, c),
+        );
+        assert!(
+            va != vb && vb != vc && va != vc,
+            "a triangle needs three colours: {va} {vb} {vc}"
+        );
         ft_model_free(m);
     }
-
 
     #[test]
     fn a_compile_error_crosses_as_text() {
@@ -3213,7 +3665,10 @@ mod model_ffi_tests {
         ft_model_compile(m);
         let ftp = text(m, ft_model_ftp);
         assert!(ftp.starts_with("ftp 1"));
-        assert!(ftp.contains("encode 0 3 onehot"), "the layout travels with it: {ftp}");
+        assert!(
+            ftp.contains("encode 0 3 onehot"),
+            "the layout travels with it: {ftp}"
+        );
         assert!(crate::ftp::Program::from_ftp(&ftp).is_ok());
         ft_model_free(m);
     }
@@ -3221,9 +3676,17 @@ mod model_ffi_tests {
     #[test]
     fn malformed_calls_are_inert() {
         let m = ft_model_new();
-        assert_eq!(ft_model_categorical(m, 1), u32::MAX, "k below 2 is a constant");
+        assert_eq!(
+            ft_model_categorical(m, 1),
+            u32::MAX,
+            "k below 2 is a constant"
+        );
         assert_eq!(ft_model_integer(m, 5, 5), u32::MAX, "an empty range");
-        assert_eq!(ft_model_not_equal(m, 0, 0), 0, "a variable differs from nothing but itself");
+        assert_eq!(
+            ft_model_not_equal(m, 0, 0),
+            0,
+            "a variable differs from nothing but itself"
+        );
         assert_eq!(ft_model_value(m, 0), i64::MIN, "no solution yet");
         assert_eq!(ft_model_categorical(core::ptr::null_mut(), 3), u32::MAX);
         assert_eq!(ft_model_solve(core::ptr::null_mut(), 1), 0);
@@ -3272,7 +3735,11 @@ mod scratch_tests {
         // Exactly how the browser reads an error from the library.
         let m = ft_model_new();
         let x = ft_model_categorical(m, 3);
-        assert_eq!(ft_model_objective_term(m, 0, 1.0, x, 99), 0, "99 is not one of three values");
+        assert_eq!(
+            ft_model_objective_term(m, 0, 1.0, x, 99),
+            0,
+            "99 is not one of three values"
+        );
 
         let need = ft_model_error(m, core::ptr::null_mut(), 0);
         assert!(need > 0);
@@ -3300,7 +3767,9 @@ pub extern "C" fn ft_model_cardinality(
     c: u32,
     d: u32,
 ) -> u32 {
-    counting(m, count, k, value, [a, b, c, d], |lits, k| Constraint::Cardinality { lits, k })
+    counting(m, count, k, value, [a, b, c, d], |lits, k| {
+        Constraint::Cardinality { lits, k }
+    })
 }
 
 /// At most `k` of up to four variables take `value`.
@@ -3318,7 +3787,9 @@ pub extern "C" fn ft_model_at_most(
     c: u32,
     d: u32,
 ) -> u32 {
-    counting(m, count, k, value, [a, b, c, d], |lits, k| Constraint::AtMost { lits, k })
+    counting(m, count, k, value, [a, b, c, d], |lits, k| {
+        Constraint::AtMost { lits, k }
+    })
 }
 
 /// At least `k` of up to four variables take `value`.
@@ -3333,7 +3804,9 @@ pub extern "C" fn ft_model_at_least(
     c: u32,
     d: u32,
 ) -> u32 {
-    counting(m, count, k, value, [a, b, c, d], |lits, k| Constraint::AtLeast { lits, k })
+    counting(m, count, k, value, [a, b, c, d], |lits, k| {
+        Constraint::AtLeast { lits, k }
+    })
 }
 
 /// Declare a categorical with a chosen encoding.
@@ -3352,8 +3825,12 @@ pub extern "C" fn ft_model_at_least(
 /// time rather than approximated.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_categorical_as(m: *mut ModelHandle, k: u32, encoding: u32) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
-    let Some(enc) = encoding_of(encoding, h) else { return u32::MAX };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return u32::MAX;
+    };
+    let Some(enc) = encoding_of(encoding, h) else {
+        return u32::MAX;
+    };
     if k < 2 {
         return u32::MAX;
     }
@@ -3364,14 +3841,13 @@ pub extern "C" fn ft_model_categorical_as(m: *mut ModelHandle, k: u32, encoding:
 
 /// Declare an integer with a chosen encoding. See [`ft_model_categorical_as`] for the codes.
 #[unsafe(no_mangle)]
-pub extern "C" fn ft_model_integer_as(
-    m: *mut ModelHandle,
-    lo: i64,
-    hi: i64,
-    encoding: u32,
-) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return u32::MAX };
-    let Some(enc) = encoding_of(encoding, h) else { return u32::MAX };
+pub extern "C" fn ft_model_integer_as(m: *mut ModelHandle, lo: i64, hi: i64, encoding: u32) -> u32 {
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return u32::MAX;
+    };
+    let Some(enc) = encoding_of(encoding, h) else {
+        return u32::MAX;
+    };
     if hi <= lo {
         return u32::MAX;
     }
@@ -3387,8 +3863,7 @@ fn encoding_of(code: u32, h: &mut ModelHandle) -> Option<crate::encode::Encoding
         1 => Some(Encoding::Binary),
         2 => Some(Encoding::DomainWall),
         other => {
-            h.last_error =
-                format!("unknown encoding {other}; 0 one-hot, 1 binary, 2 domain-wall");
+            h.last_error = format!("unknown encoding {other}; 0 one-hot, 1 binary, 2 domain-wall");
             None
         }
     }
@@ -3405,7 +3880,9 @@ fn encoding_of(code: u32, h: &mut ModelHandle) -> Option<crate::encode::Encoding
 /// into each other.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_lits_clear(m: *mut ModelHandle) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     h.lits.clear();
     h.coeffs.clear();
     1
@@ -3421,7 +3898,9 @@ pub extern "C" fn ft_model_lits_clear(m: *mut ModelHandle) -> u32 {
 /// take. The fix belongs here, where the domain is already known.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_var(m: *mut ModelHandle, var: u32) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     if var as usize >= h.model.len() {
         h.last_error = format!("no variable {var}; {} declared", h.model.len());
         return 0;
@@ -3439,7 +3918,9 @@ pub extern "C" fn ft_model_var(m: *mut ModelHandle, var: u32) -> u32 {
 /// Append "`var` takes `value`" to the pending list. Refuses a value the variable cannot take.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_lit(m: *mut ModelHandle, var: u32, value: i64) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     match var_of(h, var) {
         Some(x) if check_value(h, x, value) => {
             h.lits.push(Lit::Is(x, value));
@@ -3467,7 +3948,9 @@ pub extern "C" fn ft_model_lit_weighted(
     value: i64,
     coeff: f64,
 ) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     if !coeff.is_finite() {
         h.last_error = format!("a linear coefficient must be a real number, not {coeff}");
         return 0;
@@ -3507,14 +3990,17 @@ pub extern "C" fn ft_model_close(m: *mut ModelHandle, kind: u32, k: u32) -> u32 
 }
 
 fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     if let Some(w) = soft
-        && (!(w > 0.0) || !w.is_finite()) {
-            h.last_error = format!("a soft constraint needs a positive price, not {w}");
-            h.lits.clear();
-            h.coeffs.clear();
-            return 0;
-        }
+        && (!(w > 0.0) || !w.is_finite())
+    {
+        h.last_error = format!("a soft constraint needs a positive price, not {w}");
+        h.lits.clear();
+        h.coeffs.clear();
+        return 0;
+    }
     let lits = core::mem::take(&mut h.lits);
     h.coeffs.clear();
     if lits.len() < 2 {
@@ -3532,9 +4018,18 @@ fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> 
         return 0;
     }
     let c = match kind {
-        0 => Constraint::Cardinality { lits, k: k as usize },
-        1 => Constraint::AtMost { lits, k: k as usize },
-        2 => Constraint::AtLeast { lits, k: k as usize },
+        0 => Constraint::Cardinality {
+            lits,
+            k: k as usize,
+        },
+        1 => Constraint::AtMost {
+            lits,
+            k: k as usize,
+        },
+        2 => Constraint::AtLeast {
+            lits,
+            k: k as usize,
+        },
         3 => Constraint::ExactlyOne(lits),
         4 => Constraint::AtMostOne(lits),
         // 5 reads the VARIABLES out of the pending literals and ignores their values, so
@@ -3548,9 +4043,10 @@ fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> 
                 // would otherwise constrain fewer variables than the caller listed and still
                 // report success.
                 if let crate::model::Lit::Is(v, _) = l
-                    && !vars.contains(v) {
-                        vars.push(*v);
-                    }
+                    && !vars.contains(v)
+                {
+                    vars.push(*v);
+                }
             }
             Constraint::AllDifferent(vars)
         }
@@ -3579,12 +4075,7 @@ fn close_counting(m: *mut ModelHandle, kind: u32, k: u32, soft: Option<f64>) -> 
 /// The weight is absolute, not scaled. Automatic scaling exists to stop a hard constraint being
 /// outbid by the objective; a soft one is meant to be traded against it.
 #[unsafe(no_mangle)]
-pub extern "C" fn ft_model_close_soft(
-    m: *mut ModelHandle,
-    kind: u32,
-    k: u32,
-    weight: f64,
-) -> u32 {
+pub extern "C" fn ft_model_close_soft(m: *mut ModelHandle, kind: u32, k: u32, weight: f64) -> u32 {
     close_counting(m, kind, k, Some(weight))
 }
 
@@ -3625,15 +4116,18 @@ pub extern "C" fn ft_model_close_linear_soft(
 }
 
 fn close_linear(m: *mut ModelHandle, rel: u32, rhs: f64, soft: Option<f64>) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     let lits = core::mem::take(&mut h.lits);
     let coeffs = core::mem::take(&mut h.coeffs);
     debug_assert_eq!(lits.len(), coeffs.len());
     if let Some(w) = soft
-        && (!(w > 0.0) || !w.is_finite()) {
-            h.last_error = format!("a soft constraint needs a positive price, not {w}");
-            return 0;
-        }
+        && (!(w > 0.0) || !w.is_finite())
+    {
+        h.last_error = format!("a soft constraint needs a positive price, not {w}");
+        return 0;
+    }
     if lits.is_empty() {
         h.last_error = "a linear row needs at least one term".into();
         return 0;
@@ -3666,7 +4160,9 @@ fn close_linear(m: *mut ModelHandle, rel: u32, rhs: f64, soft: Option<f64>) -> u
 /// weight is not a positive number.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_soften_last(m: *mut ModelHandle, weight: f64) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     if !(weight > 0.0) || !weight.is_finite() {
         h.last_error = format!("a soft constraint needs a positive price, not {weight}");
         return 0;
@@ -3704,7 +4200,9 @@ pub extern "C" fn ft_model_violation_is_hard(m: *const ModelHandle, i: u32) -> u
 /// way to. A non-finite or non-positive value is refused.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_fixed_penalty(m: *mut ModelHandle, p: f64) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     if !p.is_finite() || p <= 0.0 {
         h.last_error = format!("a penalty must be a positive number, not {p}");
         return 0;
@@ -3719,7 +4217,9 @@ pub extern "C" fn ft_model_fixed_penalty(m: *mut ModelHandle, p: f64) -> u32 {
 /// 0 if the index is unknown or the bytes are not UTF-8. `len` is a byte count, not a terminator.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_name(m: *mut ModelHandle, v: u32, name: *const u8, len: u32) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     let Some(x) = var_of(h, v) else { return 0 };
     if name.is_null() {
         return 0;
@@ -3770,7 +4270,9 @@ fn counting(
     vars: [u32; 4],
     build: impl FnOnce(Vec<Lit>, usize) -> Constraint,
 ) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
     let mut lits = Vec::new();
     for v in vars.iter().take(count.min(4) as usize) {
         match var_of(h, *v) {
@@ -3819,25 +4321,43 @@ mod cardinality_ffi {
         };
         assert_eq!(spins_for(0), 8, "one-hot: one spin per value");
         assert_eq!(spins_for(2), 7, "domain-wall: one fewer");
-        assert_eq!(spins_for(1), 3, "binary: log2 of the domain, and the cheapest by far");
+        assert_eq!(
+            spins_for(1),
+            3,
+            "binary: log2 of the domain, and the cheapest by far"
+        );
 
         // and the two that CAN carry a literal both do
         for enc in [0u32, 2] {
             let m = ft_model_new();
             let v = ft_model_categorical_as(m, 8, enc);
             assert_eq!(ft_model_fix(m, v, 3), 1);
-            assert!(ft_model_compile(m) > 0, "encoding {enc} must work in a constraint");
+            assert!(
+                ft_model_compile(m) > 0,
+                "encoding {enc} must work in a constraint"
+            );
             assert_eq!(ft_model_solve(m, 16), 1);
-            assert_eq!(ft_model_value(m, v), 3, "encoding {enc} decodes to what it was fixed to");
+            assert_eq!(
+                ft_model_value(m, v),
+                3,
+                "encoding {enc} decodes to what it was fixed to"
+            );
             ft_model_free(m);
         }
 
         let m = ft_model_new();
-        assert_eq!(ft_model_categorical_as(m, 8, 9), u32::MAX, "an unknown encoding is refused");
+        assert_eq!(
+            ft_model_categorical_as(m, 8, 9),
+            u32::MAX,
+            "an unknown encoding is refused"
+        );
         let mut buf = [0u8; 256];
         let n = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
         let e = core::str::from_utf8(&buf[..n]).unwrap();
-        assert!(e.contains("domain-wall"), "and lists the ones it knows: {e}");
+        assert!(
+            e.contains("domain-wall"),
+            "and lists the ones it knows: {e}"
+        );
         ft_model_free(m);
     }
 
@@ -3848,7 +4368,11 @@ mod cardinality_ffi {
         let m = ft_model_new();
         let v = ft_model_categorical_as(m, 8, 1);
         ft_model_objective_term(m, 1, 1.0, v, 3);
-        assert_eq!(ft_model_compile(m), 0, "a binary variable in an objective must not compile");
+        assert_eq!(
+            ft_model_compile(m),
+            0,
+            "a binary variable in an objective must not compile"
+        );
         let mut buf = [0u8; 512];
         let n = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
         let e = core::str::from_utf8(&buf[..n]).unwrap();
@@ -3883,7 +4407,10 @@ mod cardinality_ffi {
 
         let (a, b, feasible, cost, n) = run(1.0);
         assert_eq!((a, b), (0, 0), "a cheap clash is worth having");
-        assert_eq!(feasible, 1, "and a soft violation is not an infeasible answer");
+        assert_eq!(
+            feasible, 1,
+            "and a soft violation is not an infeasible answer"
+        );
         assert_eq!(cost, 1.0);
         assert_eq!(n, 1, "it is still reported");
 
@@ -3898,12 +4425,16 @@ mod cardinality_ffi {
         let a = ft_model_categorical(m, 2);
         let b = ft_model_categorical(m, 2);
         ft_model_not_equal(m, a, b);
-        ft_model_fixed_penalty(m, 1.0);            // hard, and deliberately outbid
+        ft_model_fixed_penalty(m, 1.0); // hard, and deliberately outbid
         ft_model_objective_term(m, 1, 40.0, a, 0);
         ft_model_objective_term(m, 1, 40.0, b, 0);
         assert!(ft_model_compile(m) > 0);
         ft_model_solve(m, 16);
-        assert_eq!(ft_model_feasible(m), 0, "a broken hard constraint is infeasible");
+        assert_eq!(
+            ft_model_feasible(m),
+            0,
+            "a broken hard constraint is infeasible"
+        );
         assert_eq!(ft_model_violation_is_hard(m, 0), 1);
         assert_eq!(ft_model_soft_cost(m), 0.0, "a hard constraint has no price");
         ft_model_free(m);
@@ -3941,7 +4472,10 @@ mod cardinality_ffi {
             .filter(|(i, _)| ft_model_value(m, **i) == 1)
             .map(|(_, w)| w)
             .sum();
-        assert!(taken <= 7.0, "the row is a CONSTRAINT, not a preference: got {taken}");
+        assert!(
+            taken <= 7.0,
+            "the row is a CONSTRAINT, not a preference: got {taken}"
+        );
         assert_eq!(taken, 7.0, "and 3 + 4 is the best that fits");
         ft_model_free(m);
 
@@ -3960,15 +4494,31 @@ mod cardinality_ffi {
         // Every refusal returns zero and says why, rather than aborting or compiling something else.
         let m = ft_model_new();
         let a = ft_model_binary(m);
-        assert_eq!(ft_model_lit_weighted(m, a, 1, f64::NAN), 0, "a coefficient must be real");
-        assert_eq!(ft_model_close_linear(m, 0, 1.0), 0, "an empty row is not a row");
+        assert_eq!(
+            ft_model_lit_weighted(m, a, 1, f64::NAN),
+            0,
+            "a coefficient must be real"
+        );
+        assert_eq!(
+            ft_model_close_linear(m, 0, 1.0),
+            0,
+            "an empty row is not a row"
+        );
         ft_model_lit_weighted(m, a, 1, 2.5);
         assert_eq!(ft_model_close_linear(m, 7, 1.0), 0, "7 is not a relation");
         assert_eq!(ft_model_lits(m), 0, "and a refused row clears the list");
         ft_model_lit_weighted(m, a, 1, 2.5);
         assert_eq!(ft_model_close_linear(m, 0, 4.0), 1);
-        assert_eq!(ft_model_compile(m), 0, "a fractional coefficient on an inequality is refused");
-        assert!(model_error(m).contains("common denominator"), "{}", model_error(m));
+        assert_eq!(
+            ft_model_compile(m),
+            0,
+            "a fractional coefficient on an inequality is refused"
+        );
+        assert!(
+            model_error(m).contains("common denominator"),
+            "{}",
+            model_error(m)
+        );
         ft_model_free(m);
 
         // And a SOFT row is priced rather than enforced.
@@ -3982,8 +4532,16 @@ mod cardinality_ffi {
         assert_eq!(ft_model_close_linear_soft(m, 0, 3.0, 0.5), 1);
         assert!(ft_model_compile(m) > 0);
         ft_model_solve(m, 32);
-        assert_eq!((ft_model_value(m, a), ft_model_value(m, b)), (1, 1), "the price is worth paying");
-        assert_eq!(ft_model_feasible(m), 1, "a soft row leaves the answer an answer");
+        assert_eq!(
+            (ft_model_value(m, a), ft_model_value(m, b)),
+            (1, 1),
+            "the price is worth paying"
+        );
+        assert_eq!(
+            ft_model_feasible(m),
+            1,
+            "a soft row leaves the answer an answer"
+        );
         // 3 + 4 = 7 against a bound of 3 is 4 over, priced at 0.5 × 4² = 8 -- less than the 10
         // that taking the second one is worth, which is why the trade happens at all.
         assert_eq!(ft_model_soft_cost(m), 8.0);
@@ -4005,9 +4563,17 @@ mod cardinality_ffi {
         assert_eq!(ft_model_close_soft(m, 1, 2, 1.0), 1);
         assert!(ft_model_compile(m) > 0);
         ft_model_solve(m, 24);
-        assert_eq!(v.iter().filter(|&&i| ft_model_value(m, i) == 1).count(), 4, "all four taken");
+        assert_eq!(
+            v.iter().filter(|&&i| ft_model_value(m, i) == 1).count(),
+            4,
+            "all four taken"
+        );
         assert_eq!(ft_model_feasible(m), 1, "and the answer is still an answer");
-        assert_eq!(ft_model_violation_is_hard(m, 0), 0, "the violation is a traded preference");
+        assert_eq!(
+            ft_model_violation_is_hard(m, 0),
+            0,
+            "the violation is a traded preference"
+        );
         assert!(ft_model_soft_cost(m) > 0.0);
         ft_model_free(m);
 
@@ -4016,12 +4582,19 @@ mod cardinality_ffi {
         let b = ft_model_binary(m);
         ft_model_lit(m, a, 1);
         ft_model_lit(m, b, 1);
-        assert_eq!(ft_model_close_soft(m, 1, 1, 0.0), 0, "a price must be positive");
-        assert_eq!(ft_model_lits(m), 0, "and a refused constraint clears the list");
+        assert_eq!(
+            ft_model_close_soft(m, 1, 1, 0.0),
+            0,
+            "a price must be positive"
+        );
+        assert_eq!(
+            ft_model_lits(m),
+            0,
+            "and a refused constraint clears the list"
+        );
         assert_eq!(ft_model_soften_last(m, 1.0), 0, "with nothing to soften");
         ft_model_free(m);
     }
-
 
     #[test]
     fn a_higher_order_objective_term_crosses_the_c_abi() {
@@ -4037,10 +4610,17 @@ mod cardinality_ffi {
         assert_eq!(ft_model_lits(m), 0, "closing clears the list");
 
         let spins = ft_model_compile(m);
-        assert!(spins > 9, "three categoricals are 9 spins; the ancilla makes it more: {spins}");
+        assert!(
+            spins > 9,
+            "three categoricals are 9 spins; the ancilla makes it more: {spins}"
+        );
         assert_eq!(ft_model_solve(m, 24), 1);
         for &i in &v {
-            assert_eq!(ft_model_value(m, i), 2, "the reward is only paid when all three hold");
+            assert_eq!(
+                ft_model_value(m, i),
+                2,
+                "the reward is only paid when all three hold"
+            );
         }
         ft_model_free(m);
     }
@@ -4049,10 +4629,22 @@ mod cardinality_ffi {
     fn an_objective_product_refuses_what_it_cannot_mean() {
         let m = ft_model_new();
         let x = ft_model_categorical(m, 3);
-        assert_eq!(ft_model_objective_product(m, 1, 1.0), 0, "no literals is not a term");
+        assert_eq!(
+            ft_model_objective_product(m, 1, 1.0),
+            0,
+            "no literals is not a term"
+        );
         ft_model_lit(m, x, 1);
-        assert_eq!(ft_model_objective_product(m, 1, f64::NAN), 0, "NaN is not a coefficient");
-        assert_eq!(ft_model_lits(m), 0, "and a refused term does not bleed into the next");
+        assert_eq!(
+            ft_model_objective_product(m, 1, f64::NAN),
+            0,
+            "NaN is not a coefficient"
+        );
+        assert_eq!(
+            ft_model_lits(m),
+            0,
+            "and a refused term does not bleed into the next"
+        );
         ft_model_free(m);
     }
 
@@ -4114,19 +4706,35 @@ mod cardinality_ffi {
         let a = ft_model_binary(m);
         let b = ft_model_binary(m);
         ft_model_lit(m, a, 1);
-        assert_eq!(ft_model_close(m, 1, 1), 0, "one literal is not a counting constraint");
+        assert_eq!(
+            ft_model_close(m, 1, 1),
+            0,
+            "one literal is not a counting constraint"
+        );
         assert_eq!(ft_model_lits(m), 0, "and the list is cleared even so");
 
         ft_model_lit(m, a, 1);
         ft_model_lit(m, b, 1);
-        assert_eq!(ft_model_close(m, 0, 5), 0, "k cannot exceed the literal count");
+        assert_eq!(
+            ft_model_close(m, 0, 5),
+            0,
+            "k cannot exceed the literal count"
+        );
         assert_eq!(ft_model_lits(m), 0);
-        assert_eq!(ft_model_close(m, 9, 1), 0, "and an unknown kind is refused by name");
+        assert_eq!(
+            ft_model_close(m, 9, 1),
+            0,
+            "and an unknown kind is refused by name"
+        );
 
         // a bad literal is refused at the push, not silently carried
         assert_eq!(ft_model_lit(m, 99, 1), 0, "no such variable");
         let t = ft_model_integer(m, 10, 20);
-        assert_eq!(ft_model_lit(m, t, 3), 0, "3 is not a temperature in 10..=20");
+        assert_eq!(
+            ft_model_lit(m, t, 3),
+            0,
+            "3 is not a temperature in 10..=20"
+        );
         ft_model_free(m);
     }
 
@@ -4147,13 +4755,21 @@ mod cardinality_ffi {
             }
             assert!(ft_model_compile(m) > 0);
             ft_model_solve(m, 16);
-            let out = (ft_model_feasible(m), ft_model_value(m, a), ft_model_value(m, b));
+            let out = (
+                ft_model_feasible(m),
+                ft_model_value(m, a),
+                ft_model_value(m, b),
+            );
             ft_model_free(m);
             out
         };
         // pinned low, the constraint is outbid and both take 1
         let (_, a, b) = build(1.0);
-        assert_eq!((a, b), (1, 1), "a penalty of 1 against a weight of 40 loses, as it should");
+        assert_eq!(
+            (a, b),
+            (1, 1),
+            "a penalty of 1 against a weight of 40 loses, as it should"
+        );
         // raised, it holds
         let (feasible, a, b) = build(200.0);
         assert_eq!(feasible, 1);
@@ -4181,7 +4797,11 @@ mod cardinality_ffi {
         assert!(ft_model_compile(m) > 0);
         assert_eq!(ft_model_solve(m, 16), 1);
         let on: Vec<usize> = (0..4).filter(|&i| ft_model_value(m, v[i]) == 1).collect();
-        assert_eq!(on, vec![0, 1, 2], "three rewarded, one penalised, and no flipping");
+        assert_eq!(
+            on,
+            vec![0, 1, 2],
+            "three rewarded, one penalised, and no flipping"
+        );
         ft_model_free(m);
     }
 
@@ -4209,7 +4829,11 @@ mod cardinality_ffi {
         let b = ft_model_binary(m);
         let n = "shift";
         assert_eq!(ft_model_name(m, a, n.as_ptr(), n.len() as u32), 1);
-        assert_eq!(ft_model_name(m, b, n.as_ptr(), n.len() as u32), 0, "already taken");
+        assert_eq!(
+            ft_model_name(m, b, n.as_ptr(), n.len() as u32),
+            0,
+            "already taken"
+        );
         let mut buf = [0u8; 256];
         let k = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
         let e = core::str::from_utf8(&buf[..k]).unwrap();
@@ -4231,8 +4855,16 @@ mod cardinality_ffi {
         ft_model_fix(m, x, 2);
         assert!(ft_model_compile(m) > 0);
         assert_eq!(ft_model_solve(m, 4), 1);
-        assert_eq!(ft_model_value(m, x), 2, "a renamed variable still reads back by index");
-        assert_eq!(ft_model_value(m, 99), i64::MIN, "and an index that does not exist does not");
+        assert_eq!(
+            ft_model_value(m, x),
+            2,
+            "a renamed variable still reads back by index"
+        );
+        assert_eq!(
+            ft_model_value(m, 99),
+            i64::MIN,
+            "and an index that does not exist does not"
+        );
         ft_model_free(m);
     }
 
@@ -4246,7 +4878,10 @@ mod cardinality_ffi {
         let mut buf = [0u8; 256];
         let n = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
         let e = core::str::from_utf8(&buf[..n]).unwrap();
-        assert!(e.contains("'temperature'"), "should name the variable the caller knows: {e}");
+        assert!(
+            e.contains("'temperature'"),
+            "should name the variable the caller knows: {e}"
+        );
         assert!(!e.contains("v0"), "and not the handle they never saw: {e}");
         ft_model_free(m);
     }
@@ -4257,14 +4892,22 @@ mod cardinality_ffi {
         // caller has no stack to fall back on.
         let m = ft_model_new();
         let t = ft_model_integer(m, 10, 20);
-        assert_eq!(ft_model_fix(m, t, 3), 0, "3 is a slot, not a temperature in 10..=20");
+        assert_eq!(
+            ft_model_fix(m, t, 3),
+            0,
+            "3 is a slot, not a temperature in 10..=20"
+        );
         let mut buf = [0u8; 256];
         let n = ft_model_error(m, buf.as_mut_ptr(), buf.len() as u32) as usize;
         let e = core::str::from_utf8(&buf[..n]).unwrap();
         assert!(e.contains("10..=20") && e.contains("3 is not"), "{e}");
 
         assert_eq!(ft_model_fix(m, t, 13), 1, "13 is one");
-        assert_eq!(ft_model_objective_term(m, 1, 1.0, t, 99), 0, "and 99 is not");
+        assert_eq!(
+            ft_model_objective_term(m, 1, 1.0, t, 99),
+            0,
+            "and 99 is not"
+        );
         ft_model_free(m);
     }
 
@@ -4282,8 +4925,16 @@ mod cardinality_ffi {
         assert_eq!(ft_model_solve_with(m, 4, 0.0, 0.0, 0, 0), 1);
         assert_eq!(ft_model_feasible(m), 1);
         // a ladder that runs backwards is not a ladder
-        assert_eq!(ft_model_solve_with(m, 4, 8.0, 0.05, 60, 20), 0, "hot-to-cold only");
-        assert_eq!(ft_model_solve_with(m, 4, f64::NAN, 6.0, 60, 20), 0, "NaN is not a temperature");
+        assert_eq!(
+            ft_model_solve_with(m, 4, 8.0, 0.05, 60, 20),
+            0,
+            "hot-to-cold only"
+        );
+        assert_eq!(
+            ft_model_solve_with(m, 4, f64::NAN, 6.0, 60, 20),
+            0,
+            "NaN is not a temperature"
+        );
         ft_model_free(m);
     }
 
@@ -4323,10 +4974,16 @@ mod cardinality_ffi {
         let m = ft_model_new();
         let a = ft_model_binary(m);
         let b = ft_model_binary(m);
-        assert_eq!(ft_model_cardinality(m, 1, 1, 1, a, u32::MAX, u32::MAX, u32::MAX), 0,
-                   "one variable is not a cardinality constraint");
-        assert_eq!(ft_model_cardinality(m, 2, 5, 1, a, b, u32::MAX, u32::MAX), 0,
-                   "k cannot exceed the number of variables");
+        assert_eq!(
+            ft_model_cardinality(m, 1, 1, 1, a, u32::MAX, u32::MAX, u32::MAX),
+            0,
+            "one variable is not a cardinality constraint"
+        );
+        assert_eq!(
+            ft_model_cardinality(m, 2, 5, 1, a, b, u32::MAX, u32::MAX),
+            0,
+            "k cannot exceed the number of variables"
+        );
         ft_model_free(m);
     }
 }
@@ -4342,14 +4999,21 @@ mod cardinality_ffi {
 /// Never, for the same reason as `ft_collect`.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_model_certify(m: *mut ModelHandle, beta: f64, draws: u32, thin: u32) -> u32 {
-    let Some(h) = (unsafe { m.as_mut() }) else { return 0 };
-    let Some(c) = h.compiled.as_ref() else { return 0 };
+    let Some(h) = (unsafe { m.as_mut() }) else {
+        return 0;
+    };
+    let Some(c) = h.compiled.as_ref() else {
+        return 0;
+    };
     if draws < 16 || !(beta > 0.0) {
         return 0;
     }
     let g = &c.graph;
     let mut smp = Sampler::new(g, beta, 1);
-    let set = smp.collect(&crate::samples::Plan::new(200, draws as usize, thin.max(1) as usize), None);
+    let set = smp.collect(
+        &crate::samples::Plan::new(200, draws as usize, thin.max(1) as usize),
+        None,
+    );
     h.cert = Some(set.certificate(g).expect("collect returns a chain"));
     1
 }
@@ -4367,9 +5031,11 @@ macro_rules! model_cert_field {
     };
 }
 
-model_cert_field!(ft_model_cert_beta, |c: &crate::certify::Certificate| c.beta_eff);
+model_cert_field!(ft_model_cert_beta, |c: &crate::certify::Certificate| c
+    .beta_eff);
 model_cert_field!(ft_model_cert_ess, |c: &crate::certify::Certificate| c.ess);
-model_cert_field!(ft_model_cert_tau, |c: &crate::certify::Certificate| c.tau_int);
+model_cert_field!(ft_model_cert_tau, |c: &crate::certify::Certificate| c
+    .tau_int);
 model_cert_field!(ft_model_cert_tv, |c: &crate::certify::Certificate| c
     .tv_exact
     .unwrap_or(f64::NAN));
@@ -4394,8 +5060,12 @@ pub extern "C" fn ft_model_cert_finding(
     buf: *mut u8,
     cap: u32,
 ) -> u32 {
-    let Some(c) = unsafe { m.as_ref() }.and_then(|h| h.cert.as_ref()) else { return 0 };
-    let Some(fnd) = c.findings.get(i as usize) else { return 0 };
+    let Some(c) = unsafe { m.as_ref() }.and_then(|h| h.cert.as_ref()) else {
+        return 0;
+    };
+    let Some(fnd) = c.findings.get(i as usize) else {
+        return 0;
+    };
     let text = fnd.to_string();
     let b = text.as_bytes();
     if buf.is_null() {
@@ -4419,7 +5089,10 @@ mod model_cert_tests {
         assert!(ft_model_compile(m) > 0);
         assert_eq!(ft_model_certify(m, 0.5, 800, 4), 1);
         let beta = ft_model_cert_beta(m);
-        assert!((beta - 0.5).abs() < 0.15, "beta_eff {beta} should be near the 0.5 asked for");
+        assert!(
+            (beta - 0.5).abs() < 0.15,
+            "beta_eff {beta} should be near the 0.5 asked for"
+        );
         assert!(ft_model_cert_ess(m) > 0.0);
         ft_model_free(m);
     }
@@ -4429,7 +5102,11 @@ mod model_cert_tests {
         let m = ft_model_new();
         ft_model_categorical(m, 3);
         assert_eq!(ft_model_certify(m, 0.5, 800, 1), 0, "nothing compiled yet");
-        assert_eq!(ft_model_certify(m, 0.5, 4, 1), 0, "and 4 draws certifies nothing");
+        assert_eq!(
+            ft_model_certify(m, 0.5, 4, 1),
+            0,
+            "and 4 draws certifies nothing"
+        );
         assert!(ft_model_cert_beta(m).is_nan());
         ft_model_free(m);
     }
@@ -4454,7 +5131,9 @@ mod model_cert_tests {
 /// means never restart.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_tabu(sim: *mut Sim, iterations: u32, tenure: u32, restart_after: u32) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     let p = crate::tabu::Params {
         iterations: iterations.max(1) as usize,
         tenure: tenure as usize,
@@ -4480,7 +5159,9 @@ pub extern "C" fn ft_tabu(sim: *mut Sim, iterations: u32, tenure: u32, restart_a
 /// iterations returned a result shaped exactly like a completed one.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_tabu_iterations(sim: *const Sim) -> u64 {
-    unsafe { sim.as_ref() }.and_then(|s| s.tb.as_ref()).map_or(0, |o| o.iterations_run as u64)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.tb.as_ref())
+        .map_or(0, |o| o.iterations_run as u64)
 }
 
 /// Population annealing. Returns the best energy found, or NaN on a null handle.
@@ -4495,7 +5176,9 @@ pub extern "C" fn ft_popanneal(
     beta_max: f64,
     stages: u32,
 ) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     if !beta_max.is_finite() || beta_max < 0.0 {
         return f64::NAN;
     }
@@ -4525,7 +5208,9 @@ pub extern "C" fn ft_popanneal(
 /// above 24) or the handle is null. Bounded by treewidth, not by spin count.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_exact(sim: *const Sim, beta: f64) -> f64 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return f64::NAN;
+    };
     if !beta.is_finite() || beta < 0.0 {
         return f64::NAN;
     }
@@ -4541,7 +5226,9 @@ pub extern "C" fn ft_ln_z_exact(sim: *const Sim, beta: f64) -> f64 {
 /// Zero arguments take the defaults 64 / 2 / 128.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_ais(sim: *mut Sim, beta: f64, rungs: u32, sweeps: u32, runs: u32) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     if !beta.is_finite() || beta <= 0.0 {
         return f64::NAN;
     }
@@ -4595,7 +5282,9 @@ pub extern "C" fn ft_ln_z_ti(
     lower_out: *mut f64,
     upper_out: *mut f64,
 ) -> f64 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return f64::NAN;
+    };
     if !beta.is_finite() || beta <= 0.0 {
         return f64::NAN;
     }
@@ -4604,7 +5293,8 @@ pub extern "C" fn ft_ln_z_ti(
     let draws = if draws < 4 { 2000 } else { draws as usize };
     let z = if z.is_finite() && z > 0.0 { z } else { 3.0 };
     let ladder = crate::free_energy::linear_ladder(beta, rungs);
-    let t = crate::free_energy::thermodynamic_integration(&s.graph, &ladder, burn_in, draws, z, s.seed);
+    let t =
+        crate::free_energy::thermodynamic_integration(&s.graph, &ladder, burn_in, draws, z, s.seed);
     if !lower_out.is_null() {
         unsafe { *lower_out = t.lower_widened };
     }
@@ -4621,15 +5311,31 @@ pub extern "C" fn ft_ln_z_ti(
 /// full curve -- entropy and heat capacity per rung -- is `free_energy::thermodynamics`,
 /// Rust-only. NaN on a null handle or `beta <= 0`; zero arguments take the defaults 32/200/2000.
 #[unsafe(no_mangle)]
-pub extern "C" fn ft_ln_z_bar(sim: *const Sim, beta: f64, rungs: u32, burn_in: u32, draws: u32, stderr_out: *mut f64) -> f64 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+pub extern "C" fn ft_ln_z_bar(
+    sim: *const Sim,
+    beta: f64,
+    rungs: u32,
+    burn_in: u32,
+    draws: u32,
+    stderr_out: *mut f64,
+) -> f64 {
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return f64::NAN;
+    };
     if !beta.is_finite() || beta <= 0.0 {
         return f64::NAN;
     }
     let rungs = if rungs < 2 { 32 } else { rungs as usize };
     let burn_in = if burn_in == 0 { 200 } else { burn_in as usize };
     let draws = if draws < 4 { 2000 } else { draws as usize };
-    let th = crate::free_energy::thermodynamics(&s.graph, &crate::free_energy::linear_ladder(beta, rungs), burn_in, draws, 3.0, s.seed);
+    let th = crate::free_energy::thermodynamics(
+        &s.graph,
+        &crate::free_energy::linear_ladder(beta, rungs),
+        burn_in,
+        draws,
+        3.0,
+        s.seed,
+    );
     let top = th.top();
     if !stderr_out.is_null() {
         unsafe { *stderr_out = top.stderr };
@@ -4643,7 +5349,9 @@ pub extern "C" fn ft_ln_z_bar(sim: *const Sim, beta: f64, rungs: u32, burn_in: u
 /// it is tightest. NaN on a null handle or `beta < 0`.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_mean_field(sim: *const Sim, beta: f64) -> f64 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return f64::NAN;
+    };
     if !beta.is_finite() || beta < 0.0 {
         return f64::NAN;
     }
@@ -4655,7 +5363,9 @@ pub extern "C" fn ft_ln_z_mean_field(sim: *const Sim, beta: f64) -> f64 {
 /// NaN on a null handle, `beta < 0`, or a run that did not converge to 1e-8.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_ln_z_bethe(sim: *const Sim, beta: f64) -> f64 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return f64::NAN;
+    };
     if !beta.is_finite() || beta < 0.0 {
         return f64::NAN;
     }
@@ -4707,7 +5417,9 @@ pub extern "C" fn ft_popanneal_rho(sim: *const Sim) -> f64 {
 /// the proof is missing.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_branch(sim: *mut Sim, max_nodes: u64) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     let p = crate::branch::Params {
         max_nodes: max_nodes.max(1),
         incumbent: Some(s.sampler_state.clone()),
@@ -4734,7 +5446,9 @@ pub extern "C" fn ft_branch_proved(sim: *const Sim) -> u32 {
 /// Nodes the last [`ft_branch`] visited. 0 if there was none.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_branch_nodes(sim: *const Sim) -> u64 {
-    unsafe { sim.as_ref() }.and_then(|s| s.bb.as_ref()).map_or(0, |o| o.nodes)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.bb.as_ref())
+        .map_or(0, |o| o.nodes)
 }
 
 /// An **upper bound** on the maximum cut of a toroidal grid, from the same dual reduction.
@@ -4753,18 +5467,23 @@ pub extern "C" fn ft_branch_nodes(sim: *const Sim) -> u64 {
 /// happens to be achieved by a genuine cut, in which case it is the maximum rather than a bound.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_toroidal_bound(sim: *mut Sim, scale: f64) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     s.tor = None;
-    let Some(emb) = crate::planar::torus_grid_of(&s.graph) else { return f64::NAN };
+    let Some(emb) = crate::planar::torus_grid_of(&s.graph) else {
+        return f64::NAN;
+    };
     let p = crate::planarcut::Params { scale };
     match crate::planarcut::bound_on_surface(&s.graph, &emb, &p) {
         Ok(b) => {
             // A bound that is attained comes with the state that attains it, and leaving it behind
             // is what makes `ft_energy` the proved minimum in that case.
             if let Some(st) = &b.state
-                && st.len() == s.sampler_state.len() {
-                    s.sampler_state.copy_from_slice(st);
-                }
+                && st.len() == s.sampler_state.len()
+            {
+                s.sampler_state.copy_from_slice(st);
+            }
             let c = b.cut;
             s.tor = Some(b);
             c
@@ -4798,8 +5517,15 @@ pub extern "C" fn ft_toroidal_attained(sim: *const Sim) -> u32 {
 /// was, because a guarantee that is always claimed is not a guarantee.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_gw_round(sim: *mut Sim, hyperplanes: u32, seed: u64) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
-    let r = crate::sdp::goemans_williamson(&s.graph, &crate::sdp::Params::default(), seed, hyperplanes.max(1) as usize);
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
+    let r = crate::sdp::goemans_williamson(
+        &s.graph,
+        &crate::sdp::Params::default(),
+        seed,
+        hyperplanes.max(1) as usize,
+    );
     if r.state.len() == s.sampler_state.len() {
         s.sampler_state.copy_from_slice(&r.state);
     }
@@ -4827,8 +5553,16 @@ pub extern "C" fn ft_gw_guaranteed(sim: *const Sim) -> u32 {
 /// Returns the best energy found, or NaN when the graph carries a **field** — the isoenergetic
 /// argument holds only at `h = 0`, and accepting the move anyway would be silently wrong.
 #[unsafe(no_mangle)]
-pub extern "C" fn ft_icm(sim: *mut Sim, rungs: u32, rounds: u32, beta_min: f64, beta_max: f64) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+pub extern "C" fn ft_icm(
+    sim: *mut Sim,
+    rungs: u32,
+    rounds: u32,
+    beta_min: f64,
+    beta_max: f64,
+) -> f64 {
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     if !(beta_min > 0.0 && beta_max > beta_min) {
         return f64::NAN;
     }
@@ -4858,7 +5592,9 @@ pub extern "C" fn ft_icm(sim: *mut Sim, rungs: u32, rounds: u32, beta_min: f64, 
 /// no disagreement subgraph and nothing to exchange.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_icm_moves(sim: *const Sim) -> u64 {
-    unsafe { sim.as_ref() }.and_then(|s| s.ic.as_ref()).map_or(0, |o| o.icm_moves as u64)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.ic.as_ref())
+        .map_or(0, |o| o.icm_moves as u64)
 }
 
 /// Simulated quantum annealing: path-integral Monte Carlo on the transverse-field Ising model.
@@ -4876,7 +5612,9 @@ pub extern "C" fn ft_sqa(
     gamma_min: f64,
     steps: u32,
 ) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     if !(beta > 0.0 && gamma_max > 0.0 && gamma_min >= 0.0 && gamma_max >= gamma_min) {
         return f64::NAN;
     }
@@ -4905,7 +5643,9 @@ pub extern "C" fn ft_sqa(
 /// honestly: a wall-clock one needs a quiet machine.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_bls(sim: *mut Sim, iterations: u32) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     let p = crate::bls::Params {
         iterations: iterations.max(1) as usize,
         // Same as `ft_tabu`: start from this simulation's state rather than discarding it.
@@ -4937,10 +5677,16 @@ pub extern "C" fn ft_bls(sim: *mut Sim, iterations: u32) -> f64 {
 /// a null handle.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hfs(sim: *mut Sim, steps: u32, block: u32) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     let p = crate::hfs::Params {
         steps: steps.max(1) as usize,
-        block: if block == 0 { crate::hfs::Params::default().block } else { block as usize },
+        block: if block == 0 {
+            crate::hfs::Params::default().block
+        } else {
+            block as usize
+        },
         ..crate::hfs::Params::default()
     };
     let out = crate::hfs::run_from(&s.graph, s.sampler_state.clone(), &p, s.seed);
@@ -4955,7 +5701,9 @@ pub extern "C" fn ft_hfs(sim: *mut Sim, steps: u32, block: u32) -> f64 {
 /// Block moves the last [`ft_hfs`] actually ran. 0 if there was none.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hfs_moves(sim: *const Sim) -> u64 {
-    unsafe { sim.as_ref() }.and_then(|s| s.hf.as_ref()).map_or(0, |o| o.moves as u64)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.hf.as_ref())
+        .map_or(0, |o| o.moves as u64)
 }
 
 /// Block moves that strictly LOWERED the energy. 0 if there was none.
@@ -4964,7 +5712,9 @@ pub extern "C" fn ft_hfs_moves(sim: *const Sim) -> u64 {
 /// minimum they already sit in has stopped, and no energy figure shows that.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hfs_improving(sim: *const Sim) -> u64 {
-    unsafe { sim.as_ref() }.and_then(|s| s.hf.as_ref()).map_or(0, |o| o.improving as u64)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.hf.as_ref())
+        .map_or(0, |o| o.improving as u64)
 }
 
 /// Local optima the last [`ft_bls`] visited. 0 if there was none.
@@ -4973,13 +5723,17 @@ pub extern "C" fn ft_hfs_improving(sim: *const Sim) -> u64 {
 /// its budget inside one basin and is a descent, not a breakout search.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_bls_descents(sim: *const Sim) -> u64 {
-    unsafe { sim.as_ref() }.and_then(|s| s.bl.as_ref()).map_or(0, |o| o.descents as u64)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.bl.as_ref())
+        .map_or(0, |o| o.descents as u64)
 }
 
 /// Flips the last [`ft_bls`] actually made, which is not always the budget it was given.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_bls_iterations(sim: *const Sim) -> u64 {
-    unsafe { sim.as_ref() }.and_then(|s| s.bl.as_ref()).map_or(0, |o| o.iterations_run as u64)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.bl.as_ref())
+        .map_or(0, |o| o.iterations_run as u64)
 }
 
 /// The largest jump magnitude the last [`ft_bls`] reached — how hard it had to work to escape.
@@ -4988,7 +5742,9 @@ pub extern "C" fn ft_bls_iterations(sim: *const Sim) -> u64 {
 /// the initial `L0` is direct evidence the adaptive rule fired rather than idled.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_bls_max_jump(sim: *const Sim) -> u32 {
-    unsafe { sim.as_ref() }.and_then(|s| s.bl.as_ref()).map_or(0, |o| o.max_jump as u32)
+    unsafe { sim.as_ref() }
+        .and_then(|s| s.bl.as_ref())
+        .map_or(0, |o| o.max_jump as u32)
 }
 
 /// **Exact** max-cut on a planar graph, in polynomial time. Not a search.
@@ -5003,7 +5759,9 @@ pub extern "C" fn ft_bls_max_jump(sim: *const Sim) -> u32 {
 /// land on an integer is refused rather than rounded.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_planar_cut(sim: *mut Sim, scale: f64) -> f64 {
-    let Some(s) = (unsafe { sim.as_mut() }) else { return f64::NAN };
+    let Some(s) = (unsafe { sim.as_mut() }) else {
+        return f64::NAN;
+    };
     let p = crate::planarcut::Params { scale };
     match crate::planarcut::solve(&s.graph, &p) {
         Ok(o) => {
@@ -5079,8 +5837,9 @@ pub extern "C" fn ft_bound_decoupled(sim: *const Sim) -> f64 {
 /// caveat, because a caller comparing bounds should be able to see that for themselves.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_bound_forest(sim: *const Sim, rounds: u32) -> f64 {
-    unsafe { sim.as_ref() }
-        .map_or(f64::NAN, |s| crate::bound::forest(&s.graph, rounds as usize).value)
+    unsafe { sim.as_ref() }.map_or(f64::NAN, |s| {
+        crate::bound::forest(&s.graph, rounds as usize).value
+    })
 }
 
 /// Charges `2·min|J|` for every edge-disjoint frustrated cycle up to length `max_len`.
@@ -5089,8 +5848,9 @@ pub extern "C" fn ft_bound_forest(sim: *const Sim, rounds: u32) -> f64 {
 /// by the same single violation.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_bound_odd_cycle(sim: *const Sim, max_len: u32) -> f64 {
-    unsafe { sim.as_ref() }
-        .map_or(f64::NAN, |s| crate::bound::odd_cycle(&s.graph, max_len as usize).value)
+    unsafe { sim.as_ref() }.map_or(f64::NAN, |s| {
+        crate::bound::odd_cycle(&s.graph, max_len as usize).value
+    })
 }
 
 /// The certified semidefinite bound — **re-verified at this boundary before it is returned**.
@@ -5102,8 +5862,13 @@ pub extern "C" fn ft_bound_odd_cycle(sim: *const Sim, max_len: u32) -> f64 {
 /// check it themselves.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_bound_sdp(sim: *const Sim, sweeps: u32, seed: u64) -> f64 {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return f64::NAN };
-    let p = crate::sdp::Params { sweeps: sweeps.max(1) as usize, ..crate::sdp::Params::default() };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return f64::NAN;
+    };
+    let p = crate::sdp::Params {
+        sweeps: sweeps.max(1) as usize,
+        ..crate::sdp::Params::default()
+    };
     let (_, cert) = crate::sdp::certified(&s.graph, &p, seed);
     cert.verify(&s.graph).unwrap_or(f64::NAN)
 }
@@ -5173,7 +5938,9 @@ pub extern "C" fn ft_hubo_free(h: *mut HuboHandle) {
 /// from outside Rust: build a graph, lift it, and check that both paths score it identically.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_from_sim(sim: *const Sim) -> *mut HuboHandle {
-    let Some(s) = (unsafe { sim.as_ref() }) else { return core::ptr::null_mut() };
+    let Some(s) = (unsafe { sim.as_ref() }) else {
+        return core::ptr::null_mut();
+    };
     let hubo = Hubo::from_graph(&s.graph);
     Box::into_raw(Box::new(HuboHandle {
         hubo,
@@ -5188,7 +5955,9 @@ pub extern "C" fn ft_hubo_from_sim(sim: *const Sim) -> *mut HuboHandle {
 /// Start a fresh variable list for the next term.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_vars_clear(h: *mut HuboHandle) -> u32 {
-    let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+    let Some(hh) = (unsafe { h.as_mut() }) else {
+        return 0;
+    };
     hh.vars.clear();
     1
 }
@@ -5200,14 +5969,17 @@ pub extern "C" fn ft_hubo_vars_clear(h: *mut HuboHandle) -> u32 {
 /// was wrong. `Hubo::add` refuses it too; this is the earlier of the two.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_var(h: *mut HuboHandle, var: u32) -> u32 {
-    let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+    let Some(hh) = (unsafe { h.as_mut() }) else {
+        return 0;
+    };
     if var as usize >= hh.hubo.len() {
         hh.last_error = format!("no variable {var}; {} declared", hh.hubo.len());
         return 0;
     }
     if hh.vars.contains(&var) {
-        hh.last_error =
-            format!("variable {var} is already in this term; s*s = 1, so a repeat would change its order");
+        hh.last_error = format!(
+            "variable {var} is already in this term; s*s = 1, so a repeat would change its order"
+        );
         return 0;
     }
     hh.vars.push(var);
@@ -5230,8 +6002,13 @@ pub extern "C" fn ft_hubo_vars(h: *const HuboHandle) -> u32 {
 /// variables pending would be silently absorbed by the next one.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_add(h: *mut HuboHandle, weight: f64) -> u32 {
-    let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
-    let vars: Vec<usize> = core::mem::take(&mut hh.vars).iter().map(|&v| v as usize).collect();
+    let Some(hh) = (unsafe { h.as_mut() }) else {
+        return 0;
+    };
+    let vars: Vec<usize> = core::mem::take(&mut hh.vars)
+        .iter()
+        .map(|&v| v as usize)
+        .collect();
     match hh.hubo.add(&vars, weight) {
         Ok(()) => {
             hh.last_error.clear();
@@ -5259,7 +6036,9 @@ pub extern "C" fn ft_hubo_term(
     c: u32,
     d: u32,
 ) -> u32 {
-    let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+    let Some(hh) = (unsafe { h.as_mut() }) else {
+        return 0;
+    };
     if count == 0 || count > 4 {
         hh.last_error = format!("this form takes one to four variables, not {count}");
         return 0;
@@ -5268,7 +6047,9 @@ pub extern "C" fn ft_hubo_term(
     for &v in [a, b, c, d].iter().take(count as usize) {
         if ft_hubo_var(h, v) == 0 {
             // ft_hubo_var left the reason behind; clear the partial term so it cannot bleed.
-            let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+            let Some(hh) = (unsafe { h.as_mut() }) else {
+                return 0;
+            };
             hh.vars.clear();
             return 0;
         }
@@ -5330,22 +6111,35 @@ pub extern "C" fn ft_hubo_anneal(
     sweeps_per_stage: u32,
     seed: u64,
 ) -> f64 {
-    let Some(hh) = (unsafe { h.as_mut() }) else { return f64::NAN };
+    let Some(hh) = (unsafe { h.as_mut() }) else {
+        return f64::NAN;
+    };
     if !beta_min.is_finite() || !beta_max.is_finite() || beta_min < 0.0 || beta_max < 0.0 {
-        hh.last_error =
-            format!("a beta ladder needs two finite non-negative numbers, not {beta_min} and {beta_max}");
+        hh.last_error = format!(
+            "a beta ladder needs two finite non-negative numbers, not {beta_min} and {beta_max}"
+        );
         return f64::NAN;
     }
     let d = HuboParams::default();
     let p = HuboParams {
         beta_min: if beta_min > 0.0 { beta_min } else { d.beta_min },
         beta_max: if beta_max > 0.0 { beta_max } else { d.beta_max },
-        stages: if stages > 0 { stages as usize } else { d.stages },
-        sweeps_per_stage: if sweeps_per_stage > 0 { sweeps_per_stage as usize } else { d.sweeps_per_stage },
+        stages: if stages > 0 {
+            stages as usize
+        } else {
+            d.stages
+        },
+        sweeps_per_stage: if sweeps_per_stage > 0 {
+            sweeps_per_stage as usize
+        } else {
+            d.sweeps_per_stage
+        },
     };
     if p.beta_max <= p.beta_min {
-        hh.last_error =
-            format!("beta_max must exceed beta_min; got {} and {}", p.beta_max, p.beta_min);
+        hh.last_error = format!(
+            "beta_max must exceed beta_min; got {} and {}",
+            p.beta_max, p.beta_min
+        );
         return f64::NAN;
     }
     let out = crate::hubo::anneal_metered(&hh.hubo, &p, seed, Some(&mut hh.ledger));
@@ -5369,7 +6163,9 @@ pub extern "C" fn ft_hubo_spins(h: *const HuboHandle) -> *const i8 {
 /// Copy the state out. Refuses a length that is not exactly the model's, never writing partially.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_read(h: *const HuboHandle, out: *mut i8, len: u32) -> u32 {
-    let Some(hh) = (unsafe { h.as_ref() }) else { return 0 };
+    let Some(hh) = (unsafe { h.as_ref() }) else {
+        return 0;
+    };
     if out.is_null() || len as usize != hh.state.len() {
         return 0;
     }
@@ -5383,10 +6179,11 @@ pub extern "C" fn ft_hubo_read(h: *const HuboHandle, out: *mut i8, len: u32) -> 
 /// model half-set from a bad buffer would score a state that never existed anywhere.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_set_spins(h: *mut HuboHandle, ptr: *const i8, len: u32) -> u32 {
-    let Some(hh) = (unsafe { h.as_mut() }) else { return 0 };
+    let Some(hh) = (unsafe { h.as_mut() }) else {
+        return 0;
+    };
     if ptr.is_null() || len as usize != hh.hubo.len() {
-        hh.last_error =
-            format!("this model has {} spins; {len} were offered", hh.hubo.len());
+        hh.last_error = format!("this model has {} spins; {len} were offered", hh.hubo.len());
         return 0;
     }
     let src = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
@@ -5426,25 +6223,33 @@ pub extern "C" fn ft_hubo_delta(h: *const HuboHandle, i: u32) -> f64 {
 /// Flips proposed by the last run. Without it a run that moved nothing looks like a completed one.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_proposals(h: *const HuboHandle) -> u64 {
-    unsafe { h.as_ref() }.and_then(|hh| hh.out.as_ref()).map_or(0, |o| o.proposals)
+    unsafe { h.as_ref() }
+        .and_then(|hh| hh.out.as_ref())
+        .map_or(0, |o| o.proposals)
 }
 
 /// Flips accepted by the last run.
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_accepted(h: *const HuboHandle) -> u64 {
-    unsafe { h.as_ref() }.and_then(|hh| hh.out.as_ref()).map_or(0, |o| o.accepted)
+    unsafe { h.as_ref() }
+        .and_then(|hh| hh.out.as_ref())
+        .map_or(0, |o| o.accepted)
 }
 
 /// Joules this model WOULD have cost on a Z1-class device (vendor SPICE prices, pre-silicon).
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_joules_z1(h: *const HuboHandle) -> f64 {
-    unsafe { h.as_ref() }.map_or(f64::NAN, |hh| hh.ledger.joules(&Z1_SPICE).unwrap_or(f64::NAN))
+    unsafe { h.as_ref() }.map_or(f64::NAN, |hh| {
+        hh.ledger.joules(&Z1_SPICE).unwrap_or(f64::NAN)
+    })
 }
 
 /// The last refusal, as UTF-8. Same two-call protocol as [`ft_model_error`].
 #[unsafe(no_mangle)]
 pub extern "C" fn ft_hubo_error(h: *const HuboHandle, buf: *mut u8, cap: u32) -> u32 {
-    let Some(hh) = (unsafe { h.as_ref() }) else { return 0 };
+    let Some(hh) = (unsafe { h.as_ref() }) else {
+        return 0;
+    };
     let b = hh.last_error.as_bytes();
     if buf.is_null() {
         return b.len() as u32;
@@ -5463,7 +6268,10 @@ mod solver_ffi_tests {
     #[test]
     fn every_solver_leaves_the_state_its_energy_belongs_to() {
         for (name, run) in [
-            ("tabu", (|s: *mut Sim| ft_tabu(s, 4_000, 0, 1_000)) as fn(*mut Sim) -> f64),
+            (
+                "tabu",
+                (|s: *mut Sim| ft_tabu(s, 4_000, 0, 1_000)) as fn(*mut Sim) -> f64,
+            ),
             ("bls", |s: *mut Sim| ft_bls(s, 4_000)),
             ("popanneal", |s: *mut Sim| ft_popanneal(s, 64, 2, 6.0, 20)),
             ("branch", |s: *mut Sim| ft_branch(s, 2_000_000)),
@@ -5473,11 +6281,22 @@ mod solver_ffi_tests {
             let e = run(sim);
             assert!(e.is_finite(), "{name} returned {e}");
             if name == "tabu" {
-                assert_eq!(ft_tabu_iterations(sim), 4_000, "the whole budget, not a truncated run");
+                assert_eq!(
+                    ft_tabu_iterations(sim),
+                    4_000,
+                    "the whole budget, not a truncated run"
+                );
             }
             if name == "bls" {
-                assert_eq!(ft_bls_iterations(sim), 4_000, "the whole budget, not a truncated run");
-                assert!(ft_bls_descents(sim) > 0, "a search with no descents is not a search");
+                assert_eq!(
+                    ft_bls_iterations(sim),
+                    4_000,
+                    "the whole budget, not a truncated run"
+                );
+                assert!(
+                    ft_bls_descents(sim) > 0,
+                    "a search with no descents is not a search"
+                );
                 assert!(ft_bls_max_jump(sim) >= 1);
             }
             assert!(
@@ -5486,7 +6305,10 @@ mod solver_ffi_tests {
                 ft_energy(sim)
             );
             let known = ft_ground_energy(sim);
-            assert!(e >= known - 1e-9, "{name} beat the planted optimum {known} with {e}");
+            assert!(
+                e >= known - 1e-9,
+                "{name} beat the planted optimum {known} with {e}"
+            );
             ft_free(sim);
         }
     }
@@ -5496,9 +6318,16 @@ mod solver_ffi_tests {
     fn the_proof_flag_crosses_the_boundary_and_can_say_no() {
         let sim = ft_planted_frustrated(3, 4, 1, 1.0);
         let e = ft_branch(sim, 5_000_000);
-        assert_eq!(ft_branch_proved(sim), 1, "a 9-spin tree fits in five million nodes");
+        assert_eq!(
+            ft_branch_proved(sim),
+            1,
+            "a 9-spin tree fits in five million nodes"
+        );
         assert!(ft_branch_nodes(sim) > 0);
-        assert!((e - ft_ground_energy(sim)).abs() < 1e-9, "a proved minimum IS the planted optimum");
+        assert!(
+            (e - ft_ground_energy(sim)).abs() < 1e-9,
+            "a proved minimum IS the planted optimum"
+        );
         ft_free(sim);
 
         // A budget that genuinely runs out needs a genuinely hard instance. The obvious choice --
@@ -5508,7 +6337,11 @@ mod solver_ffi_tests {
         // root bound already equals the incumbent. Asserted below rather than discarded.
         let hard = ft_planted_wishart(40, 0.5, 5, 1.0);
         ft_branch(hard, 200);
-        assert_eq!(ft_branch_proved(hard), 0, "200 nodes cannot exhaust a dense 40-spin tree");
+        assert_eq!(
+            ft_branch_proved(hard),
+            0,
+            "200 nodes cannot exhaust a dense 40-spin tree"
+        );
         assert!(ft_branch_nodes(hard) <= 201);
         ft_free(hard);
     }
@@ -5524,9 +6357,16 @@ mod solver_ffi_tests {
         let sim = ft_z1_new(8, 8, 0.5, 0.1, 1.0, 3);
         let e = ft_branch(sim, 100_000);
         assert_eq!(ft_branch_proved(sim), 1);
-        assert!(ft_branch_nodes(sim) < 300, "took {} nodes", ft_branch_nodes(sim));
+        assert!(
+            ft_branch_nodes(sim) < 300,
+            "took {} nodes",
+            ft_branch_nodes(sim)
+        );
         let d = ft_bound_decoupled(sim);
-        assert!((e - d).abs() < 1e-9, "ground {e} should equal the decoupled bound {d}");
+        assert!(
+            (e - d).abs() < 1e-9,
+            "ground {e} should equal the decoupled bound {d}"
+        );
         ft_free(sim);
     }
 
@@ -5534,7 +6374,10 @@ mod solver_ffi_tests {
     #[test]
     fn population_annealing_hands_over_its_free_energy_and_its_warning() {
         let sim = ft_z1_new(4, 4, 0.4, 0.0, 1.0, 5);
-        assert!(ft_popanneal_ln_z(sim).is_nan(), "no run yet, so no free energy");
+        assert!(
+            ft_popanneal_ln_z(sim).is_nan(),
+            "no run yet, so no free energy"
+        );
         assert!(ft_popanneal_rho(sim).is_nan());
         ft_popanneal(sim, 128, 2, 3.0, 25);
         let ln_z = ft_popanneal_ln_z(sim);
@@ -5542,7 +6385,10 @@ mod solver_ffi_tests {
         let floor = 16.0 * core::f64::consts::LN_2;
         assert!(ln_z >= floor - 1e-9, "ln Z {ln_z} below n ln 2 = {floor}");
         let rho = ft_popanneal_rho(sim);
-        assert!((1.0..=128.0).contains(&rho), "rho {rho} outside [1, population]");
+        assert!(
+            (1.0..=128.0).contains(&rho),
+            "rho {rho} outside [1, population]"
+        );
         ft_free(sim);
     }
 
@@ -5563,7 +6409,10 @@ mod solver_ffi_tests {
         ];
         for (name, v) in bounds {
             assert!(v.is_finite(), "{name} returned {v}");
-            assert!(v <= known + 1e-9, "{name} bound {v} EXCEEDS the planted optimum {known}");
+            assert!(
+                v <= known + 1e-9,
+                "{name} bound {v} EXCEEDS the planted optimum {known}"
+            );
         }
         // And the SDP, which is the expensive one, has to earn that by beating the trivial floor.
         assert!(
@@ -5602,7 +6451,11 @@ mod solver_ffi_tests {
         // and the whole cut is free. Asserting `> 0` here -- as the first version of this test did
         // -- asserts that the easy case does not occur.
         assert_eq!(ft_planar_odd_faces(sim), 0);
-        assert_eq!(ft_planar_error(sim, core::ptr::null_mut(), 0), 0, "no error on success");
+        assert_eq!(
+            ft_planar_error(sim, core::ptr::null_mut(), 0),
+            0,
+            "no error on success"
+        );
         // The state left behind is the optimum, so `ft_energy` is the PROVED minimum.
         assert_eq!(ft_energy(sim), -24.0);
         ft_free(sim);
@@ -5628,8 +6481,14 @@ mod solver_ffi_tests {
         }
         let frus = ft_builder_build(b, 1.0, 1);
         let c = ft_planar_cut(frus, 1.0);
-        assert!(c.is_finite() && c < 24.0, "a frustrated grid cannot cut every edge: {c}");
-        assert!(ft_planar_odd_faces(frus) > 0, "frustration makes face degrees odd");
+        assert!(
+            c.is_finite() && c < 24.0,
+            "a frustrated grid cannot cut every edge: {c}"
+        );
+        assert!(
+            ft_planar_odd_faces(frus) > 0,
+            "frustration makes face degrees odd"
+        );
         ft_free(frus);
 
         // A torus is genus 1, and the reduction is a plane statement.
@@ -5654,7 +6513,11 @@ mod solver_ffi_tests {
         assert!(ft_planar_cut(torus, 1.0).is_nan(), "and it is not planar");
         // Every edge of a bipartite torus can be cut, and 6x6 is bipartite: 72 edges.
         assert_eq!(bound, 72.0);
-        assert_eq!(ft_toroidal_attained(torus), 1, "a bound that is achieved says so");
+        assert_eq!(
+            ft_toroidal_attained(torus),
+            1,
+            "a bound that is achieved says so"
+        );
         ft_free(torus);
 
         // A frustrated torus: a search must never exceed the bound, which is what makes it one.
@@ -5664,7 +6527,10 @@ mod solver_ffi_tests {
         let e = ft_bls(hard, 200_000);
         // cut = (W - E) / 2 with W = sum of -J over 50 edges of J = +1, so W = -50.
         let cut = (-50.0 - e) / 2.0;
-        assert!(cut <= b + 1e-9, "breakout local search reached {cut}, above the bound {b}");
+        assert!(
+            cut <= b + 1e-9,
+            "breakout local search reached {cut}, above the bound {b}"
+        );
         ft_free(hard);
 
         // An open grid is planar, not toroidal, and this must decline rather than answer.
@@ -5681,7 +6547,10 @@ mod solver_ffi_tests {
             }
         }
         let planar = ft_builder_build(b2, 1.0, 1);
-        assert!(ft_toroidal_bound(planar, 1.0).is_nan(), "an open grid is not a torus");
+        assert!(
+            ft_toroidal_bound(planar, 1.0).is_nan(),
+            "an open grid is not a torus"
+        );
         ft_free(planar);
     }
 
@@ -5692,16 +6561,28 @@ mod solver_ffi_tests {
         let anti = ft_ising2d_new(6, -1.0, 1.0, 3);
         let cut = ft_gw_round(anti, 64, 5);
         assert!(cut.is_finite());
-        assert_eq!(ft_gw_guaranteed(anti), 1, "an antiferromagnet is inside the hypothesis");
+        assert_eq!(
+            ft_gw_guaranteed(anti),
+            1,
+            "an antiferromagnet is inside the hypothesis"
+        );
         // Bipartite: every one of the 72 edges can be cut, and GW should find it.
         assert_eq!(cut, 72.0);
-        assert_eq!(ft_energy(anti), -72.0, "the state left behind is the one that cut them");
+        assert_eq!(
+            ft_energy(anti),
+            -72.0,
+            "the state left behind is the one that cut them"
+        );
         ft_free(anti);
 
         // A ferromagnet is OUTSIDE the hypothesis, and the flag has to say so.
         let ferro = ft_ising2d_new(6, 1.0, 1.0, 3);
         assert!(ft_gw_round(ferro, 16, 5).is_finite());
-        assert_eq!(ft_gw_guaranteed(ferro), 0, "positive couplings are outside the theorem");
+        assert_eq!(
+            ft_gw_guaranteed(ferro),
+            0,
+            "positive couplings are outside the theorem"
+        );
 
         // Cluster moves fire, and simulated quantum annealing finds the ferromagnetic ground state.
         let e = ft_icm(ferro, 8, 200, 0.1, 4.0);
@@ -5718,7 +6599,10 @@ mod solver_ffi_tests {
         }
         ft_builder_bias(b, 2, 0.5);
         let fielded = ft_builder_build(b, 1.0, 1);
-        assert!(ft_icm(fielded, 4, 50, 0.1, 4.0).is_nan(), "a field is not isoenergetic");
+        assert!(
+            ft_icm(fielded, 4, 50, 0.1, 4.0).is_nan(),
+            "a field is not isoenergetic"
+        );
         ft_free(fielded);
     }
 
@@ -5785,11 +6669,22 @@ mod hubo_ffi_tests {
         assert_eq!(out[0] as i32 * out[1] as i32 * out[2] as i32, 1, "{out:?}");
 
         // The energy the run returned is a claim about the state it left behind, so read it back.
-        assert!((ft_hubo_energy(h) - e).abs() < 1e-9, "{} against {e}", ft_hubo_energy(h));
+        assert!(
+            (ft_hubo_energy(h) - e).abs() < 1e-9,
+            "{} against {e}",
+            ft_hubo_energy(h)
+        );
         assert_eq!(ft_hubo_terms(h), 1);
         assert_eq!(ft_hubo_max_arity(h), 3);
-        assert_eq!(ft_hubo_ancillas_avoided(h), 1, "one substitution for one 3-body term");
-        assert!(ft_hubo_proposals(h) > 0, "a run that proposed nothing is not a run");
+        assert_eq!(
+            ft_hubo_ancillas_avoided(h),
+            1,
+            "one substitution for one 3-body term"
+        );
+        assert!(
+            ft_hubo_proposals(h) > 0,
+            "a run that proposed nothing is not a run"
+        );
         ft_hubo_free(h);
     }
 
@@ -5800,9 +6695,17 @@ mod hubo_ffi_tests {
         let h = ft_hubo_new(4);
         assert_eq!(ft_hubo_var(h, 0), 1);
         assert_eq!(ft_hubo_var(h, 9), 0, "out of range");
-        assert_eq!(ft_hubo_vars(h), 1, "the good one is still pending; only the bad one was refused");
+        assert_eq!(
+            ft_hubo_vars(h),
+            1,
+            "the good one is still pending; only the bad one was refused"
+        );
 
-        assert_eq!(ft_hubo_var(h, 0), 0, "a repeat, because s*s = 1 changes the order silently");
+        assert_eq!(
+            ft_hubo_var(h, 0),
+            0,
+            "a repeat, because s*s = 1 changes the order silently"
+        );
         let need = ft_hubo_error(h, core::ptr::null_mut(), 0);
         let mut buf = vec![0u8; need as usize];
         ft_hubo_error(h, buf.as_mut_ptr(), need);
@@ -5810,7 +6713,11 @@ mod hubo_ffi_tests {
         assert!(msg.contains("already in this term"), "{msg}");
 
         // A refused ADD clears the list, so nothing survives into the next term.
-        assert_eq!(ft_hubo_add(h, f64::NAN), 0, "a non-finite weight poisons every energy");
+        assert_eq!(
+            ft_hubo_add(h, f64::NAN),
+            0,
+            "a non-finite weight poisons every energy"
+        );
         assert_eq!(ft_hubo_vars(h), 0, "cleared even though the add failed");
         assert_eq!(ft_hubo_terms(h), 0, "nothing malformed was recorded");
         ft_hubo_free(h);
@@ -5826,7 +6733,11 @@ mod hubo_ffi_tests {
         let state: [i8; 4] = [1, -1, 1, -1];
         assert_eq!(ft_hubo_set_spins(a, state.as_ptr(), 4), 1);
         assert_eq!(ft_hubo_set_spins(b, state.as_ptr(), 4), 1);
-        assert_eq!(ft_hubo_energy(a), ft_hubo_energy(b), "two ways to say one model");
+        assert_eq!(
+            ft_hubo_energy(a),
+            ft_hubo_energy(b),
+            "two ways to say one model"
+        );
         for i in 0..4 {
             assert_eq!(ft_hubo_delta(a, i), ft_hubo_delta(b, i), "flip {i}");
         }
@@ -5834,7 +6745,11 @@ mod hubo_ffi_tests {
         // A count that does not match the arguments is refused rather than read partially.
         assert_eq!(ft_hubo_term(b, 5, 1.0, 0, 1, 2, 3), 0);
         assert_eq!(ft_hubo_term(b, 0, 1.0, 0, 1, 2, 3), 0);
-        assert_eq!(ft_hubo_vars(b), 0, "a refused positional term leaves nothing pending");
+        assert_eq!(
+            ft_hubo_vars(b),
+            0,
+            "a refused positional term leaves nothing pending"
+        );
         ft_hubo_free(a);
         ft_hubo_free(b);
     }
@@ -5847,7 +6762,10 @@ mod hubo_ffi_tests {
         let b = ft_builder_new(6);
         assert!(!b.is_null());
         for i in 0..5u32 {
-            assert_eq!(ft_builder_couple(b, i, i + 1, if i % 2 == 0 { 1.0 } else { -1.0 }), 1);
+            assert_eq!(
+                ft_builder_couple(b, i, i + 1, if i % 2 == 0 { 1.0 } else { -1.0 }),
+                1
+            );
         }
         assert_eq!(ft_builder_bias(b, 0, 0.5), 1);
         let sim = ft_builder_build(b, 0.9, 11);
@@ -5857,12 +6775,23 @@ mod hubo_ffi_tests {
         let h = ft_hubo_from_sim(sim);
         assert!(!h.is_null());
         assert_eq!(ft_hubo_len(h), 6);
-        assert_eq!(ft_hubo_max_arity(h), 2, "a lifted pairwise graph is still pairwise");
-        assert_eq!(ft_hubo_ancillas_avoided(h), 0, "nothing wider than two needs a substitution");
+        assert_eq!(
+            ft_hubo_max_arity(h),
+            2,
+            "a lifted pairwise graph is still pairwise"
+        );
+        assert_eq!(
+            ft_hubo_ancillas_avoided(h),
+            0,
+            "nothing wider than two needs a substitution"
+        );
 
         let pairwise = ft_energy(sim);
         let native = ft_hubo_energy(h);
-        assert!((pairwise - native).abs() < 1e-9, "{pairwise} against {native}");
+        assert!(
+            (pairwise - native).abs() < 1e-9,
+            "{pairwise} against {native}"
+        );
 
         // And the incremental update agrees with recomputing, node by node, through the ABI --
         // which is the check another language or a GPU would run against this library.
@@ -5874,7 +6803,11 @@ mod hubo_ffi_tests {
             state[i] = -state[i];
             assert_eq!(ft_hubo_set_spins(h, state.as_ptr(), 6), 1);
             let after = ft_hubo_energy(h);
-            assert!((after - before - d).abs() < 1e-9, "flip {i}: {d} against {}", after - before);
+            assert!(
+                (after - before - d).abs() < 1e-9,
+                "flip {i}: {d} against {}",
+                after - before
+            );
             state[i] = -state[i];
             assert_eq!(ft_hubo_set_spins(h, state.as_ptr(), 6), 1);
         }
@@ -5885,8 +6818,14 @@ mod hubo_ffi_tests {
     #[test]
     fn a_bad_ladder_is_refused_by_name_and_a_nan_is_not_read_as_a_default() {
         let h = model(3, &[(&[0, 1, 2], 1.0)]);
-        assert!(ft_hubo_anneal(h, 8.0, 0.05, 10, 10, 1).is_nan(), "backwards");
-        assert!(ft_hubo_anneal(h, f64::NAN, 8.0, 10, 10, 1).is_nan(), "NaN is not a zero");
+        assert!(
+            ft_hubo_anneal(h, 8.0, 0.05, 10, 10, 1).is_nan(),
+            "backwards"
+        );
+        assert!(
+            ft_hubo_anneal(h, f64::NAN, 8.0, 10, 10, 1).is_nan(),
+            "NaN is not a zero"
+        );
         assert!(ft_hubo_anneal(h, -1.0, 8.0, 10, 10, 1).is_nan(), "negative");
         // Zeros DO mean "use the default", which is the whole reason NaN has to be refused first.
         assert_eq!(ft_hubo_anneal(h, 0.0, 0.0, 0, 0, 1), -1.0);
@@ -5932,7 +6871,10 @@ mod hubo_ffi_tests {
         assert_eq!(ft_hubo_accepted(n), 0);
         assert!(ft_hubo_joules_z1(n).is_nan());
         assert_eq!(ft_hubo_error(n, core::ptr::null_mut(), 0), 0);
-        assert!(ft_hubo_new(0).is_null(), "a model with no variables can hold no term");
+        assert!(
+            ft_hubo_new(0).is_null(),
+            "a model with no variables can hold no term"
+        );
     }
 }
 
@@ -5957,7 +6899,10 @@ mod parallel_sweep_tests {
         let (na, nb) = (ft_len(a) as usize, ft_len(b) as usize);
         let sa = unsafe { core::slice::from_raw_parts(ft_spins(a), na) };
         let sb = unsafe { core::slice::from_raw_parts(ft_spins(b), nb) };
-        assert_eq!(sa, sb, "same (seed, threads) must reproduce bit-identically");
+        assert_eq!(
+            sa, sb,
+            "same (seed, threads) must reproduce bit-identically"
+        );
         ft_free(a);
         ft_free(b);
     }
@@ -5988,9 +6933,16 @@ mod parallel_sweep_tests {
         let n = ft_len(small_a) as usize;
         let sa = unsafe { core::slice::from_raw_parts(ft_spins(small_a), n) }.to_vec();
         let sb = unsafe { core::slice::from_raw_parts(ft_spins(small_b), n) }.to_vec();
-        assert_eq!(sa, sb, "below the floor, four threads and one are the same serial path");
+        assert_eq!(
+            sa, sb,
+            "below the floor, four threads and one are the same serial path"
+        );
         assert_eq!(ft_threads_used(small_a), 1);
-        assert_eq!(ft_threads_used(small_b), 1, "the ABI reports what RAN, not what was asked");
+        assert_eq!(
+            ft_threads_used(small_b),
+            1,
+            "the ABI reports what RAN, not what was asked"
+        );
         ft_free(small_a);
         ft_free(small_b);
 
@@ -6010,9 +6962,16 @@ mod parallel_sweep_tests {
         let n = ft_len(a) as usize;
         let sa = unsafe { core::slice::from_raw_parts(ft_spins(a), n) }.to_vec();
         let sb = unsafe { core::slice::from_raw_parts(ft_spins(b), n) }.to_vec();
-        assert_ne!(sa, sb, "one thread and four are different paths once four actually run");
+        assert_ne!(
+            sa, sb,
+            "one thread and four are different paths once four actually run"
+        );
         assert_eq!(ft_threads_used(a), 1);
-        assert_eq!(ft_threads_used(b), 4, "a class clearing the floor four times over runs four");
+        assert_eq!(
+            ft_threads_used(b),
+            4,
+            "a class clearing the floor four times over runs four"
+        );
         ft_free(a);
         ft_free(b);
     }
@@ -6031,8 +6990,14 @@ mod parallel_sweep_tests {
         assert!(!s.is_null());
         ft_sweep_par(s, 5, 4);
         let used = ft_threads_used(s);
-        assert!(used <= 4, "cannot use more threads than were asked for: {used}");
-        assert!(used <= 3, "5 nodes over 2 colour classes cannot occupy 4 threads: {used}");
+        assert!(
+            used <= 4,
+            "cannot use more threads than were asked for: {used}"
+        );
+        assert!(
+            used <= 3,
+            "5 nodes over 2 colour classes cannot occupy 4 threads: {used}"
+        );
         ft_free(s);
 
         // A class big enough to fill them reports the full count. "Big enough" is a floor of
@@ -6058,19 +7023,41 @@ mod parallel_sweep_tests {
         };
         // A ring of n two-colours into classes of n/2, so `threads = min(asked, (n/2) / MIN_CHUNK)`.
         let mc = u32::try_from(crate::gibbs::MIN_CHUNK).expect("the floor fits a u32");
-        assert_eq!(ring(2 * mc, 4), 1, "one chunk's worth in a class runs serially");
-        assert_eq!(ring(8 * mc, 4), 4, "exactly the floor per thread, so all four run");
-        assert_eq!(ring(4 * mc, 4), 2, "half the floor per thread; two at the floor each is not");
-        assert_eq!(ring(64 * mc, 4), 4, "and the floor never asks for MORE than was requested");
+        assert_eq!(
+            ring(2 * mc, 4),
+            1,
+            "one chunk's worth in a class runs serially"
+        );
+        assert_eq!(
+            ring(8 * mc, 4),
+            4,
+            "exactly the floor per thread, so all four run"
+        );
+        assert_eq!(
+            ring(4 * mc, 4),
+            2,
+            "half the floor per thread; two at the floor each is not"
+        );
+        assert_eq!(
+            ring(64 * mc, 4),
+            4,
+            "and the floor never asks for MORE than was requested"
+        );
     }
 
     #[test]
     fn zero_threads_asks_the_machine_and_the_answer_is_at_least_one() {
-        assert!(ft_hardware_threads() >= 1, "a machine has at least one thread");
+        assert!(
+            ft_hardware_threads() >= 1,
+            "a machine has at least one thread"
+        );
         let s = lattice(12, 0.4, 5);
         assert_eq!(ft_threads_used(s), 0, "nothing parallel has run yet");
         ft_sweep_par(s, 10, 0);
-        assert!(ft_threads_used(s) >= 1, "0 means ask the machine, not run on nothing");
+        assert!(
+            ft_threads_used(s) >= 1,
+            "0 means ask the machine, not run on nothing"
+        );
         ft_free(s);
     }
 
@@ -6096,7 +7083,10 @@ mod parallel_sweep_tests {
                 acc += ft_magnetization(s).abs();
             }
             let m = acc / 400.0;
-            assert!((m - want).abs() < 0.02, "threads={threads}: |M| {m:.4} vs Onsager {want:.4}");
+            assert!(
+                (m - want).abs() < 0.02,
+                "threads={threads}: |M| {m:.4} vs Onsager {want:.4}"
+            );
             ft_free(s);
         }
     }
@@ -6123,10 +7113,16 @@ mod hfs_ffi {
         let after_anneal = ft_energy(sim);
 
         let e = ft_hfs(sim, 200, 32);
-        assert!(e <= after_anneal + 1e-9, "a descent cannot rise: {after_anneal} -> {e}");
+        assert!(
+            e <= after_anneal + 1e-9,
+            "a descent cannot rise: {after_anneal} -> {e}"
+        );
         // The returned energy is the energy of the state left behind, not a number carried along.
         assert!((ft_energy(sim) - e).abs() < 1e-9);
-        assert!(ft_hfs_moves(sim) > 0, "a run that made no move is not a run");
+        assert!(
+            ft_hfs_moves(sim) > 0,
+            "a run that made no move is not a run"
+        );
         assert!(ft_hfs_improving(sim) <= ft_hfs_moves(sim));
         ft_free(sim);
     }
@@ -6155,7 +7151,10 @@ mod hfs_ffi {
             ft_free(a);
             ft_free(b);
         }
-        assert!(better >= worse, "block moves reached lower {better} times, higher {worse}");
+        assert!(
+            better >= worse,
+            "block moves reached lower {better} times, higher {worse}"
+        );
     }
 
     #[test]
@@ -6223,7 +7222,11 @@ mod model_method_ffi {
         assert_eq!(ft_model_proved(m), 1, "the tree is tiny");
         assert_eq!(ft_model_feasible(m), 1);
         // a != b permits a = 1 and b = 2, so the optimum is 9 in the modeller's units.
-        assert!((ft_model_objective(m) - 9.0).abs() < 1e-9, "{}", ft_model_objective(m));
+        assert!(
+            (ft_model_objective(m) - 9.0).abs() < 1e-9,
+            "{}",
+            ft_model_objective(m)
+        );
         ft_model_free(m);
     }
 
@@ -6254,7 +7257,11 @@ mod model_method_ffi {
         let need = ft_model_error(m, core::ptr::null_mut(), 0);
         let mut buf = vec![0u8; need as usize];
         ft_model_error(m, buf.as_mut_ptr(), need);
-        assert!(String::from_utf8(buf).unwrap().contains("compile the model"));
+        assert!(
+            String::from_utf8(buf)
+                .unwrap()
+                .contains("compile the model")
+        );
         ft_model_free(m);
 
         let n: *mut ModelHandle = core::ptr::null_mut();
@@ -6319,7 +7326,11 @@ pub extern "C" fn ft_ebm_rbm(visible: u32, hidden: u32, beta: f64, seed: u64) ->
         set_ebm_error("an RBM needs at least one visible unit");
         return core::ptr::null_mut();
     }
-    Sim::new(crate::ebm::rbm(visible as usize, hidden as usize), beta, seed)
+    Sim::new(
+        crate::ebm::rbm(visible as usize, hidden as usize),
+        beta,
+        seed,
+    )
 }
 
 /// A deep Boltzmann machine's structure: `visible` spins, then each layer in `layers`, chained.
@@ -6411,17 +7422,27 @@ pub extern "C" fn ft_ebm_train(
         set_ebm_error("no simulation was given");
         return 0;
     };
-    let Some(data) = read_dataset(visible, rows, n_rows) else { return 0 };
+    let Some(data) = read_dataset(visible, rows, n_rows) else {
+        return 0;
+    };
     let d = crate::ebm::Params::default();
     let p = crate::ebm::Params {
-        epochs: if epochs == 0 { d.epochs } else { epochs as usize },
+        epochs: if epochs == 0 {
+            d.epochs
+        } else {
+            epochs as usize
+        },
         k: if k == 0 { d.k } else { k as usize },
         positive_sweeps: if positive_sweeps == 0 {
             d.positive_sweeps
         } else {
             positive_sweeps as usize
         },
-        learning_rate: if learning_rate == 0.0 { d.learning_rate } else { learning_rate },
+        learning_rate: if learning_rate == 0.0 {
+            d.learning_rate
+        } else {
+            learning_rate
+        },
         batch: if batch == 0 { d.batch } else { batch as usize },
         persistent: method == 1,
     };
@@ -6492,7 +7513,9 @@ pub extern "C" fn ft_ebm_log_likelihood(
         set_ebm_error("no simulation was given");
         return f64::NAN;
     };
-    let Some(data) = read_dataset(visible, rows, n_rows) else { return f64::NAN };
+    let Some(data) = read_dataset(visible, rows, n_rows) else {
+        return f64::NAN;
+    };
     match crate::ebm::exact_log_likelihood(&s.graph, &data) {
         Ok(v) => v,
         Err(e) => {
@@ -6540,8 +7563,7 @@ fn read_dataset(visible: u32, rows: *const i8, n_rows: u32) -> Option<crate::ebm
         set_ebm_error("a dataset needs at least one row and one visible unit");
         return None;
     }
-    let flat =
-        unsafe { core::slice::from_raw_parts(rows, n_rows as usize * visible as usize) };
+    let flat = unsafe { core::slice::from_raw_parts(rows, n_rows as usize * visible as usize) };
     Some(crate::ebm::Dataset {
         visible: visible as usize,
         rows: flat.chunks(visible as usize).map(<[i8]>::to_vec).collect(),
@@ -6624,15 +7646,24 @@ mod ebm_ffi_tests {
                 "method {method} must refuse a latent model"
             );
             let why = read_err();
-            assert!(why.contains("observed"), "method {method} refusal is unhelpful: {why}");
+            assert!(
+                why.contains("observed"),
+                "method {method} refusal is unhelpful: {why}"
+            );
             ft_free(sim);
         }
 
         // And an unknown method is refused BY NAME rather than falling through to CD.
         let sim = Sim::new(seeded(), 1.0, 7);
-        assert_eq!(ft_ebm_train(sim, 4, rows.as_ptr(), n_rows, 99, 10, 5, 5, 0.05, 6, 3), 0);
+        assert_eq!(
+            ft_ebm_train(sim, 4, rows.as_ptr(), n_rows, 99, 10, 5, 5, 0.05, 6, 3),
+            0
+        );
         let why = read_err();
-        assert!(why.contains("99") && why.contains("ratio matching"), "unhelpful refusal: {why}");
+        assert!(
+            why.contains("99") && why.contains("ratio matching"),
+            "unhelpful refusal: {why}"
+        );
         ft_free(sim);
     }
 
@@ -6645,7 +7676,10 @@ mod ebm_ffi_tests {
         let n_rows = ft_ebm_bars_and_stripes(2, core::ptr::null_mut(), 0);
         assert_eq!(n_rows, 6, "2x2 bars and stripes is 2*2^2 - 2 rows");
         let mut rows = vec![0i8; n_rows as usize * 4];
-        assert_eq!(ft_ebm_bars_and_stripes(2, rows.as_mut_ptr(), rows.len() as u32), n_rows);
+        assert_eq!(
+            ft_ebm_bars_and_stripes(2, rows.as_mut_ptr(), rows.len() as u32),
+            n_rows
+        );
         assert!(rows.iter().all(|&v| v == 1 || v == -1));
 
         let sim = ft_ebm_rbm(4, 4, 1.0, 11);
@@ -6662,15 +7696,24 @@ mod ebm_ffi_tests {
         assert!(ft_tabu(sim, 2000, 0, 0).is_finite());
         assert!(unsafe { sim.as_ref() }.unwrap().tb.is_some());
 
-        assert_eq!(ft_ebm_train(sim, 4, rows.as_ptr(), n_rows, 0, 600, 10, 5, 0.05, 6, 3), 1);
+        assert_eq!(
+            ft_ebm_train(sim, 4, rows.as_ptr(), n_rows, 0, 600, 10, 5, 0.05, 6, 3),
+            1
+        );
         let after = ft_ebm_log_likelihood(sim, 4, rows.as_ptr(), n_rows);
-        assert!(after > before + 0.05, "training must help: {before:.4} -> {after:.4}");
+        assert!(
+            after > before + 0.05,
+            "training must help: {before:.4} -> {after:.4}"
+        );
         assert!(after < 0.0, "a log-likelihood is negative: {after}");
 
         // A tabu outcome proved against weights that no longer exist is the most confident way
         // this ABI could lie, so the fit drops it.
         let s = unsafe { sim.as_ref() }.unwrap();
-        assert!(s.tb.is_none(), "the fit must drop results about the old weights");
+        assert!(
+            s.tb.is_none(),
+            "the fit must drop results about the old weights"
+        );
         assert!(s.cert.is_none() && s.gpu.is_none() && s.ground.is_none());
         // The spin state survives: same spins, and a fine start for sampling the fitted model.
         assert_eq!(s.sampler_state.len(), 8);
@@ -6700,9 +7743,17 @@ mod ebm_ffi_tests {
 
         // A variable that does not exist, named on each side separately.
         assert_eq!(ft_model_objective_pair(m, 1, 1.0, 99, 0, b, 0), 0);
-        assert!(read(m).contains("99"), "names the missing variable: {}", read(m));
+        assert!(
+            read(m).contains("99"),
+            "names the missing variable: {}",
+            read(m)
+        );
         assert_eq!(ft_model_objective_pair(m, 1, 1.0, a, 0, 99, 0), 0);
-        assert!(read(m).contains("99"), "on the second side too: {}", read(m));
+        assert!(
+            read(m).contains("99"),
+            "on the second side too: {}",
+            read(m)
+        );
 
         // A coefficient that is not a real number.
         assert_eq!(ft_model_objective_pair(m, 1, f64::NAN, a, 0, b, 0), 0);
@@ -6725,7 +7776,10 @@ mod ebm_ffi_tests {
         assert_eq!(ft_model_compile(m), 6);
         assert_eq!(ft_model_solve(m, 0), 1);
         assert_eq!(ft_model_value(m, a), 1, "the square rewards a = 1");
-        assert!((ft_model_objective(m) - 5.0).abs() < 1e-9, "and it is worth 5");
+        assert!(
+            (ft_model_objective(m) - 5.0).abs() < 1e-9,
+            "and it is worth 5"
+        );
         ft_model_free(m);
     }
 
@@ -6742,12 +7796,33 @@ mod ebm_ffi_tests {
 
         let sim = ft_ebm_rbm(4, 2, 1.0, 1);
         let rows = [1i8, -1, 1, -1];
-        assert_eq!(ft_ebm_train(sim, 4, core::ptr::null(), 1, 0, 10, 1, 1, 0.05, 1, 1), 0);
+        assert_eq!(
+            ft_ebm_train(sim, 4, core::ptr::null(), 1, 0, 10, 1, 1, 0.05, 1, 1),
+            0
+        );
         assert!(read().contains("no data rows"));
-        assert_eq!(ft_ebm_train(core::ptr::null_mut(), 4, rows.as_ptr(), 1, 0, 10, 1, 1, 0.05, 1, 1), 0);
+        assert_eq!(
+            ft_ebm_train(
+                core::ptr::null_mut(),
+                4,
+                rows.as_ptr(),
+                1,
+                0,
+                10,
+                1,
+                1,
+                0.05,
+                1,
+                1
+            ),
+            0
+        );
         assert!(read().contains("simulation"));
         // A successful call clears it.
-        assert_eq!(ft_ebm_train(sim, 4, rows.as_ptr(), 1, 0, 10, 1, 1, 0.05, 1, 1), 1);
+        assert_eq!(
+            ft_ebm_train(sim, 4, rows.as_ptr(), 1, 0, 10, 1, 1, 0.05, 1, 1),
+            1
+        );
         assert_eq!(read(), "");
         ft_free(sim);
 
@@ -6755,7 +7830,11 @@ mod ebm_ffi_tests {
         let big = ft_ebm_rbm(20, 8, 1.0, 1);
         let wide = [1i8; 20];
         assert!(ft_ebm_log_likelihood(big, 20, wide.as_ptr(), 1).is_nan());
-        assert!(read().contains("28"), "the message names the size it refused: {}", read());
+        assert!(
+            read().contains("28"),
+            "the message names the size it refused: {}",
+            read()
+        );
         ft_free(big);
 
         // A dbm with no layers is refused rather than silently becoming a bare visible layer.

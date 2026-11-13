@@ -49,7 +49,7 @@
 //! cannot be reached from here.
 
 use std::alloc::{GlobalAlloc, Layout, System};
-use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Refuse any single allocation larger than [`ALLOC_CAP`].
 ///
@@ -104,7 +104,10 @@ static ALLOC: Capped = Capped;
 /// seeds are fixed, so a deeper run explores strictly more without losing what the default covers.
 /// `FT_FUZZ_ROUNDS=200000 cargo test --release --test fuzz_parsers` is the soak.
 fn rounds(default: u64) -> u64 {
-    std::env::var("FT_FUZZ_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    std::env::var("FT_FUZZ_ROUNDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 /// Seeded xorshift64*. Deterministic, so a failure comes with the seed that reproduces it.
@@ -204,8 +207,13 @@ fn mutate(rng: &mut Rng, base: &[u8]) -> Vec<u8> {
         }
         // insert a hostile decimal number where a count might be parsed
         4 => {
-            let big = ["18446744073709551615", "9223372036854775808", "-9223372036854775808", "1e400", "4000000000"]
-                [rng.below(5)];
+            let big = [
+                "18446744073709551615",
+                "9223372036854775808",
+                "-9223372036854775808",
+                "1e400",
+                "4000000000",
+            ][rng.below(5)];
             let i = rng.below(v.len());
             v.splice(i..i, big.bytes());
         }
@@ -230,7 +238,9 @@ fn no_parser_panics_on_random_bytes() {
         let raw = rng.bytes(len);
         let text = String::from_utf8_lossy(&raw).to_string();
 
-        must_not_panic("ommx::import", round, &raw, || ferrotherm::ommx::import(&raw));
+        must_not_panic("ommx::import", round, &raw, || {
+            ferrotherm::ommx::import(&raw)
+        });
         must_not_panic("ftp::from_ftp", round, &raw, || {
             ferrotherm::ftp::Program::from_ftp(&text)
         });
@@ -248,7 +258,7 @@ fn the_wire_codec_never_panics_and_never_reports_a_truncation_as_an_end() {
     // an Err, never a shorter Ok. The old decoder returned `Option`, so "the message ended" and
     // "the message is corrupt" were one value and a truncated instance parsed as a complete
     // smaller one.
-    use ferrotherm::wire::{put_double_field, put_str_field, put_varint_field, Reader};
+    use ferrotherm::wire::{Reader, put_double_field, put_str_field, put_varint_field};
 
     let mut rng = Rng(0x8E3F_1A72_C05D_9B41);
     for round in 0..rounds(800) {
@@ -304,13 +314,21 @@ fn the_wire_codec_never_panics_and_never_reports_a_truncation_as_an_end() {
         }
         ends
     };
-    assert_eq!(boundaries.len(), 5, "four fields give five boundaries including 0");
+    assert_eq!(
+        boundaries.len(),
+        5,
+        "four fields give five boundaries including 0"
+    );
 
     for cut in 1..msg.len() {
         let got = drain(&msg[..cut]);
         if boundaries.contains(&cut) {
             let want = boundaries.iter().position(|&b| b == cut).unwrap();
-            assert_eq!(got, Ok(want), "a cut on a field boundary is a shorter valid message");
+            assert_eq!(
+                got,
+                Ok(want),
+                "a cut on a field boundary is a shorter valid message"
+            );
         } else {
             assert_eq!(
                 got,
@@ -343,7 +361,9 @@ fn no_parser_panics_on_mutated_valid_input() {
 
         // OMMX is protobuf, so mutating a real encoding is the only way past the field headers.
         let o = mutate(&mut rng, &ommx_seed());
-        must_not_panic("ommx::import (mutated)", round, &o, || ferrotherm::ommx::import(&o));
+        must_not_panic("ommx::import (mutated)", round, &o, || {
+            ferrotherm::ommx::import(&o)
+        });
     }
 }
 
@@ -407,13 +427,17 @@ fn no_parser_panics_on_the_values_that_break_arithmetic() {
         "".into(),
     ];
     for (i, s) in lp_hostile.iter().enumerate() {
-        must_not_panic("lp::parse (hostile)", i as u64, s.as_bytes(), || ferrotherm::lp::parse(s));
+        must_not_panic("lp::parse (hostile)", i as u64, s.as_bytes(), || {
+            ferrotherm::lp::parse(s)
+        });
     }
 
     // OMMX: hostile varints and lengths.
     let ommx_hostile: Vec<Vec<u8>> = vec![
         // a length prefix of ~2^64: `i + len` used to wrap past the bounds check
-        vec![0x0A, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01],
+        vec![
+            0x0A, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01,
+        ],
         // a truncated field header
         vec![0x0A],
         vec![0x12],
@@ -424,7 +448,9 @@ fn no_parser_panics_on_the_values_that_break_arithmetic() {
         vec![],
     ];
     for (i, b) in ommx_hostile.iter().enumerate() {
-        must_not_panic("ommx::import (hostile)", i as u64, b, || ferrotherm::ommx::import(b));
+        must_not_panic("ommx::import (hostile)", i as u64, b, || {
+            ferrotherm::ommx::import(b)
+        });
     }
 }
 
@@ -471,12 +497,19 @@ fn the_allocation_cap_actually_fires() {
         let n = ALLOC_CAP * 4;
         let v: Vec<u8> = Vec::with_capacity(n);
         // Unreachable if the cap works; the print keeps the compiler from eliding the request.
-        println!("allocated {} bytes, which the cap should have refused", v.capacity());
+        println!(
+            "allocated {} bytes, which the cap should have refused",
+            v.capacity()
+        );
         return;
     }
     let exe = std::env::current_exe().expect("test binary path");
     let out = std::process::Command::new(exe)
-        .args(["the_allocation_cap_actually_fires", "--exact", "--nocapture"])
+        .args([
+            "the_allocation_cap_actually_fires",
+            "--exact",
+            "--nocapture",
+        ])
         .env("FT_ALLOC_CAP_CHILD", "1")
         .output()
         .expect("re-run self");

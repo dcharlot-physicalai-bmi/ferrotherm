@@ -20,7 +20,7 @@
 use ferrotherm::exact::Elimination;
 use ferrotherm::ftp::Program;
 use ferrotherm::hubo::{self, Hubo};
-use ferrotherm::reduce::{to_pairwise_with, Reduction};
+use ferrotherm::reduce::{Reduction, to_pairwise_with};
 use ferrotherm::rng::Pcg;
 use ferrotherm::tempering::{anneal, geometric_ladder};
 
@@ -64,7 +64,9 @@ fn program_of(terms: &[([usize; 3], f64)]) -> Program {
 fn optimum(h: &Hubo) -> f64 {
     (0..(1usize << N))
         .map(|x| {
-            let s: Vec<i8> = (0..N).map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..N)
+                .map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 })
+                .collect();
             h.energy(&s)
         })
         .fold(f64::INFINITY, f64::min)
@@ -74,7 +76,11 @@ fn optimum(h: &Hubo) -> f64 {
 fn reduced_ground(prog: &Program, penalty: f64) -> Option<(Reduction, f64)> {
     let red = to_pairwise_with(prog, Some(penalty)).ok()?;
     let g = red.program.to_graph().ok()?;
-    let e = Elimination::default().ground_state(&g).ok()?.ground_energy? + red.offset;
+    let e = Elimination::default()
+        .ground_state(&g)
+        .ok()?
+        .ground_energy?
+        + red.offset;
     Some((red, e))
 }
 
@@ -104,14 +110,37 @@ fn main() {
     let instances = 20u64;
     let seeds = 100u64;
     let (stages, sweeps) = (40usize, 20usize);
-    println!("THE EXACT QUADRATIZATION PENALTY, AND THE DEFAULT AGAINST IT AT A MATCHED FLIP BUDGET\n");
-    println!("  model    {N} variables, t random three-body +-1 terms on distinct triples; {instances} instances per t; optimum by enumeration");
-    println!("  P*       least Rosenberg penalty at which the reduced ground energy equals the optimum (exact elimination), relative 1e-4");
-    println!("  anneal   ladder 0.05..8.0, {stages} stages; native {sweeps} sweeps per stage; reduced arms scaled to the same flips; {seeds} seeds");
-    println!("  score    P(GS): the projected state attains the optimum on the ORIGINAL energy; 'broken' = ancilla violated in the returned state\n");
+    println!(
+        "THE EXACT QUADRATIZATION PENALTY, AND THE DEFAULT AGAINST IT AT A MATCHED FLIP BUDGET\n"
+    );
+    println!(
+        "  model    {N} variables, t random three-body +-1 terms on distinct triples; {instances} instances per t; optimum by enumeration"
+    );
+    println!(
+        "  P*       least Rosenberg penalty at which the reduced ground energy equals the optimum (exact elimination), relative 1e-4"
+    );
+    println!(
+        "  anneal   ladder 0.05..8.0, {stages} stages; native {sweeps} sweeps per stage; reduced arms scaled to the same flips; {seeds} seeds"
+    );
+    println!(
+        "  score    P(GS): the projected state attains the optimum on the ORIGINAL energy; 'broken' = ancilla violated in the returned state\n"
+    );
     println!(
         "  {:>3} {:>4} {:>6} {:>8} {:>8} {:>9}   {:>7}   {:>7} {:>7} {:>7} {:>7} {:>8}   {:>7} {:>7}",
-        "t", "inst", "anc", "P* mean", "default", "P*/def", "native", "at P*", "1.5 P*", "2 P*", "default", "def/scal", "brk P*", "brk def"
+        "t",
+        "inst",
+        "anc",
+        "P* mean",
+        "default",
+        "P*/def",
+        "native",
+        "at P*",
+        "1.5 P*",
+        "2 P*",
+        "default",
+        "def/scal",
+        "brk P*",
+        "brk def"
     );
     for &t in &[12usize, 18, 24] {
         let mut count = 0usize;
@@ -123,14 +152,23 @@ fn main() {
             let h = hubo_of(&terms);
             let prog = program_of(&terms);
             let e_star = optimum(&h);
-            let Some((red_default, _)) = reduced_ground(&prog, f64::NAN) else { continue };
+            let Some((red_default, _)) = reduced_ground(&prog, f64::NAN) else {
+                continue;
+            };
             let default = red_default.penalty;
-            let Some(p_star) = threshold(&prog, e_star, default) else { continue };
+            let Some(p_star) = threshold(&prog, e_star, default) else {
+                continue;
+            };
             count += 1;
             anc += red_default.ancillas as f64;
             pstar += p_star;
             pdef += default;
-            let native_p = hubo::Params { beta_min: 0.05, beta_max: 8.0, stages, sweeps_per_stage: sweeps };
+            let native_p = hubo::Params {
+                beta_min: 0.05,
+                beta_max: 8.0,
+                stages,
+                sweeps_per_stage: sweeps,
+            };
             let ladder = geometric_ladder(0.05, 8.0, stages);
             for seed2 in 0..seeds {
                 if hubo::anneal(&h, &native_p, 7_000 + seed2).energy <= e_star + 1e-9 {
@@ -141,13 +179,27 @@ fn main() {
             // penalty on a ladder scaled by P*/default, so the penalty terms see the temperatures the
             // P* arm's do and the objective terms see a ladder that many times hotter -- the other
             // way of matching, and the reason there is no single fair ladder for a rigid landscape.
-            for (ai, mult) in [1.0f64, 1.5, 2.0, f64::NAN, f64::INFINITY].iter().enumerate() {
-                let penalty = if mult.is_finite() { mult * p_star } else { default };
-                let Some((red, _)) = reduced_ground(&prog, penalty) else { continue };
+            for (ai, mult) in [1.0f64, 1.5, 2.0, f64::NAN, f64::INFINITY]
+                .iter()
+                .enumerate()
+            {
+                let penalty = if mult.is_finite() {
+                    mult * p_star
+                } else {
+                    default
+                };
+                let Some((red, _)) = reduced_ground(&prog, penalty) else {
+                    continue;
+                };
                 let g = red.program.to_graph().expect("pairwise");
                 let scaled = ((sweeps * N) as f64 / g.n as f64).round().max(1.0) as usize;
-                let beta_scale = if mult.is_infinite() { p_star / default } else { 1.0 };
-                let sched: Vec<(f64, usize)> = ladder.iter().map(|&b| (b * beta_scale, scaled)).collect();
+                let beta_scale = if mult.is_infinite() {
+                    p_star / default
+                } else {
+                    1.0
+                };
+                let sched: Vec<(f64, usize)> =
+                    ladder.iter().map(|&b| (b * beta_scale, scaled)).collect();
                 for seed2 in 0..seeds {
                     let (state, e_red) = anneal(&g, &sched, 7_000 + seed2, None);
                     let original = h.energy(red.project(&state));
@@ -184,11 +236,25 @@ fn main() {
         );
     }
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  P*/def is how much of the default penalty an instance actually needs. The four reduced columns are");
-    println!("  the same flips and the same ladder at four penalties; if the reduction at P* matches the native");
-    println!("  arm, the measured quadratization cost was the penalty's, and if it does not, it is the ancilla");
-    println!("  dimension's. 'brk' is the fraction of returned states with a violated ancilla: at P* a broken");
-    println!("  ancilla can tie the optimum, so some breakage there is the threshold's own definition. 'def/scal' is");
-    println!("  the default penalty on a ladder scaled by P*/default: the penalty terms then see the P* arm's");
-    println!("  temperatures and the objective terms a ladder that many times hotter -- the other way to match.");
+    println!(
+        "  P*/def is how much of the default penalty an instance actually needs. The four reduced columns are"
+    );
+    println!(
+        "  the same flips and the same ladder at four penalties; if the reduction at P* matches the native"
+    );
+    println!(
+        "  arm, the measured quadratization cost was the penalty's, and if it does not, it is the ancilla"
+    );
+    println!(
+        "  dimension's. 'brk' is the fraction of returned states with a violated ancilla: at P* a broken"
+    );
+    println!(
+        "  ancilla can tie the optimum, so some breakage there is the threshold's own definition. 'def/scal' is"
+    );
+    println!(
+        "  the default penalty on a ladder scaled by P*/default: the penalty terms then see the P* arm's"
+    );
+    println!(
+        "  temperatures and the objective terms a ladder that many times hotter -- the other way to match."
+    );
 }

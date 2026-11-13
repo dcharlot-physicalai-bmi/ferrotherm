@@ -137,16 +137,27 @@ pub fn calibrate(truth: f64, runs: usize, run: impl Fn(u64) -> (f64, f64)) -> Ca
     assert!(runs >= 8, "{runs} runs is too few to estimate a spread");
     let z: Vec<f64> = (0..runs as u64)
         .map(|k| {
-            let s = k.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0x1234_5678_9ABC_DEF0);
+            let s = k
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(0x1234_5678_9ABC_DEF0);
             let (est, se) = run(s);
-            assert!(se > 0.0 && se.is_finite(), "run {s} reported a stderr of {se}");
+            assert!(
+                se > 0.0 && se.is_finite(),
+                "run {s} reported a stderr of {se}"
+            );
             (est - truth) / se
         })
         .collect();
     let mean_z = z.iter().sum::<f64>() / runs as f64;
-    let sd_z = (z.iter().map(|v| (v - mean_z) * (v - mean_z)).sum::<f64>() / (runs - 1) as f64).sqrt();
+    let sd_z =
+        (z.iter().map(|v| (v - mean_z) * (v - mean_z)).sum::<f64>() / (runs - 1) as f64).sqrt();
     let coverage_95 = z.iter().filter(|v| v.abs() <= 1.96).count() as f64 / runs as f64;
-    Calibration { runs, mean_z, sd_z, coverage_95 }
+    Calibration {
+        runs,
+        mean_z,
+        sd_z,
+        coverage_95,
+    }
 }
 
 #[cfg(test)]
@@ -197,14 +208,26 @@ mod tests {
             (m, (v / n as f64).sqrt() * shrink)
         };
         let honest = calibrate(3.0, 200, |s| draw(s, 1.0));
-        assert!(honest.bar_is_honest(1.15), "an exact bar must read as honest: sd(z) = {}", honest.sd_z);
-        assert!(honest.sd_z > 0.85, "and must not read as absurdly conservative: {}", honest.sd_z);
+        assert!(
+            honest.bar_is_honest(1.15),
+            "an exact bar must read as honest: sd(z) = {}",
+            honest.sd_z
+        );
+        assert!(
+            honest.sd_z > 0.85,
+            "and must not read as absurdly conservative: {}",
+            honest.sd_z
+        );
         assert!(honest.looks_unbiased(4.0), "mean z = {}", honest.mean_z);
         assert!(honest.coverage_95 > 0.90, "coverage {}", honest.coverage_95);
 
         let halved = calibrate(3.0, 200, |s| draw(s, 0.5));
         assert!(!halved.bar_is_honest(1.15), "a halved bar must be caught");
-        assert!(halved.sd_z > 1.6, "and caught at about 2: sd(z) = {}", halved.sd_z);
+        assert!(
+            halved.sd_z > 1.6,
+            "and caught at about 2: sd(z) = {}",
+            halved.sd_z
+        );
     }
 
     /// The crate's sampled estimators report bars that are honest and unbiased.
@@ -222,16 +245,56 @@ mod tests {
         };
         // 32 runs measures an sd to about 12%; the thresholds below allow two of those.
         for (name, truth, f) in [
-            ("mean_energy", e_t, Box::new(move |s: u64| { let x = collect(s).mean_energy().unwrap(); (x.value, x.stderr) }) as Box<dyn Fn(u64) -> (f64, f64)>),
-            ("magnetization", m_t, Box::new(move |s: u64| { let x = collect(s).magnetization().unwrap(); (x.value, x.stderr) })),
-            ("correlation", c_t, Box::new(move |s: u64| { let x = collect(s).correlation(0, 3).unwrap(); (x.value, x.stderr) })),
-            ("marginal 0", m0_t, Box::new(move |s: u64| { let x = &collect(s).marginals().unwrap()[0]; (x.value, x.stderr) })),
+            (
+                "mean_energy",
+                e_t,
+                Box::new(move |s: u64| {
+                    let x = collect(s).mean_energy().unwrap();
+                    (x.value, x.stderr)
+                }) as Box<dyn Fn(u64) -> (f64, f64)>,
+            ),
+            (
+                "magnetization",
+                m_t,
+                Box::new(move |s: u64| {
+                    let x = collect(s).magnetization().unwrap();
+                    (x.value, x.stderr)
+                }),
+            ),
+            (
+                "correlation",
+                c_t,
+                Box::new(move |s: u64| {
+                    let x = collect(s).correlation(0, 3).unwrap();
+                    (x.value, x.stderr)
+                }),
+            ),
+            (
+                "marginal 0",
+                m0_t,
+                Box::new(move |s: u64| {
+                    let x = &collect(s).marginals().unwrap()[0];
+                    (x.value, x.stderr)
+                }),
+            ),
         ] {
             let c = calibrate(truth, 32, f);
             let tol = 2.0 * sd_z_uncertainty(&c);
-            assert!(c.bar_is_honest(1.15 + tol), "{name}: bar too small, sd(z) = {}", c.sd_z);
-            assert!(c.looks_unbiased(4.0), "{name}: biased, mean z = {}", c.mean_z);
-            assert!(c.coverage_95 >= 0.90, "{name}: 95% interval covered {}", c.coverage_95);
+            assert!(
+                c.bar_is_honest(1.15 + tol),
+                "{name}: bar too small, sd(z) = {}",
+                c.sd_z
+            );
+            assert!(
+                c.looks_unbiased(4.0),
+                "{name}: biased, mean z = {}",
+                c.mean_z
+            );
+            assert!(
+                c.coverage_95 >= 0.90,
+                "{name}: 95% interval covered {}",
+                c.coverage_95
+            );
         }
     }
 
@@ -251,9 +314,19 @@ mod tests {
                 t.lower_widened <= truth && truth <= t.upper_widened
             })
             .count();
-        assert_eq!(covered, 16, "the 3-sigma bracket missed {} of 16", 16 - covered);
+        assert_eq!(
+            covered,
+            16,
+            "the 3-sigma bracket missed {} of 16",
+            16 - covered
+        );
         // Markov allows delta of these to fail; measured, none do, because Markov is loose.
-        let violations = (0..24u64).filter(|&s| ais(&g, &linear_ladder(beta, 48), 2, 32, s).lower_bound(0.1) > truth).count();
-        assert!(violations as f64 <= 0.1 * 24.0, "the bound failed {violations} times in 24 at delta 0.1");
+        let violations = (0..24u64)
+            .filter(|&s| ais(&g, &linear_ladder(beta, 48), 2, 32, s).lower_bound(0.1) > truth)
+            .count();
+        assert!(
+            violations as f64 <= 0.1 * 24.0,
+            "the bound failed {violations} times in 24 at delta 0.1"
+        );
     }
 }

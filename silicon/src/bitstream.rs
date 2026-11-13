@@ -231,7 +231,6 @@ pub fn find_sync(config: &[u8]) -> Option<usize> {
         .map(|i| i + 4)
 }
 
-
 /// A decoded configuration packet.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Packet {
@@ -280,10 +279,16 @@ pub fn decode(words: &[u32]) -> Vec<Packet> {
                 let reg = (w >> 13) & 0x3FFF;
                 let count = (w & 0x7FF) as usize;
                 match op {
-                    1 => out.push(Packet::Read { reg, count: count as u32 }),
+                    1 => out.push(Packet::Read {
+                        reg,
+                        count: count as u32,
+                    }),
                     2 => {
                         let end = (i + count).min(words.len());
-                        out.push(Packet::Write { reg, data: words[i..end].to_vec() });
+                        out.push(Packet::Write {
+                            reg,
+                            data: words[i..end].to_vec(),
+                        });
                         i = end;
                     }
                     _ => out.push(Packet::Unknown(w)),
@@ -304,7 +309,12 @@ pub fn decode(words: &[u32]) -> Vec<Packet> {
 /// Read a big-endian word stream out of raw configuration bytes.
 #[must_use]
 pub fn to_words(config: &[u8]) -> Vec<u32> {
-    config.as_chunks::<4>().0.iter().map(|&c| u32::from_be_bytes(c)).collect()
+    config
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|&c| u32::from_be_bytes(c))
+        .collect()
 }
 
 #[cfg(test)]
@@ -316,7 +326,12 @@ mod tests {
         v.extend_from_slice(&[0x00, 0x09]);
         v.extend_from_slice(&[0x0F, 0xF0, 0x0F, 0xF0, 0x0F, 0xF0, 0x0F, 0xF0, 0x00]);
         v.extend_from_slice(&[0x00, 0x01]);
-        for (tag, s) in [(b'a', design), (b'b', part), (b'c', "2026/08/05"), (b'd', "12:00:00")] {
+        for (tag, s) in [
+            (b'a', design),
+            (b'b', part),
+            (b'c', "2026/08/05"),
+            (b'd', "12:00:00"),
+        ] {
             let mut b = s.as_bytes().to_vec();
             b.push(0);
             v.push(tag);
@@ -334,11 +349,22 @@ mod tests {
     /// against its own reader agrees with itself and with nothing else.
     #[test]
     fn the_writer_emits_the_container_the_parser_was_tested_against() {
-        let payload: Vec<u8> = [DUMMY, SYNC, NOOP].iter().flat_map(|w| w.to_be_bytes()).collect();
+        let payload: Vec<u8> = [DUMMY, SYNC, NOOP]
+            .iter()
+            .flat_map(|w| w.to_be_bytes())
+            .collect();
         let hand = synthetic_bit("fabric;UserID=0X0", "7a100tfgg484", &payload);
-        let written =
-            write_bit("fabric;UserID=0X0", "7a100tfgg484", "2026/08/05", "12:00:00", &payload);
-        assert_eq!(written, hand, "the writer and the hand-built container must agree");
+        let written = write_bit(
+            "fabric;UserID=0X0",
+            "7a100tfgg484",
+            "2026/08/05",
+            "12:00:00",
+            &payload,
+        );
+        assert_eq!(
+            written, hand,
+            "the writer and the hand-built container must agree"
+        );
         assert_eq!(&written[..BIT_PREAMBLE.len()], &BIT_PREAMBLE[..]);
         let parsed = parse_bit(&written);
         assert_eq!(parsed.design, "fabric;UserID=0X0");
@@ -353,7 +379,10 @@ mod tests {
 
     #[test]
     fn bit_container_roundtrip() {
-        let payload: Vec<u8> = [DUMMY, SYNC, NOOP].iter().flat_map(|w| w.to_be_bytes()).collect();
+        let payload: Vec<u8> = [DUMMY, SYNC, NOOP]
+            .iter()
+            .flat_map(|w| w.to_be_bytes())
+            .collect();
         let file = synthetic_bit("fabric;UserID=0X0", "7a100tfgg484", &payload);
         let parsed = parse_bit(&file);
         assert_eq!(parsed.design, "fabric;UserID=0X0");
@@ -365,7 +394,10 @@ mod tests {
     #[test]
     fn raw_bin_passes_through() {
         // A raw payload with no container must be returned untouched rather than mangled.
-        let raw: Vec<u8> = [DUMMY, DUMMY, SYNC].iter().flat_map(|w| w.to_be_bytes()).collect();
+        let raw: Vec<u8> = [DUMMY, DUMMY, SYNC]
+            .iter()
+            .flat_map(|w| w.to_be_bytes())
+            .collect();
         let parsed = parse_bit(&raw);
         assert_eq!(parsed.config, &raw[..]);
     }
@@ -383,10 +415,28 @@ mod tests {
         words.extend_from_slice(&[type1_read(reg::STAT, 1)]);
         let sync_at = find_sync(&crate::frame::words_to_bytes(&words)).unwrap();
         let decoded = decode(&to_words(&crate::frame::words_to_bytes(&words))[sync_at / 4..]);
-        assert_eq!(decoded[0], Packet::Write { reg: reg::CMD, data: vec![cmd::RCRC] });
+        assert_eq!(
+            decoded[0],
+            Packet::Write {
+                reg: reg::CMD,
+                data: vec![cmd::RCRC]
+            }
+        );
         assert_eq!(decoded[1], Packet::Nop);
-        assert_eq!(decoded[2], Packet::Write { reg: reg::IDCODE, data: vec![0x0363_1093] });
-        assert_eq!(decoded[3], Packet::Read { reg: reg::STAT, count: 1 });
+        assert_eq!(
+            decoded[2],
+            Packet::Write {
+                reg: reg::IDCODE,
+                data: vec![0x0363_1093]
+            }
+        );
+        assert_eq!(
+            decoded[3],
+            Packet::Read {
+                reg: reg::STAT,
+                count: 1
+            }
+        );
     }
 
     #[test]

@@ -347,17 +347,28 @@ impl core::fmt::Display for CorporaError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             CorporaError::Header { format, line, text } => {
-                write!(f, "{format}: line {line} is not the header this format declares: {text:?}")
+                write!(
+                    f,
+                    "{format}: line {line} is not the header this format declares: {text:?}"
+                )
             }
             CorporaError::Line { format, line, text } => {
-                write!(f, "{format}: line {line} is not a body line of this format: {text:?}")
+                write!(
+                    f,
+                    "{format}: line {line} is not a body line of this format: {text:?}"
+                )
             }
             CorporaError::Number { format, line, got } => write!(
                 f,
                 "{format}: line {line} carries {got:?} where a finite number belongs (`nan` and \
                  `inf` parse as f64 and poison every energy they reach)"
             ),
-            CorporaError::Index { format, line, got, n } => write!(
+            CorporaError::Index {
+                format,
+                line,
+                got,
+                n,
+            } => write!(
                 f,
                 "{format}: line {line} names index {got}, outside 1..={n}; this format is ONE-based \
                  and a 0 means the producer was zero-based"
@@ -367,13 +378,23 @@ impl core::fmt::Display for CorporaError {
                 "{format}: line {line} joins vertex {at} to itself. A self-loop crosses no cut, so \
                  it is a constant nobody declared"
             ),
-            CorporaError::Duplicate { format, line, first, pair } => write!(
+            CorporaError::Duplicate {
+                format,
+                line,
+                first,
+                pair,
+            } => write!(
                 f,
                 "{format}: line {line} repeats the pair ({}, {}) first given on line {first}. \
                  Summing them would silently solve a different instance",
                 pair.0, pair.1
             ),
-            CorporaError::Count { format, what, declared, found } => write!(
+            CorporaError::Count {
+                format,
+                what,
+                declared,
+                found,
+            } => write!(
                 f,
                 "{format}: the header declares {declared} {what} and the body has {found}. A \
                  truncated file parses into a valid SMALLER instance whose optimum is not \
@@ -571,11 +592,20 @@ impl Qubo {
         for &(i, j, c) in terms {
             for v in [i, j] {
                 if v >= n {
-                    return Err(CorporaError::Index { format, line: 0, got: v as i64 + 1, n });
+                    return Err(CorporaError::Index {
+                        format,
+                        line: 0,
+                        got: v as i64 + 1,
+                        n,
+                    });
                 }
             }
             if !c.is_finite() {
-                return Err(CorporaError::Number { format, line: 0, got: c.to_string() });
+                return Err(CorporaError::Number {
+                    format,
+                    line: 0,
+                    got: c.to_string(),
+                });
             }
             t.push((i.min(j), i.max(j), c));
         }
@@ -591,9 +621,20 @@ impl Qubo {
             }
         }
         if !constant.is_finite() {
-            return Err(CorporaError::Number { format, line: 0, got: constant.to_string() });
+            return Err(CorporaError::Number {
+                format,
+                line: 0,
+                got: constant.to_string(),
+            });
         }
-        Ok(Qubo { name: name.into(), n, terms: t, constant, sense, corpus })
+        Ok(Qubo {
+            name: name.into(),
+            n,
+            terms: t,
+            constant,
+            sense,
+            corpus,
+        })
     }
 
     /// `f(x)` at a `{0,1}` state, straight from the stored coefficients.
@@ -603,7 +644,12 @@ impl Qubo {
     /// If `x` is shorter than [`Qubo::n`].
     #[must_use]
     pub fn value(&self, x: &[i8]) -> f64 {
-        assert!(x.len() >= self.n, "a state of {} cannot cover {} variables", x.len(), self.n);
+        assert!(
+            x.len() >= self.n,
+            "a state of {} cannot cover {} variables",
+            x.len(),
+            self.n
+        );
         let mut v = self.constant;
         for &(i, j, c) in &self.terms {
             v += c * f64::from(x[i]) * f64::from(x[j]);
@@ -712,7 +758,12 @@ impl Qubo {
             edges.push((0, i + 1, w));
         }
         edges.sort_by_key(|a| (a.0, a.1));
-        Ok(MaxCut { name: self.name.clone(), n: self.n + 1, edges, corpus: self.corpus })
+        Ok(MaxCut {
+            name: self.name.clone(),
+            n: self.n + 1,
+            edges,
+            corpus: self.corpus,
+        })
     }
 }
 
@@ -735,14 +786,27 @@ impl MaxCut {
         for &(i, j, w) in edges {
             for v in [i, j] {
                 if v >= n {
-                    return Err(CorporaError::Index { format, line: 0, got: v as i64 + 1, n });
+                    return Err(CorporaError::Index {
+                        format,
+                        line: 0,
+                        got: v as i64 + 1,
+                        n,
+                    });
                 }
             }
             if i == j {
-                return Err(CorporaError::SelfLoop { format, line: 0, at: i + 1 });
+                return Err(CorporaError::SelfLoop {
+                    format,
+                    line: 0,
+                    at: i + 1,
+                });
             }
             if !w.is_finite() {
-                return Err(CorporaError::Number { format, line: 0, got: w.to_string() });
+                return Err(CorporaError::Number {
+                    format,
+                    line: 0,
+                    got: w.to_string(),
+                });
             }
             e.push((i.min(j), i.max(j), w));
         }
@@ -757,7 +821,12 @@ impl MaxCut {
                 });
             }
         }
-        Ok(MaxCut { name: name.into(), n, edges: e, corpus })
+        Ok(MaxCut {
+            name: name.into(),
+            n,
+            edges: e,
+            corpus,
+        })
     }
 
     /// The weight of the edges this bipartition cuts, straight from the stored edges.
@@ -767,8 +836,17 @@ impl MaxCut {
     /// If `s` is shorter than [`MaxCut::n`].
     #[must_use]
     pub fn cut(&self, s: &[i8]) -> f64 {
-        assert!(s.len() >= self.n, "a state of {} cannot cover {} vertices", s.len(), self.n);
-        self.edges.iter().filter(|&&(i, j, _)| s[i] != s[j]).map(|&(_, _, w)| w).sum()
+        assert!(
+            s.len() >= self.n,
+            "a state of {} cannot cover {} vertices",
+            s.len(),
+            self.n
+        );
+        self.edges
+            .iter()
+            .filter(|&&(i, j, _)| s[i] != s[j])
+            .map(|&(_, _, w)| w)
+            .sum()
     }
 
     /// The Ising form, with the affine map back to the cut value.
@@ -815,7 +893,11 @@ struct Scanner<'a> {
 
 impl<'a> Scanner<'a> {
     fn new(text: &'a str, comment: Option<char>, trailing: Option<char>) -> Scanner<'a> {
-        Scanner { inner: text.lines().enumerate(), comment, trailing }
+        Scanner {
+            inner: text.lines().enumerate(),
+            comment,
+            trailing,
+        }
     }
 
     /// The next line carrying data, as `(one-based number, payload)`.
@@ -852,7 +934,8 @@ fn need<'a>(
     format: &'static str,
     want: &'static str,
 ) -> Result<(usize, &'a str), CorporaError> {
-    s.next_line().ok_or(CorporaError::Truncated { format, want })
+    s.next_line()
+        .ok_or(CorporaError::Truncated { format, want })
 }
 
 /// The line's single token, or [`CorporaError::Line`] when it carries none or more than one.
@@ -860,7 +943,11 @@ fn only<'a>(format: &'static str, line: usize, l: &'a str) -> Result<&'a str, Co
     let mut it = l.split_whitespace();
     match (it.next(), it.next()) {
         (Some(t), None) => Ok(t),
-        _ => Err(CorporaError::Line { format, line, text: l.to_string() }),
+        _ => Err(CorporaError::Line {
+            format,
+            line,
+            text: l.to_string(),
+        }),
     }
 }
 
@@ -868,17 +955,30 @@ fn only<'a>(format: &'static str, line: usize, l: &'a str) -> Result<&'a str, Co
 fn number(format: &'static str, line: usize, tok: &str) -> Result<f64, CorporaError> {
     match tok.parse::<f64>() {
         Ok(v) if v.is_finite() => Ok(v),
-        _ => Err(CorporaError::Number { format, line, got: tok.to_string() }),
+        _ => Err(CorporaError::Number {
+            format,
+            line,
+            got: tok.to_string(),
+        }),
     }
 }
 
 /// A one-based index, returned zero-based. Out of range is named, never shifted or clamped.
 fn index(format: &'static str, line: usize, tok: &str, n: usize) -> Result<usize, CorporaError> {
     let Ok(v) = tok.parse::<i64>() else {
-        return Err(CorporaError::Number { format, line, got: tok.to_string() });
+        return Err(CorporaError::Number {
+            format,
+            line,
+            got: tok.to_string(),
+        });
     };
     if v < 1 || v as u64 > n as u64 {
-        return Err(CorporaError::Index { format, line, got: v, n });
+        return Err(CorporaError::Index {
+            format,
+            line,
+            got: v,
+            n,
+        });
     }
     Ok(v as usize - 1)
 }
@@ -901,17 +1001,30 @@ fn read_entries(
     let mut raw: Vec<(usize, usize, f64, usize)> = Vec::with_capacity(count.min(1 << 16));
     for _ in 0..count {
         let Some((no, l)) = s.next_line() else {
-            return Err(CorporaError::Count { format, what, declared: count, found: raw.len() });
+            return Err(CorporaError::Count {
+                format,
+                what,
+                declared: count,
+                found: raw.len(),
+            });
         };
         let mut it = l.split_whitespace();
         let (Some(a), Some(b), Some(c), None) = (it.next(), it.next(), it.next(), it.next()) else {
-            return Err(CorporaError::Line { format, line: no, text: l.to_string() });
+            return Err(CorporaError::Line {
+                format,
+                line: no,
+                text: l.to_string(),
+            });
         };
         let i = index(format, no, a, n)?;
         let j = index(format, no, b, n)?;
         let v = number(format, no, c)?;
         if i == j && !diagonal {
-            return Err(CorporaError::SelfLoop { format, line: no, at: i + 1 });
+            return Err(CorporaError::SelfLoop {
+                format,
+                line: no,
+                at: i + 1,
+            });
         }
         raw.push((i.min(j), i.max(j), v, no));
     }
@@ -946,7 +1059,11 @@ fn read_edge_list(
 ) -> Result<MaxCut, CorporaError> {
     let mut s = Scanner::new(text, comment, None);
     let (no, head) = need(&mut s, format, "the `n m` header")?;
-    let bad = || CorporaError::Header { format, line: no, text: head.to_string() };
+    let bad = || CorporaError::Header {
+        format,
+        line: no,
+        text: head.to_string(),
+    };
     let mut h = head.split_whitespace();
     let (Some(a), Some(b), None) = (h.next(), h.next(), h.next()) else {
         return Err(bad());
@@ -957,9 +1074,19 @@ fn read_edge_list(
     let edges = read_entries(&mut s, format, "edges", n, m, false)?;
     let extra = s.remaining();
     if extra > 0 {
-        return Err(CorporaError::Count { format, what: "edges", declared: m, found: m + extra });
+        return Err(CorporaError::Count {
+            format,
+            what: "edges",
+            declared: m,
+            found: m + extra,
+        });
     }
-    Ok(MaxCut { name: String::new(), n, edges, corpus })
+    Ok(MaxCut {
+        name: String::new(),
+        n,
+        edges,
+        corpus,
+    })
 }
 
 /// Read the Biq Mac library's max-cut format, which is Rinaldi's `rudy` edge list.
@@ -1018,7 +1145,11 @@ pub fn read_mqlib_qubo(text: &str) -> Result<Qubo, CorporaError> {
     let format = MQ_QUBO;
     let mut s = Scanner::new(text, Some('#'), None);
     let (no, head) = need(&mut s, format, "the `n nnz` header")?;
-    let bad = || CorporaError::Header { format, line: no, text: head.to_string() };
+    let bad = || CorporaError::Header {
+        format,
+        line: no,
+        text: head.to_string(),
+    };
     let mut h = head.split_whitespace();
     let (Some(a), Some(b), None) = (h.next(), h.next(), h.next()) else {
         return Err(bad());
@@ -1069,14 +1200,27 @@ pub fn read_orlib(text: &str) -> Result<Vec<Qubo>, CorporaError> {
     let mut s = Scanner::new(text, None, None);
     let (no, head) = need(&mut s, format, "the problem count")?;
     let Ok(p) = only(format, no, head)?.parse::<usize>() else {
-        return Err(CorporaError::Header { format, line: no, text: head.to_string() });
+        return Err(CorporaError::Header {
+            format,
+            line: no,
+            text: head.to_string(),
+        });
     };
     let mut out = Vec::with_capacity(p.min(1 << 16));
     for k in 0..p {
         let Some((hno, hl)) = s.next_line() else {
-            return Err(CorporaError::Count { format, what: "problems", declared: p, found: k });
+            return Err(CorporaError::Count {
+                format,
+                what: "problems",
+                declared: p,
+                found: k,
+            });
         };
-        let bad = || CorporaError::Header { format, line: hno, text: hl.to_string() };
+        let bad = || CorporaError::Header {
+            format,
+            line: hno,
+            text: hl.to_string(),
+        };
         let mut h = hl.split_whitespace();
         let (Some(a), Some(b), None) = (h.next(), h.next(), h.next()) else {
             return Err(bad());
@@ -1095,7 +1239,11 @@ pub fn read_orlib(text: &str) -> Result<Vec<Qubo>, CorporaError> {
         });
     }
     if let Some((no, l)) = s.next_line() {
-        return Err(CorporaError::Line { format, line: no, text: l.to_string() });
+        return Err(CorporaError::Line {
+            format,
+            line: no,
+            text: l.to_string(),
+        });
     }
     Ok(out)
 }
@@ -1136,7 +1284,11 @@ pub fn read_qplib(text: &str) -> Result<Qubo, CorporaError> {
     let code = only(format, tno, code)?.to_string();
     let up: Vec<char> = code.to_ascii_uppercase().chars().collect();
     if up.len() != 3 {
-        return Err(CorporaError::Header { format, line: tno, text: code });
+        return Err(CorporaError::Header {
+            format,
+            line: tno,
+            text: code,
+        });
     }
     if !matches!(up[0], 'L' | 'D' | 'C' | 'Q') {
         return Err(CorporaError::Unsupported {
@@ -1166,12 +1318,19 @@ pub fn read_qplib(text: &str) -> Result<Qubo, CorporaError> {
     } else if sl.eq_ignore_ascii_case("maximize") {
         Sense::Maximise
     } else {
-        return Err(CorporaError::Sense { line: sno, got: sl.to_string() });
+        return Err(CorporaError::Sense {
+            line: sno,
+            got: sl.to_string(),
+        });
     };
 
     let (vno, vl) = need(&mut s, format, "the variable count")?;
     let Ok(n) = only(format, vno, vl)?.parse::<usize>() else {
-        return Err(CorporaError::Header { format, line: vno, text: vl.to_string() });
+        return Err(CorporaError::Header {
+            format,
+            line: vno,
+            text: vl.to_string(),
+        });
     };
 
     // A linear objective has no Q0 section at all; the other three codes always write one, even
@@ -1181,7 +1340,11 @@ pub fn read_qplib(text: &str) -> Result<Qubo, CorporaError> {
     } else {
         let (cno, cl) = need(&mut s, format, "the nonzero count of Q0")?;
         let Ok(nnz) = only(format, cno, cl)?.parse::<usize>() else {
-            return Err(CorporaError::Header { format, line: cno, text: cl.to_string() });
+            return Err(CorporaError::Header {
+                format,
+                line: cno,
+                text: cl.to_string(),
+            });
         };
         read_entries(&mut s, format, "quadratic coefficients", n, nnz, true)?
     };
@@ -1190,7 +1353,11 @@ pub fn read_qplib(text: &str) -> Result<Qubo, CorporaError> {
     let default = number(format, dno, only(format, dno, dl)?)?;
     let (bno, bl) = need(&mut s, format, "the count of non-default entries of b0")?;
     let Ok(nb) = only(format, bno, bl)?.parse::<usize>() else {
-        return Err(CorporaError::Header { format, line: bno, text: bl.to_string() });
+        return Err(CorporaError::Header {
+            format,
+            line: bno,
+            text: bl.to_string(),
+        });
     };
 
     // A diagonal coefficient exists when EITHER Q0's diagonal or b0 named it; `default` being
@@ -1223,7 +1390,11 @@ pub fn read_qplib(text: &str) -> Result<Qubo, CorporaError> {
         };
         let mut it = l.split_whitespace();
         let (Some(a), Some(b), None) = (it.next(), it.next(), it.next()) else {
-            return Err(CorporaError::Line { format, line: no, text: l.to_string() });
+            return Err(CorporaError::Line {
+                format,
+                line: no,
+                text: l.to_string(),
+            });
         };
         let i = index(format, no, a, n)?;
         let v = number(format, no, b)?;
@@ -1253,7 +1424,14 @@ pub fn read_qplib(text: &str) -> Result<Qubo, CorporaError> {
         }
     }
     terms.sort_by_key(|a| (a.0, a.1));
-    Ok(Qubo { name, n, terms, constant, sense, corpus: Corpus::Qplib })
+    Ok(Qubo {
+        name,
+        n,
+        terms,
+        constant,
+        sense,
+        corpus: Corpus::Qplib,
+    })
 }
 
 // ---- writing ------------------------------------------------------------------------------------
@@ -1284,7 +1462,10 @@ fn qubo_fits(q: &Qubo, format: &'static str) -> Result<(), CorporaError> {
     if q.sense != Sense::Maximise {
         return Err(CorporaError::Unrepresentable {
             format,
-            what: format!("a {} — this format is a maximisation by definition", q.sense),
+            what: format!(
+                "a {} — this format is a maximisation by definition",
+                q.sense
+            ),
         });
     }
     if q.constant != 0.0 {
@@ -1441,7 +1622,11 @@ Maximize        ! sense
 
     fn states(n: usize) -> Vec<Vec<i8>> {
         (0u32..(1u32 << n))
-            .map(|m| (0..n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect())
+            .map(|m| {
+                (0..n)
+                    .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect()
+            })
             .collect()
     }
 
@@ -1488,7 +1673,12 @@ Maximize        ! sense
 
         for q in three_qubos() {
             let inst = q.instance();
-            assert_eq!(inst.sense, Sense::Maximise, "{}: all three corpora maximise", q.corpus);
+            assert_eq!(
+                inst.sense,
+                Sense::Maximise,
+                "{}: all three corpora maximise",
+                q.corpus
+            );
             for s in states(4) {
                 let x = binary_state(&s);
                 let got = inst.objective(&s);
@@ -1520,11 +1710,21 @@ Maximize        ! sense
     fn oracle_cross_format_qplib_orlib_and_mqlib_agree_over_exhaustive_enumeration() {
         let qs = three_qubos();
         for q in &qs[1..] {
-            assert_eq!(q.terms, qs[0].terms, "{} disagrees with OR-Library on coefficients", q.corpus);
+            assert_eq!(
+                q.terms, qs[0].terms,
+                "{} disagrees with OR-Library on coefficients",
+                q.corpus
+            );
             assert_eq!(q.constant, qs[0].constant);
         }
-        assert_eq!(qs[2].name, "smallq", "QPLIB names its instances and the name is carried");
-        assert_eq!(qs[0].name, "1", "OR-Library does not, so the position in the file is the name");
+        assert_eq!(
+            qs[2].name, "smallq",
+            "QPLIB names its instances and the name is carried"
+        );
+        assert_eq!(
+            qs[0].name, "1",
+            "OR-Library does not, so the position in the file is the name"
+        );
 
         let insts: Vec<Instance> = qs.iter().map(Qubo::instance).collect();
         for s in states(4) {
@@ -1558,7 +1758,10 @@ Maximize        ! sense
             (3, 4, 1.0),
             (0, 4, 4.0),
         ];
-        for mc in [read_biqmac(RUDY_TEXT).unwrap(), read_mqlib_maxcut(RUDY_TEXT).unwrap()] {
+        for mc in [
+            read_biqmac(RUDY_TEXT).unwrap(),
+            read_mqlib_maxcut(RUDY_TEXT).unwrap(),
+        ] {
             let inst = mc.instance();
             assert_eq!(inst.problem, Problem::MaxCut);
             assert_eq!(inst.sense, Sense::Maximise);
@@ -1566,8 +1769,11 @@ Maximize        ! sense
             let mut best_at_min_energy = 0.0;
             let mut lowest = f64::INFINITY;
             for s in states(5) {
-                let textbook: f64 =
-                    edges.iter().filter(|&&(i, j, _)| s[i] != s[j]).map(|&(_, _, w)| w).sum();
+                let textbook: f64 = edges
+                    .iter()
+                    .filter(|&&(i, j, _)| s[i] != s[j])
+                    .map(|&(_, _, w)| w)
+                    .sum();
                 assert!(
                     (inst.objective(&s) - textbook).abs() < 1e-12,
                     "{}: objective {} where the crossing edges weigh {textbook} at {s:?}",
@@ -1581,10 +1787,16 @@ Maximize        ! sense
                 }
             }
             // The energy MINIMUM must be the cut MAXIMUM, which is the whole point of the sign.
-            assert!((best_at_min_energy - best).abs() < 1e-12, "{lowest} minimises energy at a cut of {best_at_min_energy}, max is {best}");
+            assert!(
+                (best_at_min_energy - best).abs() < 1e-12,
+                "{lowest} minimises energy at a cut of {best_at_min_energy}, max is {best}"
+            );
             // 15: every positive edge crosses and the single −2 does not, which is achievable
             // because s₁ = s₂ is consistent with s₀ ≠ s₁ and s₀ ≠ s₂.
-            assert!((best - 15.0).abs() < 1e-12, "the max cut of this instance is 15, got {best}");
+            assert!(
+                (best - 15.0).abs() < 1e-12,
+                "the max cut of this instance is 15, got {best}"
+            );
         }
     }
 
@@ -1618,11 +1830,17 @@ Maximize        ! sense
                 (cut - f).abs() < 1e-12,
                 "cut {cut} but f(x) = {f} at y = {y:?}, x = {x:?}"
             );
-            assert!((mc.cut(&y) - f).abs() < 1e-12, "the stored edges disagree with the graph");
+            assert!(
+                (mc.cut(&y) - f).abs() < 1e-12,
+                "the stored edges disagree with the graph"
+            );
             best_cut = best_cut.max(cut);
             best_f = best_f.max(f);
         }
-        assert!((best_cut - best_f).abs() < 1e-12, "max cut {best_cut}, max f {best_f}");
+        assert!(
+            (best_cut - best_f).abs() < 1e-12,
+            "max cut {best_cut}, max f {best_f}"
+        );
     }
 
     /// Every writer's output reads back to an instance that scores a fixed random state to the
@@ -1641,7 +1859,11 @@ Maximize        ! sense
         let s5: Vec<i8> = (0..5).map(|_| rng.spin(0.5)).collect();
 
         let cases: Vec<(&str, String, Qubo)> = vec![
-            ("QPLIB", write_qplib(&q).unwrap(), read_qplib(&write_qplib(&q).unwrap()).unwrap()),
+            (
+                "QPLIB",
+                write_qplib(&q).unwrap(),
+                read_qplib(&write_qplib(&q).unwrap()).unwrap(),
+            ),
             (
                 "MQLib QUBO",
                 write_mqlib_qubo(&q).unwrap(),
@@ -1650,7 +1872,9 @@ Maximize        ! sense
             (
                 "OR-Library",
                 write_orlib(std::slice::from_ref(&q)).unwrap(),
-                read_orlib(&write_orlib(std::slice::from_ref(&q)).unwrap()).unwrap().remove(0),
+                read_orlib(&write_orlib(std::slice::from_ref(&q)).unwrap())
+                    .unwrap()
+                    .remove(0),
             ),
         ];
         let first = q.instance();
@@ -1674,12 +1898,18 @@ Maximize        ! sense
                 "MQLib QUBO" => write_mqlib_qubo(&back).unwrap(),
                 _ => write_orlib(std::slice::from_ref(&back)).unwrap(),
             };
-            assert_eq!(rewritten, text, "{name}: the second write differs from the first");
+            assert_eq!(
+                rewritten, text,
+                "{name}: the second write differs from the first"
+            );
         }
 
         let mc = read_biqmac(RUDY_TEXT).unwrap();
         let text = write_maxcut(&mc);
-        for back in [read_biqmac(&text).unwrap(), read_mqlib_maxcut(&text).unwrap()] {
+        for back in [
+            read_biqmac(&text).unwrap(),
+            read_mqlib_maxcut(&text).unwrap(),
+        ] {
             assert_eq!(back.edges, mc.edges);
             assert_eq!(
                 mc.instance().graph.energy(&s5).to_bits(),
@@ -1721,85 +1951,220 @@ Maximize        ! sense
                 matches!(e, CorporaError::Header { .. })
             }),
             ("biqmac", "3 3\n1 2 1\n", "a truncated body", |e| {
-                matches!(e, CorporaError::Count { declared: 3, found: 1, what: "edges", .. })
+                matches!(
+                    e,
+                    CorporaError::Count {
+                        declared: 3,
+                        found: 1,
+                        what: "edges",
+                        ..
+                    }
+                )
             }),
-            ("biqmac", "3 1\n1 2 1\n2 3 1\n", "a body longer than the header", |e| {
-                matches!(e, CorporaError::Count { declared: 1, found: 2, .. })
-            }),
+            (
+                "biqmac",
+                "3 1\n1 2 1\n2 3 1\n",
+                "a body longer than the header",
+                |e| {
+                    matches!(
+                        e,
+                        CorporaError::Count {
+                            declared: 1,
+                            found: 2,
+                            ..
+                        }
+                    )
+                },
+            ),
             ("biqmac", "3 1\n1 2 x\n", "a non-numeric weight", |e| {
                 matches!(e, CorporaError::Number { line: 2, .. })
             }),
-            ("biqmac", "3 1\n1 2 nan\n", "a nan weight, which parses as an f64", |e| {
-                matches!(e, CorporaError::Number { .. })
-            }),
+            (
+                "biqmac",
+                "3 1\n1 2 nan\n",
+                "a nan weight, which parses as an f64",
+                |e| matches!(e, CorporaError::Number { .. }),
+            ),
             ("biqmac", "3 1\n1 2 inf\n", "an infinite weight", |e| {
                 matches!(e, CorporaError::Number { .. })
             }),
-            ("biqmac", "3 2\n1 2 1\n2 1 3\n", "a duplicate edge, given the other way round", |e| {
-                matches!(e, CorporaError::Duplicate { line: 3, first: 2, pair: (1, 2), .. })
-            }),
+            (
+                "biqmac",
+                "3 2\n1 2 1\n2 1 3\n",
+                "a duplicate edge, given the other way round",
+                |e| {
+                    matches!(
+                        e,
+                        CorporaError::Duplicate {
+                            line: 3,
+                            first: 2,
+                            pair: (1, 2),
+                            ..
+                        }
+                    )
+                },
+            ),
             ("biqmac", "3 1\n2 2 1\n", "a self-loop", |e| {
                 matches!(e, CorporaError::SelfLoop { line: 2, at: 2, .. })
             }),
             ("biqmac", "3 1\n0 1 1\n", "a zero-based vertex", |e| {
                 matches!(e, CorporaError::Index { got: 0, n: 3, .. })
             }),
-            ("biqmac", "3 1\n1 4 1\n", "a vertex past the header's count", |e| {
-                matches!(e, CorporaError::Index { got: 4, n: 3, .. })
-            }),
+            (
+                "biqmac",
+                "3 1\n1 4 1\n",
+                "a vertex past the header's count",
+                |e| matches!(e, CorporaError::Index { got: 4, n: 3, .. }),
+            ),
             ("biqmac", "3 1\n1 2\n", "a body line with two fields", |e| {
                 matches!(e, CorporaError::Line { line: 2, .. })
             }),
-            ("biqmac", "3 1\n# a comment\n1 2 1\n", "a `#` line, which rudy does not carry", |e| {
-                matches!(e, CorporaError::Number { line: 2, .. })
-            }),
-            ("mqcut", "3 1\n2 2 1\n", "a self-loop, in MQLib's dialect too", |e| {
-                matches!(e, CorporaError::SelfLoop { at: 2, .. })
-            }),
-            ("mqqubo", "3 2\n1 1 5\n1 1 6\n", "a coefficient given twice", |e| {
-                matches!(e, CorporaError::Duplicate { line: 3, first: 2, pair: (1, 1), .. })
-            }),
-            ("mqqubo", "3 1\n1 2 4\nextra\n", "content past the declared count", |e| {
-                matches!(e, CorporaError::Count { declared: 1, found: 2, .. })
-            }),
-            ("orlib", "2\n2 1\n1 1 5\n", "fewer problems than declared", |e| {
-                matches!(e, CorporaError::Count { what: "problems", declared: 2, found: 1, .. })
-            }),
-            ("orlib", "1\n2 1\n1 1 5\n2 1\n1 1 5\n", "content past the last problem", |e| {
-                matches!(e, CorporaError::Line { line: 4, .. })
-            }),
-            ("orlib", "many\n", "a problem count that is not a number", |e| {
-                matches!(e, CorporaError::Header { line: 1, .. })
-            }),
-            ("qplib", "p\nQCN\nMinimize\n4\n", "continuous variables", |e| {
-                matches!(e, CorporaError::Unsupported { .. })
-            }),
-            ("qplib", "p\nQBL\nMinimize\n4\n", "linear constraints", |e| {
-                matches!(e, CorporaError::Unsupported { .. })
-            }),
-            ("qplib", "p\nXBN\nMinimize\n4\n", "an objective type outside L, D, C, Q", |e| {
-                matches!(e, CorporaError::Unsupported { .. })
-            }),
-            ("qplib", "p\nQB\nMinimize\n4\n", "a type code that is not three characters", |e| {
-                matches!(e, CorporaError::Header { line: 2, .. })
-            }),
-            ("qplib", "p\nQBN\nSolve\n4\n", "an objective sense that is neither word", |e| {
-                matches!(e, CorporaError::Sense { line: 3, .. })
-            }),
-            ("qplib", "p\nQBN\nMinimize\n4\n", "a file that stops before Q0's count", |e| {
-                matches!(e, CorporaError::Truncated { want: "the nonzero count of Q0", .. })
-            }),
-            ("qplib", "p\nQBN\nMinimize\n4\n2\n1 1 3\n", "a Q0 section shorter than its count", |e| {
-                matches!(
-                    e,
-                    CorporaError::Count { what: "quadratic coefficients", declared: 2, found: 1, .. }
-                )
-            }),
+            (
+                "biqmac",
+                "3 1\n# a comment\n1 2 1\n",
+                "a `#` line, which rudy does not carry",
+                |e| matches!(e, CorporaError::Number { line: 2, .. }),
+            ),
+            (
+                "mqcut",
+                "3 1\n2 2 1\n",
+                "a self-loop, in MQLib's dialect too",
+                |e| matches!(e, CorporaError::SelfLoop { at: 2, .. }),
+            ),
+            (
+                "mqqubo",
+                "3 2\n1 1 5\n1 1 6\n",
+                "a coefficient given twice",
+                |e| {
+                    matches!(
+                        e,
+                        CorporaError::Duplicate {
+                            line: 3,
+                            first: 2,
+                            pair: (1, 1),
+                            ..
+                        }
+                    )
+                },
+            ),
+            (
+                "mqqubo",
+                "3 1\n1 2 4\nextra\n",
+                "content past the declared count",
+                |e| {
+                    matches!(
+                        e,
+                        CorporaError::Count {
+                            declared: 1,
+                            found: 2,
+                            ..
+                        }
+                    )
+                },
+            ),
+            (
+                "orlib",
+                "2\n2 1\n1 1 5\n",
+                "fewer problems than declared",
+                |e| {
+                    matches!(
+                        e,
+                        CorporaError::Count {
+                            what: "problems",
+                            declared: 2,
+                            found: 1,
+                            ..
+                        }
+                    )
+                },
+            ),
+            (
+                "orlib",
+                "1\n2 1\n1 1 5\n2 1\n1 1 5\n",
+                "content past the last problem",
+                |e| matches!(e, CorporaError::Line { line: 4, .. }),
+            ),
+            (
+                "orlib",
+                "many\n",
+                "a problem count that is not a number",
+                |e| matches!(e, CorporaError::Header { line: 1, .. }),
+            ),
+            (
+                "qplib",
+                "p\nQCN\nMinimize\n4\n",
+                "continuous variables",
+                |e| matches!(e, CorporaError::Unsupported { .. }),
+            ),
+            (
+                "qplib",
+                "p\nQBL\nMinimize\n4\n",
+                "linear constraints",
+                |e| matches!(e, CorporaError::Unsupported { .. }),
+            ),
+            (
+                "qplib",
+                "p\nXBN\nMinimize\n4\n",
+                "an objective type outside L, D, C, Q",
+                |e| matches!(e, CorporaError::Unsupported { .. }),
+            ),
+            (
+                "qplib",
+                "p\nQB\nMinimize\n4\n",
+                "a type code that is not three characters",
+                |e| matches!(e, CorporaError::Header { line: 2, .. }),
+            ),
+            (
+                "qplib",
+                "p\nQBN\nSolve\n4\n",
+                "an objective sense that is neither word",
+                |e| matches!(e, CorporaError::Sense { line: 3, .. }),
+            ),
+            (
+                "qplib",
+                "p\nQBN\nMinimize\n4\n",
+                "a file that stops before Q0's count",
+                |e| {
+                    matches!(
+                        e,
+                        CorporaError::Truncated {
+                            want: "the nonzero count of Q0",
+                            ..
+                        }
+                    )
+                },
+            ),
+            (
+                "qplib",
+                "p\nQBN\nMinimize\n4\n2\n1 1 3\n",
+                "a Q0 section shorter than its count",
+                |e| {
+                    matches!(
+                        e,
+                        CorporaError::Count {
+                            what: "quadratic coefficients",
+                            declared: 2,
+                            found: 1,
+                            ..
+                        }
+                    )
+                },
+            ),
             (
                 "qplib",
                 "p\nQBN\nMinimize\n4\n0\n0\n2\n1 3\n1 4\n0\n",
                 "the same linear coefficient named twice",
-                |e| matches!(e, CorporaError::Duplicate { line: 9, first: 8, pair: (1, 1), .. }),
+                |e| {
+                    matches!(
+                        e,
+                        CorporaError::Duplicate {
+                            line: 9,
+                            first: 8,
+                            pair: (1, 1),
+                            ..
+                        }
+                    )
+                },
             ),
             (
                 "qplib",
@@ -1815,9 +2180,11 @@ Maximize        ! sense
             ),
         ];
         for &(which, text, why, ok) in cases {
-            let err = refuse(which, text)
-                .expect_err(&format!("{which} accepted {why}: {text:?}"));
-            assert!(ok(&err), "{which} refused {why} with the wrong variant: {err:?} — {err}");
+            let err = refuse(which, text).expect_err(&format!("{which} accepted {why}: {text:?}"));
+            assert!(
+                ok(&err),
+                "{which} refused {why} with the wrong variant: {err:?} — {err}"
+            );
         }
     }
 
@@ -1861,7 +2228,10 @@ Maximize        ! sense
         assert_eq!((maxi.sense, mini.sense), (Sense::Maximise, Sense::Minimise));
 
         let (a, b) = (maxi.instance(), mini.instance());
-        assert!(a.scale < 0.0 && b.scale > 0.0, "the slope's sign IS the sense");
+        assert!(
+            a.scale < 0.0 && b.scale > 0.0,
+            "the slope's sign IS the sense"
+        );
 
         let mut hi = (f64::NEG_INFINITY, Vec::new());
         let mut lo = (f64::INFINITY, Vec::new());
@@ -1874,19 +2244,36 @@ Maximize        ! sense
                 lo = (f, s);
             }
         }
-        assert!(hi.0 > lo.0, "the fixture must actually have two distinct optima");
-        assert_ne!(hi.1, lo.1, "and they must be different states, or this proves nothing");
+        assert!(
+            hi.0 > lo.0,
+            "the fixture must actually have two distinct optima"
+        );
+        assert_ne!(
+            hi.1, lo.1,
+            "and they must be different states, or this proves nothing"
+        );
 
         let best = |inst: &Instance| {
             states(4)
                 .into_iter()
                 .min_by(|x, y| {
-                    inst.graph.energy(x).partial_cmp(&inst.graph.energy(y)).expect("finite")
+                    inst.graph
+                        .energy(x)
+                        .partial_cmp(&inst.graph.energy(y))
+                        .expect("finite")
                 })
                 .unwrap()
         };
-        assert_eq!(best(&a), hi.1, "the maximising file's energy minimum must be the MAXIMUM of f");
-        assert_eq!(best(&b), lo.1, "and the minimising file's must be the MINIMUM");
+        assert_eq!(
+            best(&a),
+            hi.1,
+            "the maximising file's energy minimum must be the MAXIMUM of f"
+        );
+        assert_eq!(
+            best(&b),
+            lo.1,
+            "and the minimising file's must be the MINIMUM"
+        );
         assert!((a.objective(&hi.1) - hi.0).abs() < 1e-12);
         assert!((b.objective(&lo.1) - lo.0).abs() < 1e-12);
     }
@@ -1901,8 +2288,9 @@ Maximize        ! sense
     #[test]
     fn a_dropped_constant_would_leave_the_ranking_intact_and_the_value_wrong() {
         let plain = read_qplib(QPLIB_TEXT).unwrap();
-        let shifted = read_qplib(&QPLIB_TEXT.replace("0               ! q0", "17.25           ! q0"))
-            .unwrap();
+        let shifted =
+            read_qplib(&QPLIB_TEXT.replace("0               ! q0", "17.25           ! q0"))
+                .unwrap();
         assert_eq!(plain.constant, 0.0);
         assert_eq!(shifted.constant, 17.25);
         assert_eq!(plain.terms, shifted.terms);
@@ -1925,7 +2313,9 @@ Maximize        ! sense
     #[test]
     fn oracle_exact_elimination_finds_the_enumerated_optimum_of_a_parsed_instance() {
         let inst = read_biqmac(RUDY_TEXT).unwrap().instance();
-        let ex = crate::exact::Elimination::default().ground_state(&inst.graph).unwrap();
+        let ex = crate::exact::Elimination::default()
+            .ground_state(&inst.graph)
+            .unwrap();
         let state = ex.ground_state.expect("min-sum was run");
         let truth = states(5)
             .into_iter()
@@ -1952,21 +2342,45 @@ Maximize        ! sense
             .into_iter()
             .map(|s| cut.objective(&s))
             .fold(f64::NEG_INFINITY, f64::max);
-        for b in [crate::bound::decoupled(&cut.graph), crate::bound::forest(&cut.graph, 40)] {
+        for b in [
+            crate::bound::decoupled(&cut.graph),
+            crate::bound::forest(&cut.graph, 40),
+        ] {
             let ub = cut.objective_bound(b.value);
-            assert!(ub.is_finite(), "{}: an infinite bound says nothing", b.method);
-            assert!(ub >= truth - 1e-12, "{}: upper bound {ub} sits BELOW the true max {truth}", b.method);
+            assert!(
+                ub.is_finite(),
+                "{}: an infinite bound says nothing",
+                b.method
+            );
+            assert!(
+                ub >= truth - 1e-12,
+                "{}: upper bound {ub} sits BELOW the true max {truth}",
+                b.method
+            );
         }
 
-        let mini = read_qplib(&QPLIB_TEXT.replace("Maximize", "Minimize")).unwrap().instance();
+        let mini = read_qplib(&QPLIB_TEXT.replace("Maximize", "Minimize"))
+            .unwrap()
+            .instance();
         let low = states(4)
             .into_iter()
             .map(|s| mini.objective(&s))
             .fold(f64::INFINITY, f64::min);
-        for b in [crate::bound::decoupled(&mini.graph), crate::bound::forest(&mini.graph, 40)] {
+        for b in [
+            crate::bound::decoupled(&mini.graph),
+            crate::bound::forest(&mini.graph, 40),
+        ] {
             let lb = mini.objective_bound(b.value);
-            assert!(lb.is_finite(), "{}: an infinite bound says nothing", b.method);
-            assert!(lb <= low + 1e-12, "{}: lower bound {lb} sits ABOVE the true min {low}", b.method);
+            assert!(
+                lb.is_finite(),
+                "{}: an infinite bound says nothing",
+                b.method
+            );
+            assert!(
+                lb <= low + 1e-12,
+                "{}: lower bound {lb} sits ABOVE the true min {low}",
+                b.method
+            );
         }
     }
 
@@ -1981,14 +2395,21 @@ Maximize        ! sense
         let text = "3 3\n1 2 1e16\n2 3 1\n1 3 -1e16\n";
         let inst = read_biqmac(text).unwrap().instance();
         let naive: f64 = [5e15, 0.5, -5e15].iter().sum();
-        assert_eq!(naive, 0.0, "the fixture must actually defeat plain addition, or it tests nothing");
+        assert_eq!(
+            naive, 0.0,
+            "the fixture must actually defeat plain addition, or it tests nothing"
+        );
         assert!(
             inst.offset - inst.offset_err <= 0.5 && 0.5 <= inst.offset + inst.offset_err,
             "the exact constant 0.5 is outside [{}, {}]",
             inst.offset - inst.offset_err,
             inst.offset + inst.offset_err
         );
-        assert!(inst.offset_err < 1e-9, "and the bracket must stay useful: {}", inst.offset_err);
+        assert!(
+            inst.offset_err < 1e-9,
+            "and the bracket must stay useful: {}",
+            inst.offset_err
+        );
 
         // MEASURED TWICE, with opposite answers. When this test was written, `round`'s guard was a
         // bound on what the arithmetic COULD have lost rather than a detection of what it did
@@ -1999,7 +2420,10 @@ Maximize        ! sense
         // half-weights now come back with `offset_err` exactly 0.0. That is the tight answer, and
         // it is asserted with `==` so a guard that quietly becomes unconditional again fails here.
         let exact = read_biqmac(RUDY_TEXT).unwrap().instance();
-        assert_eq!(exact.offset_err, 0.0, "nothing rounded, so the bracket must have no width");
+        assert_eq!(
+            exact.offset_err, 0.0,
+            "nothing rounded, so the bracket must have no width"
+        );
         assert!(
             exact.offset - exact.offset_err <= 6.5 && 6.5 <= exact.offset + exact.offset_err,
             "W = 13, so the exact offset is 13/2 and must be inside [{}, {}]",
@@ -2030,7 +2454,10 @@ Maximize        ! sense
             write_orlib(std::slice::from_ref(&with_constant)).unwrap_err(),
         ] {
             assert!(matches!(e, CorporaError::Unrepresentable { .. }), "{e:?}");
-            assert!(e.to_string().contains("2.5"), "the refusal must name the constant: {e}");
+            assert!(
+                e.to_string().contains("2.5"),
+                "the refusal must name the constant: {e}"
+            );
         }
 
         let mut minimising = plain.clone();
@@ -2040,13 +2467,20 @@ Maximize        ! sense
             Err(CorporaError::Unrepresentable { .. })
         ));
         // And QPLIB, which DOES carry both, writes them.
-        let both = Qubo { name: "q".to_string(), constant: 2.5, ..minimising.clone() };
+        let both = Qubo {
+            name: "q".to_string(),
+            constant: 2.5,
+            ..minimising.clone()
+        };
         let back = read_qplib(&write_qplib(&both).unwrap()).unwrap();
         assert_eq!((back.sense, back.constant), (Sense::Minimise, 2.5));
 
         // A name that would shift every section that follows it is refused, and a usable one is not.
         for bad in ["", "two words", "bang!"] {
-            let q = Qubo { name: bad.to_string(), ..both.clone() };
+            let q = Qubo {
+                name: bad.to_string(),
+                ..both.clone()
+            };
             assert!(
                 matches!(write_qplib(&q), Err(CorporaError::Unrepresentable { .. })),
                 "QPLIB accepted the name {bad:?}"
@@ -2054,8 +2488,14 @@ Maximize        ! sense
         }
 
         // The root-node transformation refuses the same two things, for the same reason.
-        assert!(matches!(both.to_maxcut(), Err(CorporaError::Unrepresentable { .. })));
-        assert!(matches!(minimising.to_maxcut(), Err(CorporaError::Unrepresentable { .. })));
+        assert!(matches!(
+            both.to_maxcut(),
+            Err(CorporaError::Unrepresentable { .. })
+        ));
+        assert!(matches!(
+            minimising.to_maxcut(),
+            Err(CorporaError::Unrepresentable { .. })
+        ));
     }
 
     /// The checked constructors refuse what the readers refuse, so a model built in Rust cannot
@@ -2096,17 +2536,60 @@ Maximize        ! sense
     #[test]
     fn every_refusal_prints_what_it_saw() {
         let cases: Vec<CorporaError> = vec![
-            CorporaError::Header { format: "F", line: 1, text: "x".into() },
-            CorporaError::Line { format: "F", line: 2, text: "y".into() },
-            CorporaError::Number { format: "F", line: 3, got: "nan".into() },
-            CorporaError::Index { format: "F", line: 4, got: 0, n: 9 },
-            CorporaError::SelfLoop { format: "F", line: 5, at: 7 },
-            CorporaError::Duplicate { format: "F", line: 6, first: 5, pair: (2, 3) },
-            CorporaError::Count { format: "F", what: "edges", declared: 4, found: 3 },
-            CorporaError::Truncated { format: "F", want: "a header" },
-            CorporaError::Sense { line: 3, got: "Solve".into() },
-            CorporaError::Unsupported { code: "QCN".into(), why: "continuous" },
-            CorporaError::Unrepresentable { format: "F", what: "a constant".into() },
+            CorporaError::Header {
+                format: "F",
+                line: 1,
+                text: "x".into(),
+            },
+            CorporaError::Line {
+                format: "F",
+                line: 2,
+                text: "y".into(),
+            },
+            CorporaError::Number {
+                format: "F",
+                line: 3,
+                got: "nan".into(),
+            },
+            CorporaError::Index {
+                format: "F",
+                line: 4,
+                got: 0,
+                n: 9,
+            },
+            CorporaError::SelfLoop {
+                format: "F",
+                line: 5,
+                at: 7,
+            },
+            CorporaError::Duplicate {
+                format: "F",
+                line: 6,
+                first: 5,
+                pair: (2, 3),
+            },
+            CorporaError::Count {
+                format: "F",
+                what: "edges",
+                declared: 4,
+                found: 3,
+            },
+            CorporaError::Truncated {
+                format: "F",
+                want: "a header",
+            },
+            CorporaError::Sense {
+                line: 3,
+                got: "Solve".into(),
+            },
+            CorporaError::Unsupported {
+                code: "QCN".into(),
+                why: "continuous",
+            },
+            CorporaError::Unrepresentable {
+                format: "F",
+                what: "a constant".into(),
+            },
         ];
         for e in cases {
             let s = e.to_string();
@@ -2115,9 +2598,14 @@ Maximize        ! sense
             let _: &dyn core::error::Error = &e;
         }
         assert!(
-            CorporaError::Index { format: "F", line: 4, got: 0, n: 9 }
-                .to_string()
-                .contains("ONE-based"),
+            CorporaError::Index {
+                format: "F",
+                line: 4,
+                got: 0,
+                n: 9
+            }
+            .to_string()
+            .contains("ONE-based"),
             "a zero index must say why zero is wrong"
         );
     }

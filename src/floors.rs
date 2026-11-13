@@ -86,8 +86,8 @@
 //! cost is set by CMOS rather than by the bath, and saying so with a number is more useful than
 //! either claiming the win or ignoring it.
 
-use crate::ledger::{Evidence, Ledger, Prices};
 use crate::landauer::BOLTZMANN_CONSTANT;
+use crate::ledger::{Evidence, Ledger, Prices};
 use crate::round::sum_up;
 
 /// Room temperature, kelvin, as the rest of this crate uses it.
@@ -119,8 +119,14 @@ pub const QUASISTATIC_SAMPLING_WORK: f64 = 0.0;
 /// If the temperature is not positive or the entropy is negative.
 #[must_use]
 pub fn readout_floor(entropy_bits: f64, temperature_k: f64) -> f64 {
-    assert!(temperature_k > 0.0, "temperature must be positive, got {temperature_k}");
-    assert!(entropy_bits >= 0.0, "a sample cannot carry negative entropy, got {entropy_bits}");
+    assert!(
+        temperature_k > 0.0,
+        "temperature must be positive, got {temperature_k}"
+    );
+    assert!(
+        entropy_bits >= 0.0,
+        "a sample cannot carry negative entropy, got {entropy_bits}"
+    );
     entropy_bits * BOLTZMANN_CONSTANT * temperature_k * core::f64::consts::LN_2
 }
 
@@ -145,7 +151,10 @@ pub fn readout_floor(entropy_bits: f64, temperature_k: f64) -> f64 {
 /// If the temperature is not positive.
 #[must_use]
 pub fn tur_floor(snr: f64, temperature_k: f64) -> f64 {
-    assert!(temperature_k > 0.0, "temperature must be positive, got {temperature_k}");
+    assert!(
+        temperature_k > 0.0,
+        "temperature must be positive, got {temperature_k}"
+    );
     2.0 * BOLTZMANN_CONSTANT * temperature_k * snr * snr
 }
 
@@ -200,9 +209,18 @@ pub fn bures_wasserstein_diagonal(
 /// If `beta`, `gamma` or `tau_drive` is not positive, or `quality` is outside `[0, 1)`.
 #[must_use]
 pub fn eddp_floor(wasserstein_sq: f64, beta: f64, gamma: f64, tau_drive: f64, quality: f64) -> f64 {
-    assert!(beta > 0.0 && beta.is_finite(), "beta must be positive and finite, got {beta}");
-    assert!(gamma > 0.0 && gamma.is_finite(), "friction must be positive and finite, got {gamma}");
-    assert!(tau_drive > 0.0 && tau_drive.is_finite(), "a drive takes time, got {tau_drive}");
+    assert!(
+        beta > 0.0 && beta.is_finite(),
+        "beta must be positive and finite, got {beta}"
+    );
+    assert!(
+        gamma > 0.0 && gamma.is_finite(),
+        "friction must be positive and finite, got {gamma}"
+    );
+    assert!(
+        tau_drive > 0.0 && tau_drive.is_finite(),
+        "a drive takes time, got {tau_drive}"
+    );
     assert!(
         (0.0..1.0).contains(&quality),
         "a quality factor lives in [0, 1); at 1 the bound says nothing, got {quality}"
@@ -321,7 +339,9 @@ impl Convergence {
         for (i, a) in chains.iter().enumerate() {
             for b in &chains[i + 1..] {
                 if a.len() == b.len() && !a.is_empty() && a == b {
-                    return Convergence::Identical { chains: chains.len() };
+                    return Convergence::Identical {
+                        chains: chains.len(),
+                    };
                 }
             }
         }
@@ -363,7 +383,10 @@ impl Convergence {
     #[must_use]
     pub fn refusal(&self) -> Option<String> {
         match *self {
-            Convergence::Certified { coalesced_at, burn_in } => {
+            Convergence::Certified {
+                coalesced_at,
+                burn_in,
+            } => {
                 if !coalesced_at.is_finite() || !burn_in.is_finite() {
                     Some("a coalescence time and a burn-in must both be finite".to_string())
                 } else if coalesced_at < 0.0 || burn_in < 0.0 {
@@ -478,7 +501,11 @@ pub fn cost_per_effective_sample(
         joules,
         joules_per_effective_sample: per,
         floor,
-        ratio_to_floor: if floor > 0.0 { per / floor } else { f64::INFINITY },
+        ratio_to_floor: if floor > 0.0 {
+            per / floor
+        } else {
+            f64::INFINITY
+        },
         evidence: prices.evidence,
         convergence,
     })
@@ -497,13 +524,19 @@ mod tests {
         // digital: linear in bits, whatever the encoding
         let d8 = crate::precision::digital_bit_energy(8, ROOM_TEMPERATURE_K);
         let d16 = crate::precision::digital_bit_energy(16, ROOM_TEMPERATURE_K);
-        assert!((d16 / d8 - 2.0).abs() < 1e-12, "digital must double with the bits");
+        assert!(
+            (d16 / d8 - 2.0).abs() < 1e-12,
+            "digital must double with the bits"
+        );
         assert_eq!(d8, crate::logdomain::format_floor(8, ROOM_TEMPERATURE_K));
 
         // analogue: four times per bit
         let a8 = crate::precision::analog_bit_energy(8, ROOM_TEMPERATURE_K);
         let a9 = crate::precision::analog_bit_energy(9, ROOM_TEMPERATURE_K);
-        assert!((a9 / a8 - 4.0).abs() < 1e-9, "a capacitive node quadruples per bit");
+        assert!(
+            (a9 / a8 - 4.0).abs() < 1e-9,
+            "a capacitive node quadruples per bit"
+        );
 
         // optical: steeper still, and the published points say so
         let [(b0, e0), _, (b2, e2)] = OPTICAL_SHOT_MAC;
@@ -512,7 +545,10 @@ mod tests {
             (per_bit - 7.98).abs() < 0.05,
             "the published optical points scale at {per_bit} per bit, not ~7.98"
         );
-        assert!(per_bit > 4.0, "optical must be steeper than capacitive, or the axis is wrong");
+        assert!(
+            per_bit > 4.0,
+            "optical must be steeper than capacitive, or the axis is wrong"
+        );
     }
 
     /// Sampling is free and the readout is the bill.
@@ -524,7 +560,11 @@ mod tests {
         assert!((one - crate::landauer::landauer_bound(ROOM_TEMPERATURE_K)).abs() < 1e-30);
         // and it is proportional to what was extracted, not to the machine
         assert!((readout_floor(64.0, ROOM_TEMPERATURE_K) / one - 64.0).abs() < 1e-9);
-        assert_eq!(readout_floor(0.0, ROOM_TEMPERATURE_K), 0.0, "extract nothing, pay nothing");
+        assert_eq!(
+            readout_floor(0.0, ROOM_TEMPERATURE_K),
+            0.0,
+            "extract nothing, pay nothing"
+        );
     }
 
     /// The TUR floor scales with the SQUARE of the signal-to-noise ratio, not with sample count.
@@ -536,11 +576,17 @@ mod tests {
     fn you_pay_for_the_precision_you_extract() {
         let coarse = tur_floor(1.0, ROOM_TEMPERATURE_K);
         let sharp = tur_floor(10.0, ROOM_TEMPERATURE_K);
-        assert!((sharp / coarse - 100.0).abs() < 1e-9, "ten times the SNR is a hundred times the cost");
+        assert!(
+            (sharp / coarse - 100.0).abs() < 1e-9,
+            "ten times the SNR is a hundred times the cost"
+        );
         // at SNR 1 the floor is exactly 2kT
         assert!((coarse - 2.0 * BOLTZMANN_CONSTANT * ROOM_TEMPERATURE_K).abs() < 1e-30);
         // and it does not depend on how many samples were drawn -- that is the whole distinction
-        assert_eq!(tur_floor(3.0, ROOM_TEMPERATURE_K), tur_floor(3.0, ROOM_TEMPERATURE_K));
+        assert_eq!(
+            tur_floor(3.0, ROOM_TEMPERATURE_K),
+            tur_floor(3.0, ROOM_TEMPERATURE_K)
+        );
     }
 
     /// The Bures–Wasserstein distance, against its closed form and its own identities.
@@ -569,13 +615,20 @@ mod tests {
         let w2 = 4.0;
         let slow = eddp_floor(w2, 1.0, 1.0, 100.0, 0.5);
         let fast = eddp_floor(w2, 1.0, 1.0, 10.0, 0.5);
-        assert!((fast / slow - 10.0).abs() < 1e-9, "ten times the hurry is ten times the floor");
+        assert!(
+            (fast / slow - 10.0).abs() < 1e-9,
+            "ten times the hurry is ten times the floor"
+        );
         // demanding more quality raises the floor
         let sloppy = eddp_floor(w2, 1.0, 1.0, 10.0, 0.5);
         let exact = eddp_floor(w2, 1.0, 1.0, 10.0, 0.99);
         // 1/(1-0.99) over 1/(1-0.5) is exactly 50, so this is pinned rather than bounded -- a
         // `> 50x` assertion sits exactly on the boundary and fails.
-        assert!((exact / sloppy - 50.0).abs() < 1e-9, "got {}", exact / sloppy);
+        assert!(
+            (exact / sloppy - 50.0).abs() < 1e-9,
+            "got {}",
+            exact / sloppy
+        );
         // a quality of one would divide by zero, so it is refused rather than returned as infinity
         assert!(std::panic::catch_unwind(|| eddp_floor(w2, 1.0, 1.0, 1.0, 1.0)).is_err());
     }
@@ -586,7 +639,11 @@ mod tests {
         // A million sweeps of a 1,024-spin fabric, correlation time 10 sweeps. Samples only:
         // the KV260 measurement exercised no reads or writes and states no price for them, so a
         // run that performed one could not be priced by it -- asserted at the end of this test.
-        let ledger = Ledger { samples: 1_024_000_000, reads: 0, writes: 0 };
+        let ledger = Ledger {
+            samples: 1_024_000_000,
+            reads: 0,
+            writes: 0,
+        };
         let got = cost_per_effective_sample(
             &ledger,
             &KV260_MEASURED,
@@ -597,9 +654,16 @@ mod tests {
             ROOM_TEMPERATURE_K,
         )
         .expect("a metered price can price a sampled run");
-        assert!((got.effective_samples - 50_000.0).abs() < 1e-6, "1e6 / (2*10)");
+        assert!(
+            (got.effective_samples - 50_000.0).abs() < 1e-6,
+            "1e6 / (2*10)"
+        );
         assert!(got.joules > 0.0);
-        assert_eq!(got.evidence, Evidence::Metered, "a metered price yields a metered cost");
+        assert_eq!(
+            got.evidence,
+            Evidence::Metered,
+            "a metered price yields a metered cost"
+        );
         // The headroom. A digital emulation sits many orders above the bath's own floor, and
         // saying which order with a number is the point of computing it at all.
         assert!(
@@ -614,7 +678,11 @@ mod tests {
         // treating the unmeasured cost as zero. That refusal is what stops a sampling machine
         // reporting a per-sample energy that silently omits its readout -- the one term the
         // module documentation says the whole floor lives in.
-        let with_a_read = Ledger { samples: 1_024_000_000, reads: 1, writes: 0 };
+        let with_a_read = Ledger {
+            samples: 1_024_000_000,
+            reads: 1,
+            writes: 0,
+        };
         assert!(
             cost_per_effective_sample(
                 &with_a_read,
@@ -639,8 +707,15 @@ mod tests {
         // A thousand independent draws on the 1,024-spin metered fabric. Each is `per_draw` sweeps
         // from a certified start and ONE readout of the whole state.
         let (n, draws, per_draw) = (1_024u64, 1_000u64, 64u64);
-        let ledger = Ledger { samples: draws * per_draw * n, reads: draws * n, writes: 0 };
-        let certified = Convergence::Certified { coalesced_at: 48.0, burn_in: per_draw as f64 };
+        let ledger = Ledger {
+            samples: draws * per_draw * n,
+            reads: draws * n,
+            writes: 0,
+        };
+        let certified = Convergence::Certified {
+            coalesced_at: 48.0,
+            burn_in: per_draw as f64,
+        };
         // One independent sample per `per_draw` sweeps is `tau_int = per_draw / 2` in this
         // function's units, since it counts `sweeps / (2 tau_int)`.
         let price = |prices| {
@@ -664,17 +739,41 @@ mod tests {
         // sampler that mixes faster than that is paying mostly to be looked at.
         let sampling = (draws * per_draw * n) as f64 * KV260_AXI_METERED.e_sample;
         let share = 1.0 - sampling / got.joules;
-        assert!((0.45..0.55).contains(&share), "the readout's share of the energy = {share}");
+        assert!(
+            (0.45..0.55).contains(&share),
+            "the readout's share of the energy = {share}"
+        );
         let break_even = KV260_AXI_METERED.e_read / KV260_AXI_METERED.e_sample;
-        assert!((55.0..72.0).contains(&break_even), "break-even sweeps per readout = {break_even}");
+        assert!(
+            (55.0..72.0).contains(&break_even),
+            "break-even sweeps per readout = {break_even}"
+        );
         // about 1.2 microjoules a certified, delivered sample
-        assert!((1.0e-6..1.4e-6).contains(&got.joules_per_effective_sample), "{:e}", got.joules_per_effective_sample);
+        assert!(
+            (1.0e-6..1.4e-6).contains(&got.joules_per_effective_sample),
+            "{:e}",
+            got.joules_per_effective_sample
+        );
 
         // The older measurement still refuses this run, and should: it never metered a read.
         assert!(price(&KV260_MEASURED).is_err());
         // And a draw taken before its chain coalesced is refused whatever the price set knows.
-        let early = Convergence::Certified { coalesced_at: 48.0, burn_in: 40.0 };
-        assert!(cost_per_effective_sample(&ledger, &KV260_AXI_METERED, 64_000.0, 32.0, early, 1.0, ROOM_TEMPERATURE_K).is_err());
+        let early = Convergence::Certified {
+            coalesced_at: 48.0,
+            burn_in: 40.0,
+        };
+        assert!(
+            cost_per_effective_sample(
+                &ledger,
+                &KV260_AXI_METERED,
+                64_000.0,
+                32.0,
+                early,
+                1.0,
+                ROOM_TEMPERATURE_K
+            )
+            .is_err()
+        );
     }
 
     /// **R-HAT IS BLIND TO CHAINS THAT ARE THE SAME CHAIN**, and this is the measurement that says
@@ -686,14 +785,19 @@ mod tests {
     fn four_identical_chains_are_refused_by_name_because_rhat_cannot_see_them() {
         let mut rng = crate::rng::Pcg::new(0x1DE0_71CA, 5);
         let draw = |rng: &mut crate::rng::Pcg, n: usize| -> Vec<f64> {
-            (0..n).map(|_| (rng.next_u64() >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0)).collect()
+            (0..n)
+                .map(|_| (rng.next_u64() >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0))
+                .collect()
         };
         let n = 2_000;
         // Four INDEPENDENT chains from one law: the healthy case, and the number the floor was set
         // against.
         let independent: Vec<Vec<f64>> = (0..4).map(|_| draw(&mut rng, n)).collect();
         let healthy = Convergence::from_chains(&independent);
-        assert!(healthy.refusal().is_none(), "independent chains must pass: {healthy:?}");
+        assert!(
+            healthy.refusal().is_none(),
+            "independent chains must pass: {healthy:?}"
+        );
         let healthy_rhat = match healthy {
             Convergence::MultiChain { rhat } => rhat,
             other => panic!("expected MultiChain, got {other:?}"),
@@ -711,7 +815,9 @@ mod tests {
         // AND THE REASON THE VARIANT HAS TO EXIST: strip the identity check and R-hat calls this
         // healthier than the honest run. Recomputed here the way `from_chains` would without it.
         let d = crate::rhat::diagnose(&identical);
-        let blind = [d.rhat, d.rhat_rank, d.rhat_folded].into_iter().fold(f64::NEG_INFINITY, f64::max);
+        let blind = [d.rhat, d.rhat_rank, d.rhat_folded]
+            .into_iter()
+            .fold(f64::NEG_INFINITY, f64::max);
         assert!(
             blind > Convergence::RHAT_FLOOR && blind < Convergence::RHAT_LIMIT,
             "R-hat on four identical chains is {blind}, which this test exists because it PASSES"
@@ -721,37 +827,53 @@ mod tests {
             "identical {blind} and independent {healthy_rhat} differ by less than the floor's own \
              precision, which is exactly why R-hat cannot be asked to tell them apart"
         );
-        eprintln!("R-hat: four independent chains {healthy_rhat:.5}, four IDENTICAL chains {blind:.5}");
+        eprintln!(
+            "R-hat: four independent chains {healthy_rhat:.5}, four IDENTICAL chains {blind:.5}"
+        );
 
         // Two of four identical is still one chain's evidence short, and is still refused.
         let a = draw(&mut rng, n);
         let mixed = vec![a.clone(), draw(&mut rng, n), a, draw(&mut rng, n)];
-        assert_eq!(Convergence::from_chains(&mixed), Convergence::Identical { chains: 4 });
+        assert_eq!(
+            Convergence::from_chains(&mixed),
+            Convergence::Identical { chains: 4 }
+        );
     }
 
     /// The grade cannot improve by being divided by a floor.
     #[test]
     fn a_simulated_price_yields_a_simulated_cost() {
-        let ledger = Ledger { samples: 1_000_000, reads: 0, writes: 0 };
-        let got =
-            cost_per_effective_sample(
-                &ledger,
-                &Z1_SPICE,
-                1_000.0,
-                2.0,
-                Convergence::SingleChain,
-                1.0,
-                ROOM_TEMPERATURE_K,
-            )
-                .expect("Z1_SPICE states a sample price");
+        let ledger = Ledger {
+            samples: 1_000_000,
+            reads: 0,
+            writes: 0,
+        };
+        let got = cost_per_effective_sample(
+            &ledger,
+            &Z1_SPICE,
+            1_000.0,
+            2.0,
+            Convergence::SingleChain,
+            1.0,
+            ROOM_TEMPERATURE_K,
+        )
+        .expect("Z1_SPICE states a sample price");
         assert_eq!(got.evidence, Evidence::Simulated);
-        assert_ne!(got.evidence, Evidence::Metered, "a projection cannot become a measurement");
+        assert_ne!(
+            got.evidence,
+            Evidence::Metered,
+            "a projection cannot become a measurement"
+        );
     }
 
     /// Every way of producing a number that is not a measurement is refused.
     #[test]
     fn a_run_that_measured_nothing_is_refused_rather_than_priced() {
-        let ledger = Ledger { samples: 1_000, reads: 0, writes: 0 };
+        let ledger = Ledger {
+            samples: 1_000,
+            reads: 0,
+            writes: 0,
+        };
         let at = |sweeps, tau| {
             cost_per_effective_sample(
                 &ledger,
@@ -778,7 +900,10 @@ mod tests {
             1.0,
             ROOM_TEMPERATURE_K,
         );
-        assert!(unpriced.is_err(), "an unstated price must not yield a number");
+        assert!(
+            unpriced.is_err(),
+            "an unstated price must not yield a number"
+        );
     }
 
     /// The pricing used to divide by `tau_int` alone, and `tau_int` cannot report the one failure
@@ -798,7 +923,11 @@ mod tests {
     /// a run that did not sample the target has no independent samples of it to be cheap per.
     #[test]
     fn a_run_that_did_not_converge_is_refused_rather_than_priced() {
-        let ledger = Ledger { samples: 1_000_000, reads: 0, writes: 0 };
+        let ledger = Ledger {
+            samples: 1_000_000,
+            reads: 0,
+            writes: 0,
+        };
         let price = |c: Convergence| {
             cost_per_effective_sample(
                 &ledger,
@@ -816,52 +945,109 @@ mod tests {
         let ok = price(Convergence::SingleChain).expect("this run is otherwise priceable");
         assert!(ok.joules_per_effective_sample > 0.0);
         assert_eq!(ok.convergence, Convergence::SingleChain);
-        assert!(!Convergence::SingleChain.is_certified(), "one chain cannot certify itself");
+        assert!(
+            !Convergence::SingleChain.is_certified(),
+            "one chain cannot certify itself"
+        );
 
         // A burn-in shorter than coalescence required.
-        let short = Convergence::Certified { coalesced_at: 1_048_576.0, burn_in: 200.0 };
-        assert!(price(short).is_err(), "a burn-in below coalescence must be refused");
+        let short = Convergence::Certified {
+            coalesced_at: 1_048_576.0,
+            burn_in: 200.0,
+        };
+        assert!(
+            price(short).is_err(),
+            "a burn-in below coalescence must be refused"
+        );
         // And the control: the same instrument, with a burn-in that was long enough.
-        let long = Convergence::Certified { coalesced_at: 100.0, burn_in: 200.0 };
+        let long = Convergence::Certified {
+            coalesced_at: 100.0,
+            burn_in: 200.0,
+        };
         let good = price(long).expect("an adequate burn-in is priced");
         assert!(good.convergence.is_certified());
 
         // Chains from dispersed starts that disagree.
-        assert!(price(Convergence::MultiChain { rhat: 27.199 }).is_err(), "R-hat 27 must refuse");
+        assert!(
+            price(Convergence::MultiChain { rhat: 27.199 }).is_err(),
+            "R-hat 27 must refuse"
+        );
         assert!(
             price(Convergence::MultiChain { rhat: 1.005 }).is_ok(),
             "an R-hat inside the limit is not refused"
         );
         // The limit itself is Vehtari et al. 2021, and it must be the limit that decides.
-        assert!(price(Convergence::MultiChain { rhat: 1.0101 }).is_err(), "just above the limit");
-        assert!(price(Convergence::MultiChain { rhat: 1.0 }).is_ok(), "exactly one is perfect");
+        assert!(
+            price(Convergence::MultiChain { rhat: 1.0101 }).is_err(),
+            "just above the limit"
+        );
+        assert!(
+            price(Convergence::MultiChain { rhat: 1.0 }).is_ok(),
+            "exactly one is perfect"
+        );
         // SLIGHTLY BELOW ONE IS THE BEST OUTCOME, NOT AN IMPOSSIBLE ONE: R^2 = (N-1)/N + B/(N W),
         // so well-mixed chains land just under 1. This value is measured, from four real chains,
         // and the first version of `refusal` rejected it.
         assert!(
-            price(Convergence::MultiChain { rhat: 0.999_849_864 }).is_ok(),
+            price(Convergence::MultiChain {
+                rhat: 0.999_849_864
+            })
+            .is_ok(),
             "an R-hat just under one is excellent agreement and must be priced"
         );
-        assert!(price(Convergence::MultiChain { rhat: 0.98 }).is_err(), "under the floor: too few draws");
-        assert!(price(Convergence::MultiChain { rhat: 0.5 }).is_err(), "far under the floor");
-        assert!(price(Convergence::MultiChain { rhat: f64::NAN }).is_err(), "NaN R-hat");
+        assert!(
+            price(Convergence::MultiChain { rhat: 0.98 }).is_err(),
+            "under the floor: too few draws"
+        );
+        assert!(
+            price(Convergence::MultiChain { rhat: 0.5 }).is_err(),
+            "far under the floor"
+        );
+        assert!(
+            price(Convergence::MultiChain { rhat: f64::NAN }).is_err(),
+            "NaN R-hat"
+        );
     }
 
     /// The refusal must not be reachable by accident from a non-finite input, which would make the
     /// gate look present while the real check never ran.
     #[test]
     fn a_convergence_claim_made_of_non_finite_numbers_is_refused() {
-        let inf = Convergence::Certified { coalesced_at: f64::INFINITY, burn_in: 1.0 };
-        assert!(inf.refusal().is_some(), "an infinite coalescence time is not a certification");
-        let nan = Convergence::Certified { coalesced_at: 1.0, burn_in: f64::NAN };
-        assert!(nan.refusal().is_some(), "a NaN burn-in is not a certification");
+        let inf = Convergence::Certified {
+            coalesced_at: f64::INFINITY,
+            burn_in: 1.0,
+        };
+        assert!(
+            inf.refusal().is_some(),
+            "an infinite coalescence time is not a certification"
+        );
+        let nan = Convergence::Certified {
+            coalesced_at: 1.0,
+            burn_in: f64::NAN,
+        };
+        assert!(
+            nan.refusal().is_some(),
+            "a NaN burn-in is not a certification"
+        );
         // A NEGATIVE coalescence time would otherwise pass `burn_in < coalesced_at`, since
         // `200 < -5` is false, and nonsense would read as a certification.
-        let neg = Convergence::Certified { coalesced_at: -5.0, burn_in: 200.0 };
-        assert!(neg.refusal().is_some(), "a negative coalescence time is not a certification");
+        let neg = Convergence::Certified {
+            coalesced_at: -5.0,
+            burn_in: 200.0,
+        };
+        assert!(
+            neg.refusal().is_some(),
+            "a negative coalescence time is not a certification"
+        );
         // and the ordinary case still passes, so the guard did not swallow everything
-        let fine = Convergence::Certified { coalesced_at: 1.0, burn_in: 2.0 };
-        assert!(fine.refusal().is_none(), "a real certification is not refused");
+        let fine = Convergence::Certified {
+            coalesced_at: 1.0,
+            burn_in: 2.0,
+        };
+        assert!(
+            fine.refusal().is_none(),
+            "a real certification is not refused"
+        );
     }
 
     /// Standard normals by Box-Muller, so the fixtures below need nothing the crate does not have.
@@ -887,7 +1073,10 @@ mod tests {
         // Four chains of one distribution: agreement, and it must not be refused.
         let same: Vec<Vec<f64>> = (0..4).map(|k| normals(k, 2_000, 1.0, 0.0)).collect();
         let c = Convergence::from_chains(&same);
-        assert!(c.refusal().is_none(), "four chains of one law must agree: {c:?}");
+        assert!(
+            c.refusal().is_none(),
+            "four chains of one law must agree: {c:?}"
+        );
         assert!(c.is_certified());
 
         // Two up, two down: the burn-in failure itself. Every diagnostic sees it.
@@ -897,7 +1086,10 @@ mod tests {
             normals(12, 2_000, 0.1, 1.0),
             normals(13, 2_000, 0.1, -1.0),
         ];
-        assert!(Convergence::from_chains(&split).refusal().is_some(), "chains in two basins");
+        assert!(
+            Convergence::from_chains(&split).refusal().is_some(),
+            "chains in two basins"
+        );
 
         // SAME MEAN, DIFFERENT SPREAD. The premise first: plain split R-hat really does pass this,
         // or the assertion after it would prove nothing about taking the maximum.
@@ -917,14 +1109,26 @@ mod tests {
             "and built by hand from plain R-hat it WOULD be priced"
         );
         let strict = Convergence::from_chains(&spread);
-        assert!(strict.refusal().is_some(), "the folded diagnostic must catch it: {strict:?}");
+        assert!(
+            strict.refusal().is_some(),
+            "the folded diagnostic must catch it: {strict:?}"
+        );
 
         // Too little evidence is not agreement: one chain, and chains too short to diagnose.
         let one = vec![normals(30, 2_000, 1.0, 0.0)];
-        assert!(Convergence::from_chains(&one).refusal().is_some(), "one chain certifies nothing");
+        assert!(
+            Convergence::from_chains(&one).refusal().is_some(),
+            "one chain certifies nothing"
+        );
         let short = vec![vec![0.1, 0.2, 0.3], vec![0.2, 0.1, 0.3]];
-        assert!(Convergence::from_chains(&short).refusal().is_some(), "three draws certify nothing");
-        assert!(Convergence::from_chains(&[]).refusal().is_some(), "no chains certify nothing");
+        assert!(
+            Convergence::from_chains(&short).refusal().is_some(),
+            "three draws certify nothing"
+        );
+        assert!(
+            Convergence::from_chains(&[]).refusal().is_some(),
+            "no chains certify nothing"
+        );
     }
 
     /// The other instrument, from real perfect draws rather than typed numbers.
@@ -932,16 +1136,36 @@ mod tests {
     fn convergence_from_perfect_draws_holds_the_burn_in_against_the_worst_coalescence() {
         let g = crate::ising::grid2d(4, 4, 1.0);
         let draws = crate::cftp::exact_draws(&g, 0.2, 7, 50).expect("a hot ferromagnet coalesces");
-        let worst = draws.iter().map(|d| d.coalesced_at).max().expect("fifty draws");
+        let worst = draws
+            .iter()
+            .map(|d| d.coalesced_at)
+            .max()
+            .expect("fifty draws");
         assert!(worst >= 1, "coalescence takes at least one sweep");
 
         let enough = Convergence::from_perfect_draws(&draws, worst);
-        assert!(enough.refusal().is_none(), "a burn-in equal to the worst coalescence is adequate");
+        assert!(
+            enough.refusal().is_none(),
+            "a burn-in equal to the worst coalescence is adequate"
+        );
         let short = Convergence::from_perfect_draws(&draws, worst - 1);
-        assert!(short.refusal().is_some(), "one sweep short of the worst draw must be refused");
+        assert!(
+            short.refusal().is_some(),
+            "one sweep short of the worst draw must be refused"
+        );
         // it is the WORST draw that binds, not the first or the mean
-        assert_eq!(enough, Convergence::Certified { coalesced_at: worst as f64, burn_in: worst as f64 });
+        assert_eq!(
+            enough,
+            Convergence::Certified {
+                coalesced_at: worst as f64,
+                burn_in: worst as f64
+            }
+        );
         // and an empty measurement certifies nothing
-        assert!(Convergence::from_perfect_draws(&[], 1_000_000).refusal().is_some());
+        assert!(
+            Convergence::from_perfect_draws(&[], 1_000_000)
+                .refusal()
+                .is_some()
+        );
     }
 }

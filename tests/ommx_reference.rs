@@ -37,7 +37,9 @@ fn the_reference_implementation_scores_every_state_as_we_do() {
     // Every state, with the energy ferrotherm assigns it.
     let mut want = String::new();
     for mask in 0..(1u32 << g.n) {
-        let s: Vec<i8> = (0..g.n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+        let s: Vec<i8> = (0..g.n)
+            .map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 })
+            .collect();
         want.push_str(&format!("{mask} {}\n", g.energy(&s)));
     }
     let table = dir.join("energies.txt");
@@ -57,7 +59,12 @@ for line in open(sys.argv[2]):
 print(f"{n} {bad}")
 "#;
     let mut child = Command::new(&py)
-        .args(["-c", script, inst.to_str().unwrap(), table.to_str().unwrap()])
+        .args([
+            "-c",
+            script,
+            inst.to_str().unwrap(),
+            table.to_str().unwrap(),
+        ])
         .stdout(Stdio::piped())
         .stdin(Stdio::piped())
         .spawn()
@@ -69,9 +76,13 @@ print(f"{n} {bad}")
     let vars: usize = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
     let bad: usize = it.next().and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
 
-    assert_eq!(vars, g.n, "the reference must see one decision variable per spin");
     assert_eq!(
-        bad, 0,
+        vars, g.n,
+        "the reference must see one decision variable per spin"
+    );
+    assert_eq!(
+        bad,
+        0,
         "the reference implementation scored {bad} of {} states differently from ferrotherm",
         1u32 << g.n
     );
@@ -90,7 +101,9 @@ fn we_can_read_an_instance_the_reference_built() {
     let py = std::env::var("OMMX_PYTHON").unwrap_or_else(|_| "python3".into());
     let has = Command::new(&py)
         .args(["-c", "import ommx.v1"])
-        .stdout(Stdio::null()).stderr(Stdio::null()).status()
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
         .is_ok_and(|s| s.success());
     if !has {
         eprintln!("no `ommx` for {py}; skipping");
@@ -118,9 +131,13 @@ for m in range(16):
     rows.append(f"{{m}} {{inst.evaluate(State(entries=xs)).objective}}")
 open(r"{}", "w").write("\n".join(rows))
 "#,
-        inst.display(), table.display()
+        inst.display(),
+        table.display()
     );
-    let ok = Command::new(&py).args(["-c", &build]).status().is_ok_and(|s| s.success());
+    let ok = Command::new(&py)
+        .args(["-c", &build])
+        .status()
+        .is_ok_and(|s| s.success());
     assert!(ok, "the reference failed to build its own instance");
 
     let (g, constant) = ferrotherm::ommx::import(&std::fs::read(&inst).unwrap())
@@ -133,7 +150,9 @@ open(r"{}", "w").write("\n".join(rows))
         let mut it = line.split_whitespace();
         let mask: u32 = it.next().unwrap().parse().unwrap();
         let theirs: f64 = it.next().unwrap().parse().unwrap();
-        let s: Vec<i8> = (0..g.n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+        let s: Vec<i8> = (0..g.n)
+            .map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 })
+            .collect();
         let ours = g.energy(&s) + constant;
         assert!(
             (ours - theirs).abs() < 1e-9,
@@ -141,5 +160,8 @@ open(r"{}", "w").write("\n".join(rows))
         );
         checked += 1;
     }
-    assert_eq!(checked, 16, "every state has to be compared, not some of them");
+    assert_eq!(
+        checked, 16,
+        "every state has to be compared, not some of them"
+    );
 }

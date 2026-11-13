@@ -57,8 +57,7 @@ pub struct Qpu {
 }
 
 /// The vendor's whole-system power figure, which it states has held over six generations.
-pub const WALL_POWER_SOURCE: &str =
-    "D-Wave, Advantage2 general availability, 2025-05-20: 'the same amount of electricity over six generations -- a mere 12.5 kilowatts'";
+pub const WALL_POWER_SOURCE: &str = "D-Wave, Advantage2 general availability, 2025-05-20: 'the same amount of electricity over six generations -- a mere 12.5 kilowatts'";
 
 /// `Advantage_system4`: 5,627 qubits, programming ∼14,100 µs, readout 17–235 µs, delay 20.5 µs.
 pub const ADVANTAGE_SYSTEM4: Qpu = Qpu {

@@ -79,7 +79,13 @@ impl Categorical {
             exact &= s.add_penalty(&mut b, p);
             slots.push(s);
         }
-        Categorical { slots, graph: b.build(), encoding, k, exact }
+        Categorical {
+            slots,
+            graph: b.build(),
+            encoding,
+            k,
+            exact,
+        }
     }
 
     /// Spins this layout occupies.
@@ -91,7 +97,11 @@ impl Categorical {
     /// Fraction of variables that decode to a valid value in `state`.
     #[must_use]
     pub fn feasible_fraction(&self, state: &[i8]) -> f64 {
-        let ok = self.slots.iter().filter(|s| s.decode(state).is_some()).count();
+        let ok = self
+            .slots
+            .iter()
+            .filter(|s| s.decode(state).is_some())
+            .count();
         ok as f64 / self.slots.len() as f64
     }
 
@@ -138,11 +148,24 @@ mod tests {
         for k in 3..=12 {
             let dw = Categorical::new(10, k, Encoding::DomainWall, 1.0);
             let oh = Categorical::new(10, k, Encoding::OneHot, 1.0);
-            assert!(dw.spins() < oh.spins(), "k={k}: {} vs {}", dw.spins(), oh.spins());
+            assert!(
+                dw.spins() < oh.spins(),
+                "k={k}: {} vs {}",
+                dw.spins(),
+                oh.spins()
+            );
             let edges = |c: &Categorical| {
-                (0..c.graph.n).map(|i| c.graph.offset[i + 1] - c.graph.offset[i]).sum::<usize>() / 2
+                (0..c.graph.n)
+                    .map(|i| c.graph.offset[i + 1] - c.graph.offset[i])
+                    .sum::<usize>()
+                    / 2
             };
-            assert!(edges(&dw) < edges(&oh), "k={k}: {} vs {} couplings", edges(&dw), edges(&oh));
+            assert!(
+                edges(&dw) < edges(&oh),
+                "k={k}: {} vs {} couplings",
+                edges(&dw),
+                edges(&oh)
+            );
         }
     }
 
@@ -182,9 +205,18 @@ mod tests {
             f64::INFINITY
         };
         for k in [8usize, 32] {
-            let (dw, oh) = (smallest(k, Encoding::DomainWall), smallest(k, Encoding::OneHot));
-            assert!(dw.is_finite() && oh.is_finite(), "k={k}: neither encoding reached 0.99");
-            assert!(dw < oh / 2.0, "k={k}: domain wall {dw:.3} vs one-hot {oh:.3}");
+            let (dw, oh) = (
+                smallest(k, Encoding::DomainWall),
+                smallest(k, Encoding::OneHot),
+            );
+            assert!(
+                dw.is_finite() && oh.is_finite(),
+                "k={k}: neither encoding reached 0.99"
+            );
+            assert!(
+                dw < oh / 2.0,
+                "k={k}: domain wall {dw:.3} vs one-hot {oh:.3}"
+            );
         }
     }
 
@@ -195,7 +227,10 @@ mod tests {
         // would be measuring nothing.
         let weak = rate(8, Encoding::OneHot, 0.01);
         let strong = rate(8, Encoding::OneHot, 2.0);
-        assert!(weak < strong, "weak penalty {weak:.3} should lose to strong {strong:.3}");
+        assert!(
+            weak < strong,
+            "weak penalty {weak:.3} should lose to strong {strong:.3}"
+        );
     }
 
     #[test]
@@ -206,7 +241,10 @@ mod tests {
         let hot = c.sample_feasibility(0.02, 400, 1);
         let cold = c.sample_feasibility(6.0, 400, 1);
         assert!(cold > hot, "cold {cold:.3} should beat hot {hot:.3}");
-        assert!(hot < 0.9, "an essentially free penalty should let invalid states through");
+        assert!(
+            hot < 0.9,
+            "an essentially free penalty should let invalid states through"
+        );
     }
 
     #[test]
@@ -219,7 +257,10 @@ mod tests {
 
         let six = Categorical::new(60, 6, Encoding::Binary, 2.0);
         let f = six.sample_feasibility(1.0, 300, 3);
-        assert!(f < 1.0, "k=6 binary must let surplus codes through, got {f:.3}");
+        assert!(
+            f < 1.0,
+            "k=6 binary must let surplus codes through, got {f:.3}"
+        );
     }
 
     #[test]
@@ -230,7 +271,13 @@ mod tests {
         // sampler has no reason to avoid it and `decode` is the only guard left.
         assert!(Categorical::new(4, 6, Encoding::OneHot, 1.0).exact);
         assert!(Categorical::new(4, 6, Encoding::DomainWall, 1.0).exact);
-        assert!(Categorical::new(4, 8, Encoding::Binary, 1.0).exact, "8 is a power of two");
-        assert!(!Categorical::new(4, 6, Encoding::Binary, 1.0).exact, "6 is not");
+        assert!(
+            Categorical::new(4, 8, Encoding::Binary, 1.0).exact,
+            "8 is a power of two"
+        );
+        assert!(
+            !Categorical::new(4, 6, Encoding::Binary, 1.0).exact,
+            "6 is not"
+        );
     }
 }

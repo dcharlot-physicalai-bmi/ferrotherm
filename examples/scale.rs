@@ -54,19 +54,14 @@ fn main() {
     println!("square-lattice Ising, J = 1, beta = beta_c = {beta:.9}");
     println!();
     println!("Two exact oracles, and only one of them has a ceiling in n:");
-    println!("  enumeration   2^n terms          -- the oracle every small test in this crate uses");
+    println!(
+        "  enumeration   2^n terms          -- the oracle every small test in this crate uses"
+    );
     println!("  Kac-Ward      (2E)^3 arithmetic  -- exact for any planar graph, any beta");
     println!();
     println!(
         "  {:>3}  {:>5}  {:>6}  {:>12}  {:>11}  {:>10}  {:>21}  {:>6}  resolving power",
-        "L",
-        "n",
-        "2E",
-        "enumeration",
-        "exact <E>/N",
-        "Kac-Ward",
-        "sampler <E>/N",
-        "covers"
+        "L", "n", "2E", "enumeration", "exact <E>/N", "Kac-Ward", "sampler <E>/N", "covers"
     );
     println!("  {}", "-".repeat(118));
     // Every rung must also REJECT this: the same lattice one percent colder.
@@ -92,13 +87,16 @@ fn main() {
                 continue;
             }
         };
-        let e_exact = exact.energy_density().expect("Params::default asks for the energy");
+        let e_exact = exact
+            .energy_density()
+            .expect("Params::default asks for the energy");
         worst_phase = worst_phase.max(exact.phase_residual.abs());
 
         // The sampler gets a plan that does not depend on n: the point is whether it agrees with
         // truth at scale under a FIXED budget, not whether it can be made to agree by spending more.
         let plan = Plan::new(2_000, 4_000, 1);
-        let mut s = Sampler::new(&g, beta, 0x5CA1_E000 + l as u64).expect("ferromagnet is unfrustrated");
+        let mut s =
+            Sampler::new(&g, beta, 0x5CA1_E000 + l as u64).expect("ferromagnet is unfrustrated");
         let set = s.collect(&plan, Update::SwendsenWang, None);
         let est = set.mean_energy().expect("a chain of 4000 draws has a mean");
         let per_spin = ferrotherm::samples::Estimate {
@@ -112,7 +110,9 @@ fn main() {
         // The negative control. Nothing about the sampler changes -- only which exact value it is
         // held against. A check that cannot tell these apart is not checking the physics.
         let detuned = pfaffian::solve(&g, beta * DETUNE).expect("same graph, colder");
-        let e_detuned = detuned.energy_density().expect("Params::default asks for the energy");
+        let e_detuned = detuned
+            .energy_density()
+            .expect("Params::default asks for the energy");
         let rejects = !per_spin.covers(e_detuned);
         // Resolving power is a property of the DESIGN -- this size at this budget -- so the
         // numerator is the exact gap between the two lattices, not the distance from wherever this
@@ -153,7 +153,9 @@ fn main() {
     println!(
         "  worst determinant phase residual:        {worst_phase:.3e}  (zero in exact arithmetic --"
     );
-    println!("                                            a free check that the embedding stayed sound)");
+    println!(
+        "                                            a free check that the embedding stayed sound)"
+    );
     println!();
 
     if let Some((n, secs)) = deepest {
@@ -175,7 +177,11 @@ fn main() {
         println!("AND THE FINDING, WHICH IS THE OTHER WAY ROUND FROM THE ASSUMPTION.");
         println!(
             "  The rungs that FAILED the control are the SMALL ones: n = {}.",
-            blind.iter().map(usize::to_string).collect::<Vec<_>>().join(", ")
+            blind
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         println!("  There, one interval covers the true lattice and a lattice one percent colder");
         println!("  at the same time, so agreeing with the exact answer distinguishes almost");
@@ -188,14 +194,20 @@ fn main() {
         println!("  here that still excluded the wrong lattice.");
         println!();
         println!("  The usual reading of a small exact test is that it is the strongest evidence");
-        println!("  available, since nothing is estimated. That is true of the ORACLE and false of");
-        println!("  the COMPARISON. A small lattice is where an exact oracle is cheapest and where");
+        println!(
+            "  available, since nothing is estimated. That is true of the ORACLE and false of"
+        );
+        println!(
+            "  the COMPARISON. A small lattice is where an exact oracle is cheapest and where"
+        );
         println!("  it discriminates least. Verifying only at single-digit n is not the");
         println!("  conservative choice it looks like.");
         println!();
     }
 
     println!("The limit is not the oracle. A 2E x 2E determinant at L = 30 is 3480 square; the");
-    println!("cube law, not the exponential, is what eventually stops this -- and it stops it at a");
+    println!(
+        "cube law, not the exponential, is what eventually stops this -- and it stops it at a"
+    );
     println!("size where enumeration has been impossible for twenty-five doublings.");
 }

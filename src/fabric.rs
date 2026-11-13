@@ -20,8 +20,8 @@
 //! number the caller has to look at rather than a silence.
 
 use crate::ftp::Program;
-use std::collections::BTreeSet;
 use crate::ledger::Prices;
+use std::collections::BTreeSet;
 
 /// How a fabric's spins are wired.
 #[derive(Clone, Debug, PartialEq)]
@@ -248,12 +248,20 @@ impl Range {
     #[must_use]
     /// A range over every real in `[lo, hi]`.
     pub const fn continuous(lo: f64, hi: f64) -> Range {
-        Range { lo, hi, integral: false }
+        Range {
+            lo,
+            hi,
+            integral: false,
+        }
     }
     #[must_use]
     /// A range over the whole numbers in `[lo, hi]` and nothing between them.
     pub const fn integers(lo: f64, hi: f64) -> Range {
-        Range { lo, hi, integral: true }
+        Range {
+            lo,
+            hi,
+            integral: true,
+        }
     }
     #[must_use = "the whole question this asks is whether the constraint is satisfied"]
     /// Whether `v` is finite, inside the range, and integral if the range demands it.
@@ -368,7 +376,10 @@ impl core::fmt::Display for Verdict {
         if self.caveats.is_empty() {
             return write!(f, "nothing rules it out and placement is direct: it runs");
         }
-        write!(f, "nothing declared rules it out, but this is not a promise that it runs:")?;
+        write!(
+            f,
+            "nothing declared rules it out, but this is not a promise that it runs:"
+        )?;
         for c in &self.caveats {
             write!(f, "\n  - {c}")?;
         }
@@ -447,9 +458,16 @@ impl core::fmt::Display for Unsupported {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Unsupported::TooManySpins { need, limit } => {
-                write!(f, "the program needs {need} spins and this fabric has {limit}")
+                write!(
+                    f,
+                    "the program needs {need} spins and this fabric has {limit}"
+                )
             }
-            Unsupported::TooHighDegree { node, degree, limit } => write!(
+            Unsupported::TooHighDegree {
+                node,
+                degree,
+                limit,
+            } => write!(
                 f,
                 "spin {node} has degree {degree} and this fabric allows {limit}; sparsify the \
                  model or embed it before submitting"
@@ -476,7 +494,10 @@ impl core::fmt::Display for Unsupported {
                  must be equal; the program has {distinct} distinct weights. A spin glass cannot be \
                  expressed here at all"
             ),
-            Unsupported::CouplingPrecision { bits, worst_relative_error } => write!(
+            Unsupported::CouplingPrecision {
+                bits,
+                worst_relative_error,
+            } => write!(
                 f,
                 "this fabric stores couplings in {bits} bits, which would change one of them by \
                  {:.1}% -- requantize explicitly if that is acceptable, rather than discovering it \
@@ -523,14 +544,20 @@ impl Fabric {
     /// coefficients are not in a fixed ratio to each other, and shrinking to fit would collapse
     /// small couplings to zero.
     pub fn scale_to_fit(&self, p: &Program) -> Option<f64> {
-        let couplings: Vec<f64> = p.factors.iter().map(super::factor::Factor::weight).collect();
+        let couplings: Vec<f64> = p
+            .factors
+            .iter()
+            .map(super::factor::Factor::weight)
+            .collect();
         let fields: Vec<f64> = p.bias.iter().map(|(_, h)| *h).collect();
 
         // The tightest constraint any single coefficient imposes, over both ranges.
         let bound = |r: Option<Range>, vals: &[f64]| -> f64 {
             match r {
                 None => f64::INFINITY, // an undeclared range constrains nothing
-                Some(r) => vals.iter().fold(f64::INFINITY, |acc, &v| acc.min(r.headroom_for(v))),
+                Some(r) => vals
+                    .iter()
+                    .fold(f64::INFINITY, |acc, &v| acc.min(r.headroom_for(v))),
             }
         };
         if self.coupling_range.is_none() && self.field_range.is_none() {
@@ -560,8 +587,11 @@ impl Fabric {
         // computed to satisfy. Verify against the same predicate `check` uses — a scale_to_fit
         // whose result does not pass check is worse than no answer at all.
         let fits = |s: f64| {
-            self.coupling_range.is_none_or(|r| couplings.iter().all(|&v| r.holds(v * s)))
-                && self.field_range.is_none_or(|r| fields.iter().all(|&v| r.holds(v * s)))
+            self.coupling_range
+                .is_none_or(|r| couplings.iter().all(|&v| r.holds(v * s)))
+                && self
+                    .field_range
+                    .is_none_or(|r| fields.iter().all(|&v| r.holds(v * s)))
         };
 
         if !lands(s) {
@@ -891,10 +921,15 @@ impl Fabric {
         }
         let mut caveats = Vec::new();
         if !self.native_placement {
-            caveats.push(Caveat::NeedsEmbedding { vars: p.spins, sites: self.max_spins });
+            caveats.push(Caveat::NeedsEmbedding {
+                vars: p.spins,
+                sites: self.max_spins,
+            });
         }
         if !self.unstated.is_empty() {
-            caveats.push(Caveat::LimitsUnstated { missing: self.unstated });
+            caveats.push(Caveat::LimitsUnstated {
+                missing: self.unstated,
+            });
         }
         Ok(Verdict { caveats })
     }
@@ -911,15 +946,18 @@ impl Fabric {
         let mut out = Vec::new();
 
         if let Some(limit) = self.max_spins
-            && p.spins > limit {
-                out.push(Unsupported::TooManySpins { need: p.spins, limit });
-            }
+            && p.spins > limit
+        {
+            out.push(Unsupported::TooManySpins {
+                need: p.spins,
+                limit,
+            });
+        }
 
         // An arity-1 factor is a FIELD. `Program::to_graph` lowers it with `b.bias(...)`, so it is
         // one everywhere in this crate — and checking it as a coupling here let a program whose
         // fields were written that way past a fabric that has no field at all.
-        let (unary, pairs): (Vec<_>, Vec<_>) =
-            p.factors.iter().partition(|f| f.arity() == 1);
+        let (unary, pairs): (Vec<_>, Vec<_>) = p.factors.iter().partition(|f| f.arity() == 1);
 
         let mut worst_arity = 0;
         // Degree is over EDGES, not over factor mentions. Two factors on the same pair are one
@@ -941,7 +979,10 @@ impl Fabric {
             degree[*b] += 1;
         }
         if worst_arity > self.max_arity {
-            out.push(Unsupported::ArityTooHigh { arity: worst_arity, limit: self.max_arity });
+            out.push(Unsupported::ArityTooHigh {
+                arity: worst_arity,
+                limit: self.max_arity,
+            });
         }
 
         let deg_limit = match (&self.topology, self.max_degree) {
@@ -951,9 +992,14 @@ impl Fabric {
         };
         if let Some(limit) = deg_limit
             && let Some((node, &d)) = degree.iter().enumerate().max_by_key(|&(_, &d)| d)
-                && d > limit {
-                    out.push(Unsupported::TooHighDegree { node, degree: d, limit });
-                }
+            && d > limit
+        {
+            out.push(Unsupported::TooHighDegree {
+                node,
+                degree: d,
+                limit,
+            });
+        }
 
         // A field is a field however it was written.
         let fields: Vec<f64> = p
@@ -963,7 +1009,9 @@ impl Fabric {
             .chain(unary.iter().map(|f| f.weight()))
             .collect();
         if !self.supports_field && !fields.is_empty() {
-            out.push(Unsupported::NoFieldSupport { nodes: fields.len() });
+            out.push(Unsupported::NoFieldSupport {
+                nodes: fields.len(),
+            });
         }
 
         // The WORST offender rather than every one: a program built by a loop violates a range in
@@ -971,17 +1019,30 @@ impl Fabric {
         // that differ. Worst means largest magnitude, because that is the value setting the scale
         // factor a caller needs. This used to take the FIRST, while saying it took the worst.
         let worst_of = |r: Range, vals: &mut dyn Iterator<Item = f64>| -> Option<f64> {
-            vals.filter(|v| !r.holds(*v))
-                .max_by(|a, b| a.abs().partial_cmp(&b.abs()).unwrap_or(core::cmp::Ordering::Equal))
+            vals.filter(|v| !r.holds(*v)).max_by(|a, b| {
+                a.abs()
+                    .partial_cmp(&b.abs())
+                    .unwrap_or(core::cmp::Ordering::Equal)
+            })
         };
         if let Some(r) = self.coupling_range
-            && let Some(w) = worst_of(r, &mut pairs.iter().map(|f| f.weight())) {
-                out.push(Unsupported::OutOfRange { what: "coupling", value: w, range: r });
-            }
+            && let Some(w) = worst_of(r, &mut pairs.iter().map(|f| f.weight()))
+        {
+            out.push(Unsupported::OutOfRange {
+                what: "coupling",
+                value: w,
+                range: r,
+            });
+        }
         if let Some(r) = self.field_range
-            && let Some(h) = worst_of(r, &mut fields.iter().copied()) {
-                out.push(Unsupported::OutOfRange { what: "field", value: h, range: r });
-            }
+            && let Some(h) = worst_of(r, &mut fields.iter().copied())
+        {
+            out.push(Unsupported::OutOfRange {
+                what: "field",
+                value: h,
+                range: r,
+            });
+        }
 
         if self.uniform_couplings {
             // By VALUE, not by bit pattern. `0.0` and `-0.0` are the same coupling and have
@@ -990,7 +1051,9 @@ impl Fabric {
             seen.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
             seen.dedup_by(|a, b| a == b);
             if seen.len() > 1 {
-                out.push(Unsupported::NonUniformCouplings { distinct: seen.len() });
+                out.push(Unsupported::NonUniformCouplings {
+                    distinct: seen.len(),
+                });
             }
         }
 
@@ -1002,8 +1065,11 @@ impl Fabric {
         let field_grid = self.field_range.is_some_and(|r| r.integral);
         let coupling_grid = self.coupling_range.is_some_and(|r| r.integral);
 
-        let field_err =
-            if field_grid { 0.0 } else { self.field_precision.worst_relative_error(&fields) };
+        let field_err = if field_grid {
+            0.0
+        } else {
+            self.field_precision.worst_relative_error(&fields)
+        };
         if field_err > 0.05 {
             out.push(Unsupported::CouplingPrecision {
                 bits: match self.field_precision {
@@ -1030,7 +1096,10 @@ impl Fabric {
             // A tenth of a percent is the line: below it the model is the model, above it the
             // caller is answering a different question and should say so out loud.
             if err > 1e-3 {
-                out.push(Unsupported::CouplingPrecision { bits, worst_relative_error: err });
+                out.push(Unsupported::CouplingPrecision {
+                    bits,
+                    worst_relative_error: err,
+                });
             }
         }
 
@@ -1040,7 +1109,13 @@ impl Fabric {
     /// Worst relative error that quantising this program's couplings to `bits` would introduce.
     #[must_use]
     pub fn quantization_error(p: &Program, bits: u32) -> f64 {
-        Self::quantization_error_of(&p.factors.iter().map(super::factor::Factor::weight).collect::<Vec<_>>(), bits)
+        Self::quantization_error_of(
+            &p.factors
+                .iter()
+                .map(super::factor::Factor::weight)
+                .collect::<Vec<_>>(),
+            bits,
+        )
     }
 
     /// The worst relative error quantising these values to `bits` signed bits would introduce.
@@ -1061,7 +1136,13 @@ impl Fabric {
         let levels = ((1u64 << (bits - 1)) - 1) as f64;
         let step = max / levels;
         vals.iter()
-            .map(|&w| if w == 0.0 { 0.0 } else { ((w / step).round() * step - w).abs() / w.abs() })
+            .map(|&w| {
+                if w == 0.0 {
+                    0.0
+                } else {
+                    ((w / step).round() * step - w).abs() / w.abs()
+                }
+            })
             .fold(0.0f64, f64::max)
     }
 
@@ -1085,7 +1166,11 @@ impl Fabric {
         // fabric that declares `Grid` got `0.0` back — "quantisation introduced no error" — from
         // the function whose entire job is to move coefficients onto the grid that fabric uses.
         // A new enum variant is a question asked of every match on that enum.
-        let weights: Vec<f64> = p.factors.iter().map(super::factor::Factor::weight).collect();
+        let weights: Vec<f64> = p
+            .factors
+            .iter()
+            .map(super::factor::Factor::weight)
+            .collect();
         let err = self.coupling_precision.worst_relative_error(&weights);
         let step = match self.coupling_precision {
             Precision::Grid { step } if step > 0.0 => step,
@@ -1179,9 +1264,11 @@ pub trait Device {
         seed: u64,
     ) -> Result<crate::samples::SampleSet, String> {
         let _ = (beta, plan, seed);
-        Err("this backend exposes no sampling path: it can be asked for an optimum and not for a \
+        Err(
+            "this backend exposes no sampling path: it can be asked for an optimum and not for a \
              chain, so its sampling fidelity cannot be certified"
-            .into())
+                .into(),
+        )
     }
 
     /// Operations charged so far, for the ledger.
@@ -1195,7 +1282,6 @@ pub struct Cpu {
     state: Vec<i8>,
     ledger: crate::ledger::Ledger,
 }
-
 
 impl Device for Cpu {
     fn fabric(&self) -> Fabric {
@@ -1224,7 +1310,9 @@ impl Device for Cpu {
                 // `check` above declares max_arity 2, so a higher-order program is refused there
                 // and this is only reached if `to_graph` fails for some other reason.
                 Err(e) => {
-                    return vec![Unsupported::Unplaceable { detail: e.to_string() }]
+                    return vec![Unsupported::Unplaceable {
+                        detail: e.to_string(),
+                    }];
                 }
             }
         }
@@ -1238,7 +1326,8 @@ impl Device for Cpu {
         // term here, which made it a property of the BACKEND rather than of the work -- and
         // `Compiled::solve_with`, calling the same function, then priced the same anneal 244x
         // cheaper. Charging at the site that reads is what keeps the two honest.
-        let (best, _) = crate::tempering::anneal_scheduled(g, schedule, seed, Some(&mut self.ledger));
+        let (best, _) =
+            crate::tempering::anneal_scheduled(g, schedule, seed, Some(&mut self.ledger));
         self.state = best.clone();
         Ok(best)
     }
@@ -1281,7 +1370,11 @@ mod grid_requantize {
         let mut p = Program::from_ftp("ftp 1\nspins 2\nfactor 0.3 0 1\n").unwrap();
         let err = f.requantize(&mut p);
         let w = p.factors[0].weight();
-        assert_eq!(w, 77.0 / 256.0, "the weight must land ON the grid, not near it");
+        assert_eq!(
+            w,
+            77.0 / 256.0,
+            "the weight must land ON the grid, not near it"
+        );
         assert!(err > 0.0, "moving 0.3 to 77/256 is not free: {err}");
 
         // And a weight already on the grid is untouched.
@@ -1299,7 +1392,10 @@ mod grid_requantize {
         // 0.001 is below half a step, so it goes to zero and the coefficient is entirely lost --
         // which is exactly what `check` now refuses, and what `0.0` used to hide.
         assert_eq!(p.factors[0].weight(), 0.0);
-        assert!((err - 1.0).abs() < 1e-12, "a coefficient rounded away lost all of itself: {err}");
+        assert!(
+            (err - 1.0).abs() < 1e-12,
+            "a coefficient rounded away lost all of itself: {err}"
+        );
     }
 }
 
@@ -1373,7 +1469,10 @@ mod range_tests {
         let msg = bad[0].to_string();
         assert!(msg.contains('3') && msg.contains("[-1, 1]"), "{msg}");
 
-        assert!(f.check(&program(&[0.5, -1.0, 0.25], &[])).is_empty(), "these all fit");
+        assert!(
+            f.check(&program(&[0.5, -1.0, 0.25], &[])).is_empty(),
+            "these all fit"
+        );
     }
 
     #[test]
@@ -1381,7 +1480,10 @@ mod range_tests {
         // h_range is [-4, 4] where j_range is [-1, 1]; a fabric that conflated them would refuse a
         // field of 3 that the machine accepts.
         let f = Fabric::dwave_advantage2(Z1_SPICE);
-        assert!(f.check(&program(&[0.5], &[(0, 3.0)])).is_empty(), "a field of 3 is fine");
+        assert!(
+            f.check(&program(&[0.5], &[(0, 3.0)])).is_empty(),
+            "a field of 3 is fine"
+        );
         let bad = f.check(&program(&[0.5], &[(0, 9.0)]));
         assert_eq!(bad.len(), 1, "{bad:?}");
         assert!(bad[0].to_string().contains("field"), "{}", bad[0]);
@@ -1421,9 +1523,15 @@ mod range_tests {
         let exact = crate::exact::Elimination::default();
         let a = exact.ground_state(&p.to_graph().unwrap()).unwrap();
         let b = exact.ground_state(&scaled.to_graph().unwrap()).unwrap();
-        assert_eq!(a.ground_state, b.ground_state, "scaling must not move the optimum");
+        assert_eq!(
+            a.ground_state, b.ground_state,
+            "scaling must not move the optimum"
+        );
         let (ea, eb) = (a.ground_energy.unwrap(), b.ground_energy.unwrap());
-        assert!((eb - ea * s).abs() < 1e-9, "and the energy scales exactly: {ea} {eb} {s}");
+        assert!(
+            (eb - ea * s).abs() < 1e-9,
+            "and the energy scales exactly: {ea} {eb} {s}"
+        );
     }
 
     #[test]
@@ -1462,7 +1570,10 @@ mod range_tests {
 
         let drift = tv(&want, &same_beta);
         let corrected = tv(&want, &fixed_beta);
-        assert!(drift > 0.2, "scaling really does move the distribution: TV {drift:.4}");
+        assert!(
+            drift > 0.2,
+            "scaling really does move the distribution: TV {drift:.4}"
+        );
         assert!(
             corrected < 1e-12,
             "and dividing beta by the same factor puts it back exactly: TV {corrected:.2e}"
@@ -1492,9 +1603,8 @@ mod range_tests {
 
         let beta = 1.0;
         let exact_of = |g: &crate::graph::Graph, beta: f64| crate::ising::exact_boltzmann(g, beta);
-        let tv = |a: &[f64], b: &[f64]| {
-            a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<f64>() / 2.0
-        };
+        let tv =
+            |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<f64>() / 2.0;
 
         let p0 = exact_of(&base, beta);
         let same_beta = exact_of(&scaled, beta);
@@ -1502,8 +1612,14 @@ mod range_tests {
 
         let drift = tv(&p0, &same_beta);
         let fixed = tv(&p0, &compensated);
-        assert!(drift > 0.1, "scaling at a fixed beta really does move the distribution: {drift}");
-        assert!(fixed < 1e-12, "and dividing beta by s puts it back exactly: {fixed}");
+        assert!(
+            drift > 0.1,
+            "scaling at a fixed beta really does move the distribution: {drift}"
+        );
+        assert!(
+            fixed < 1e-12,
+            "and dividing beta by s puts it back exactly: {fixed}"
+        );
 
         // The optimum, meanwhile, has not moved at all.
         let exact = crate::exact::Elimination::default();
@@ -1521,7 +1637,11 @@ mod range_tests {
         // change the problem rather than move it.
         let mut f = Fabric::unconstrained("integral", Z1_SPICE);
         f.coupling_range = Some(Range::integers(-7.0, 7.0));
-        assert_eq!(f.scale_to_fit(&program(&[1.0, 3.7], &[])), None, "3.7 lands nowhere");
+        assert_eq!(
+            f.scale_to_fit(&program(&[1.0, 3.7], &[])),
+            None,
+            "3.7 lands nowhere"
+        );
         // but a program already on whole numbers scales cleanly
         assert_eq!(f.scale_to_fit(&program(&[2.0, 14.0], &[])), Some(0.5));
     }
@@ -1539,15 +1659,25 @@ mod range_tests {
         let mut f = Fabric::unconstrained("wide-integral", Z1_SPICE);
         f.coupling_range = Some(Range::integers(-2_147_483_647.0, 2_147_483_647.0));
 
-        let s = f.scale_to_fit(&program(&[0.5, 1.5], &[]))
+        let s = f
+            .scale_to_fit(&program(&[0.5, 1.5], &[]))
             .expect("0.5 and 1.5 scale onto whole numbers; a wide range does not change that");
         // Whatever factor it picks must actually land every coefficient on an integer and fit.
         for v in [0.5f64, 1.5] {
             let scaled = v * s;
-            assert!((scaled - scaled.round()).abs() < 1e-9, "{v} * {s} = {scaled} is not whole");
-            assert!(scaled.abs() <= 2_147_483_647.0, "{scaled} is outside the range");
+            assert!(
+                (scaled - scaled.round()).abs() < 1e-9,
+                "{v} * {s} = {scaled} is not whole"
+            );
+            assert!(
+                scaled.abs() <= 2_147_483_647.0,
+                "{scaled} is outside the range"
+            );
         }
-        assert!(f.check(&program(&[0.5 * s, 1.5 * s], &[])).is_empty(), "and the result passes check");
+        assert!(
+            f.check(&program(&[0.5 * s, 1.5 * s], &[])).is_empty(),
+            "and the result passes check"
+        );
     }
 
     #[test]
@@ -1555,8 +1685,15 @@ mod range_tests {
         // An invented limit is worse than an absent one: it refuses programs that would have run.
         let f = Fabric::unconstrained("sim", Z1_SPICE);
         assert_eq!(f.coupling_range, None);
-        assert!(f.check(&program(&[1e9], &[])).is_empty(), "a simulator has no range to violate");
-        assert_eq!(f.scale_to_fit(&program(&[1e9], &[])), None, "and nothing to scale toward");
+        assert!(
+            f.check(&program(&[1e9], &[])).is_empty(),
+            "a simulator has no range to violate"
+        );
+        assert_eq!(
+            f.scale_to_fit(&program(&[1e9], &[])),
+            None,
+            "and nothing to scale toward"
+        );
     }
 
     #[test]
@@ -1573,13 +1710,25 @@ mod range_tests {
         let fixed = Precision::Fixed { bits: 24 }.worst_relative_error(&vals);
         let float = Precision::Float { mantissa: 24 }.worst_relative_error(&vals);
 
-        assert!(fixed >= 1.0, "fixed point rounds the 1.0 away entirely: {fixed}");
-        assert!(float < 1e-6, "float32 keeps 24 significant bits of each: {float}");
-        assert!(fixed / float > 1e4, "they differ by orders of magnitude, not by a little");
+        assert!(
+            fixed >= 1.0,
+            "fixed point rounds the 1.0 away entirely: {fixed}"
+        );
+        assert!(
+            float < 1e-6,
+            "float32 keeps 24 significant bits of each: {float}"
+        );
+        assert!(
+            fixed / float > 1e4,
+            "they differ by orders of magnitude, not by a little"
+        );
 
         assert_eq!(Precision::Exact.worst_relative_error(&vals), 0.0);
         // and a single bit is all sign and no levels, which used to divide by zero levels
-        assert_eq!(Precision::Fixed { bits: 1 }.worst_relative_error(&vals), 1.0);
+        assert_eq!(
+            Precision::Fixed { bits: 1 }.worst_relative_error(&vals),
+            1.0
+        );
     }
 
     #[test]
@@ -1589,20 +1738,35 @@ mod range_tests {
         // eight-bit precision and not its size; the verdict has to say so rather than promise.
         let q = Fabric::qboson_cpqc(Z1_SPICE);
         let p = program(&[3.0, -5.0], &[(0, 2.0)]);
-        assert!(q.check(&p).is_empty(), "whole numbers inside [-128, 127] fit: {:?}", q.check(&p));
+        assert!(
+            q.check(&p).is_empty(),
+            "whole numbers inside [-128, 127] fit: {:?}",
+            q.check(&p)
+        );
         let v = q.verdict(&p).expect("nothing rules it out");
         assert!(!v.is_runnable(), "it cannot promise a run");
-        assert!(v.caveats().iter().any(|c| matches!(
-            c, Caveat::LimitsUnstated { missing } if missing.iter().any(|m| m.contains("size"))
-        )), "{:?}", v.caveats());
+        assert!(
+            v.caveats().iter().any(|c| matches!(
+                c, Caveat::LimitsUnstated { missing } if missing.iter().any(|m| m.contains("size"))
+            )),
+            "{:?}",
+            v.caveats()
+        );
         assert!(v.to_string().contains("not a promise"));
 
         // and the eight-bit range it DOES publish is enforced
         let bad = q.check(&program(&[200.0], &[]));
         assert_eq!(bad.len(), 1, "{bad:?}");
-        assert!(bad[0].to_string().contains("integers -128..=127"), "{}", bad[0]);
+        assert!(
+            bad[0].to_string().contains("integers -128..=127"),
+            "{}",
+            bad[0]
+        );
         // fractional too: the machine stores fixed-point integers
-        assert!(!q.check(&program(&[1.5], &[])).is_empty(), "1.5 is not an 8-bit integer");
+        assert!(
+            !q.check(&program(&[1.5], &[])).is_empty(),
+            "1.5 is not an 8-bit integer"
+        );
     }
 
     #[test]
@@ -1611,7 +1775,10 @@ mod range_tests {
         // analog machine whose real limit is integrated control error.
         let dw = Fabric::dwave_advantage2(Z1_SPICE);
         assert_eq!(dw.coupling_precision, Precision::Unstated);
-        assert!(!dw.unstated.is_empty(), "and the gap is declared rather than implied");
+        assert!(
+            !dw.unstated.is_empty(),
+            "and the gap is declared rather than implied"
+        );
         assert!(
             !dw.verdict(&program(&[0.5], &[])).unwrap().is_runnable(),
             "so it cannot promise a run either"
@@ -1622,27 +1789,41 @@ mod range_tests {
     fn the_pubo_solver_takes_a_four_body_term_where_everything_else_needs_reducing() {
         // The one fabric here where a three- or four-body model runs with no ancillas, no penalty
         // and no distribution caveat. That is a real difference and it is visible in the type.
-        let cubic = Program::from_ftp("ftp 1\nspins 5\nfactor 1.0 0 1 2\nfactor 1.0 1 2 3 4\n")
-            .unwrap();
+        let cubic =
+            Program::from_ftp("ftp 1\nspins 5\nfactor 1.0 0 1 2\nfactor 1.0 1 2 3 4\n").unwrap();
 
         let pubo = Fabric::toshiba_sqbm_pubo(Z1_SPICE);
         assert_eq!(pubo.max_arity, 4);
-        assert!(pubo.check(&cubic).is_empty(), "order 4 runs as written: {:?}", pubo.check(&cubic));
+        assert!(
+            pubo.check(&cubic).is_empty(),
+            "order 4 runs as written: {:?}",
+            pubo.check(&cubic)
+        );
         assert!(pubo.verdict(&cubic).unwrap().is_runnable());
 
         // every other fabric needs the reduction first
-        for f in [Fabric::toshiba_sqbm(Z1_SPICE), Fabric::fujitsu_da3(Z1_SPICE),
-                  Fabric::qboson_cpqc(Z1_SPICE)] {
+        for f in [
+            Fabric::toshiba_sqbm(Z1_SPICE),
+            Fabric::fujitsu_da3(Z1_SPICE),
+            Fabric::qboson_cpqc(Z1_SPICE),
+        ] {
             assert!(
-                f.check(&cubic).iter().any(|u| matches!(u, Unsupported::ArityTooHigh { .. })),
-                "{} should refuse a 4-body term", f.name
+                f.check(&cubic)
+                    .iter()
+                    .any(|u| matches!(u, Unsupported::ArityTooHigh { .. })),
+                "{} should refuse a 4-body term",
+                f.name
             );
         }
 
         // and after reducing, they take it
         let r = crate::reduce::to_pairwise(&cubic).unwrap();
-        assert!(!Fabric::toshiba_sqbm(Z1_SPICE).check(&r.program).iter()
-                    .any(|u| matches!(u, Unsupported::ArityTooHigh { .. })));
+        assert!(
+            !Fabric::toshiba_sqbm(Z1_SPICE)
+                .check(&r.program)
+                .iter()
+                .any(|u| matches!(u, Unsupported::ArityTooHigh { .. }))
+        );
         // which the PUBO solver never needed
         assert!(r.ancillas > 0, "the reduction really did cost ancillas");
     }
@@ -1656,8 +1837,14 @@ mod range_tests {
         // -1 are the values both accept.
         let p = program(&[1.0, -1.0, 1.0], &[(0, 1.0)]);
         let da = Fabric::fujitsu_da3(Z1_SPICE);
-        assert!(da.native_placement, "fully coupled: every bit reaches every other");
-        assert!(da.verdict(&p).unwrap().is_runnable(), "so it can promise a run");
+        assert!(
+            da.native_placement,
+            "fully coupled: every bit reaches every other"
+        );
+        assert!(
+            da.verdict(&p).unwrap().is_runnable(),
+            "so it can promise a run"
+        );
         assert!(
             Fabric::dwave_advantage2(Z1_SPICE)
                 .verdict(&p)
@@ -1678,7 +1865,10 @@ mod range_tests {
         let bad = da.check(&fractional);
         assert_eq!(bad.len(), 1, "{bad:?}");
         assert!(bad[0].to_string().contains("integers"), "{}", bad[0]);
-        assert!(da.check(&program(&[1.0, 2.0], &[])).is_empty(), "whole numbers are fine");
+        assert!(
+            da.check(&program(&[1.0, 2.0], &[])).is_empty(),
+            "whole numbers are fine"
+        );
 
         // Toshiba's are float32, so 1.5 is exactly what it says
         assert!(Fabric::toshiba_sqbm(Z1_SPICE).check(&fractional).is_empty());
@@ -1695,7 +1885,11 @@ mod range_tests {
         let fine = program(&[1.0], &[(0, 4.0), (1, 0.08)]);
         let bad = f.check(&fine);
         assert_eq!(bad.len(), 1, "{bad:?}");
-        assert!(matches!(bad[0], Unsupported::CouplingPrecision { bits: 3, .. }), "{:?}", bad[0]);
+        assert!(
+            matches!(bad[0], Unsupported::CouplingPrecision { bits: 3, .. }),
+            "{:?}",
+            bad[0]
+        );
 
         // and fields already on the grid survive it
         assert!(f.check(&program(&[1.0], &[(0, 3.0), (1, 1.0)])).is_empty());
@@ -1716,7 +1910,10 @@ mod range_tests {
             }
             ref other => panic!("{other:?}"),
         }
-        assert!(cpu.program(&program(&[1.0, 2.0], &[])).is_empty(), "pairwise still runs");
+        assert!(
+            cpu.program(&program(&[1.0, 2.0], &[])).is_empty(),
+            "pairwise still runs"
+        );
     }
 
     #[test]
@@ -1730,14 +1927,22 @@ mod range_tests {
         // D-Wave: couplings [-1,1], fields [-4,4]. A unary 3.0 is a legal field and an illegal
         // coupling, so which side it is checked on decides the answer.
         let dw = Fabric::dwave_advantage2(Z1_SPICE);
-        assert!(dw.check(&p).is_empty(), "3.0 is a field of 3, which fits [-4, 4]: {:?}", dw.check(&p));
+        assert!(
+            dw.check(&p).is_empty(),
+            "3.0 is a field of 3, which fits [-4, 4]: {:?}",
+            dw.check(&p)
+        );
 
         // and a fabric with no field must see it
         let mut fieldless = Fabric::unconstrained("fieldless", Z1_SPICE);
         fieldless.supports_field = false;
         let bad = fieldless.check(&p);
         assert_eq!(bad.len(), 1, "{bad:?}");
-        assert!(matches!(bad[0], Unsupported::NoFieldSupport { nodes: 1 }), "{:?}", bad[0]);
+        assert!(
+            matches!(bad[0], Unsupported::NoFieldSupport { nodes: 1 }),
+            "{:?}",
+            bad[0]
+        );
     }
 
     #[test]
@@ -1746,14 +1951,25 @@ mod range_tests {
         // a graph. Counting the mentions refuses a program the fabric can hold.
         let src = "ftp 1\nspins 3\nfactor 1.0 0 1\nfactor 1.0 0 1\nfactor 1.0 0 2\n";
         let p = Program::from_ftp(src).unwrap();
-        assert_eq!(p.to_graph().unwrap().n_edges, 2, "the graph really has two edges");
+        assert_eq!(
+            p.to_graph().unwrap().n_edges,
+            2,
+            "the graph really has two edges"
+        );
 
         let mut f = Fabric::unconstrained("degree-2", Z1_SPICE);
         f.max_degree = Some(2);
-        assert!(f.check(&p).is_empty(), "spin 0 has two neighbours, not three: {:?}", f.check(&p));
+        assert!(
+            f.check(&p).is_empty(),
+            "spin 0 has two neighbours, not three: {:?}",
+            f.check(&p)
+        );
 
         f.max_degree = Some(1);
-        assert!(!f.check(&p).is_empty(), "and a limit of one really is exceeded");
+        assert!(
+            !f.check(&p).is_empty(),
+            "and a limit of one really is exceeded"
+        );
     }
 
     #[test]
@@ -1764,11 +1980,18 @@ mod range_tests {
         let p = Program::from_ftp(src).unwrap();
         let mut f = Fabric::unconstrained("counting", Z1_SPICE);
         f.uniform_couplings = true;
-        assert!(f.check(&p).is_empty(), "one weight, written two ways: {:?}", f.check(&p));
+        assert!(
+            f.check(&p).is_empty(),
+            "one weight, written two ways: {:?}",
+            f.check(&p)
+        );
 
         // and genuinely different weights are still caught
         let two = Program::from_ftp("ftp 1\nspins 3\nfactor 1.0 0 1\nfactor 2.0 1 2\n").unwrap();
-        assert!(matches!(f.check(&two)[..], [Unsupported::NonUniformCouplings { distinct: 2 }]));
+        assert!(matches!(
+            f.check(&two)[..],
+            [Unsupported::NonUniformCouplings { distinct: 2 }]
+        ));
     }
 
     #[test]
@@ -1786,7 +2009,10 @@ mod range_tests {
         }
         // and the factor it implies really does fix the program
         let s = f.scale_to_fit(&program(&[2.0, 9.0, 3.0], &[])).unwrap();
-        assert!(f.check(&program(&[2.0 * s, 9.0 * s, 3.0 * s], &[])).is_empty());
+        assert!(
+            f.check(&program(&[2.0 * s, 9.0 * s, 3.0 * s], &[]))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1798,15 +2024,23 @@ mod range_tests {
         f.field_range = Some(Range::integers(0.0, 6.0));
 
         let p = program(&[1.0], &[(0, 2.0), (1, 12.0)]);
-        let s = f.scale_to_fit(&p).expect("2 and 12 can be scaled into [0, 6]");
+        let s = f
+            .scale_to_fit(&p)
+            .expect("2 and 12 can be scaled into [0, 6]");
         assert!(s > 0.0, "a factor of {s} annihilates the program");
-        assert!(f.check(&program(&[1.0], &[(0, 2.0 * s), (1, 12.0 * s)])).is_empty(),
-                "and the scaled program really fits");
+        assert!(
+            f.check(&program(&[1.0], &[(0, 2.0 * s), (1, 12.0 * s)]))
+                .is_empty(),
+            "and the scaled program really fits"
+        );
 
         // and a negative field genuinely cannot be scaled into [0, 6], which is a None rather than
         // a factor that pretends
-        assert_eq!(f.scale_to_fit(&program(&[1.0], &[(0, -1.0)])), None,
-                   "no positive factor moves a negative value above zero");
+        assert_eq!(
+            f.scale_to_fit(&program(&[1.0], &[(0, -1.0)])),
+            None,
+            "no positive factor moves a negative value above zero"
+        );
     }
 
     #[test]
@@ -1816,7 +2050,10 @@ mod range_tests {
         let mut f = Fabric::unconstrained("asymmetric", Z1_SPICE);
         f.coupling_range = Some(Range::continuous(-2.0, 1.0));
 
-        assert!(f.check(&program(&[-2.0, 1.0], &[])).is_empty(), "both endpoints are representable");
+        assert!(
+            f.check(&program(&[-2.0, 1.0], &[])).is_empty(),
+            "both endpoints are representable"
+        );
         assert_eq!(f.check(&program(&[2.0], &[])).len(), 1, "+2 is not");
 
         // scaling respects the side each value is on: -4 needs 1/2, +4 needs 1/4, so 1/4 wins
@@ -1840,12 +2077,18 @@ mod range_tests {
                     &[peak * s, -peak / 3.0 * s, peak / 7.0 * s],
                     &[(0, peak * 2.0 * s)],
                 );
-                assert!(f.check(&scaled).is_empty(),
-                        "peak {peak} scaled by {s} still violates: {:?}", f.check(&scaled));
+                assert!(
+                    f.check(&scaled).is_empty(),
+                    "peak {peak} scaled by {s} still violates: {:?}",
+                    f.check(&scaled)
+                );
                 checked += 1;
             }
         }
-        assert!(checked > 300, "the sweep must actually exercise it: {checked}");
+        assert!(
+            checked > 300,
+            "the sweep must actually exercise it: {checked}"
+        );
     }
 
     #[test]
@@ -1860,10 +2103,20 @@ mod range_tests {
         assert!(f.check(&program(&[3.0, -2.0], &[(0, 1.5)])).is_empty());
         // and a program needing scaling gets a factor that leaves the couplings whole while the
         // field stays wherever it lands, which is exactly what a mixed fabric allows
-        let s = f.scale_to_fit(&program(&[14.0, -28.0], &[(0, 1.5)])).expect("a factor exists");
-        assert!(f.check(&program(&[14.0 * s, -28.0 * s], &[(0, 1.5 * s)])).is_empty(),
-                "scaled by {s}: {:?}", f.check(&program(&[14.0 * s, -28.0 * s], &[(0, 1.5 * s)])));
-        assert_eq!((14.0 * s).fract(), 0.0, "the couplings land on whole numbers");
+        let s = f
+            .scale_to_fit(&program(&[14.0, -28.0], &[(0, 1.5)]))
+            .expect("a factor exists");
+        assert!(
+            f.check(&program(&[14.0 * s, -28.0 * s], &[(0, 1.5 * s)]))
+                .is_empty(),
+            "scaled by {s}: {:?}",
+            f.check(&program(&[14.0 * s, -28.0 * s], &[(0, 1.5 * s)]))
+        );
+        assert_eq!(
+            (14.0 * s).fract(),
+            0.0,
+            "the couplings land on whole numbers"
+        );
         assert_ne!((1.5 * s).fract(), 0.0, "and the field is not forced to");
     }
 
@@ -1877,8 +2130,13 @@ mod range_tests {
         // The saturating factor is 7/10, which sends 5 to 3.5 and does not land. A smaller one
         // does. The assertion is on the PROPERTIES rather than a number copied from the
         // implementation, which would only restate what the code already does.
-        let s = f.scale_to_fit(&program(&[10.0, 5.0], &[])).expect("a smaller factor lands");
-        assert!(s > 0.0 && s <= 0.7, "no larger than the saturating factor: {s}");
+        let s = f
+            .scale_to_fit(&program(&[10.0, 5.0], &[]))
+            .expect("a smaller factor lands");
+        assert!(
+            s > 0.0 && s <= 0.7,
+            "no larger than the saturating factor: {s}"
+        );
         assert_eq!((10.0 * s).fract(), 0.0, "10 lands: {}", 10.0 * s);
         assert_eq!((5.0 * s).fract(), 0.0, "5 lands: {}", 5.0 * s);
         assert!(f.check(&program(&[10.0 * s, 5.0 * s], &[])).is_empty());
@@ -1886,8 +2144,12 @@ mod range_tests {
         for bigger in [s * 1.0001, 0.7] {
             let ok = (10.0 * bigger).fract() == 0.0
                 && (5.0 * bigger).fract() == 0.0
-                && f.check(&program(&[10.0 * bigger, 5.0 * bigger], &[])).is_empty();
-            assert!(!ok || bigger <= s, "{bigger} would have been a better answer than {s}");
+                && f.check(&program(&[10.0 * bigger, 5.0 * bigger], &[]))
+                    .is_empty();
+            assert!(
+                !ok || bigger <= s,
+                "{bigger} would have been a better answer than {s}"
+            );
         }
     }
 
@@ -1904,12 +2166,21 @@ mod range_tests {
         let v = dw.verdict(&p).expect("nothing rules it out");
         assert!(!v.is_runnable(), "a D-Wave part cannot promise a run");
         // BOTH caveats, not whichever was checked first: it embeds AND its precision is unpublished
-        assert!(v.caveats().iter().any(|c| matches!(
-            c,
-            Caveat::NeedsEmbedding { vars, sites } if *vars == p.spins && *sites == Some(4_400)
-        )), "{:?}", v.caveats());
-        assert!(v.caveats().iter().any(|c| matches!(c, Caveat::LimitsUnstated { .. })),
-                "{:?}", v.caveats());
+        assert!(
+            v.caveats().iter().any(|c| matches!(
+                c,
+                Caveat::NeedsEmbedding { vars, sites } if *vars == p.spins && *sites == Some(4_400)
+            )),
+            "{:?}",
+            v.caveats()
+        );
+        assert!(
+            v.caveats()
+                .iter()
+                .any(|c| matches!(c, Caveat::LimitsUnstated { .. })),
+            "{:?}",
+            v.caveats()
+        );
         assert!(v.to_string().contains("do not mean"));
 
         // A fabric that places one variable per site and publishes its limits CAN promise it.
@@ -1918,7 +2189,11 @@ mod range_tests {
 
         // And a real violation still comes back as one, ahead of any verdict.
         let too_big = program(&[5.0], &[]);
-        assert!(matches!(dw.verdict(&too_big), Err(v) if v.len() == 1), "{:?}", dw.verdict(&too_big));
+        assert!(
+            matches!(dw.verdict(&too_big), Err(v) if v.len() == 1),
+            "{:?}",
+            dw.verdict(&too_big)
+        );
     }
 
     #[test]
@@ -1928,18 +2203,34 @@ mod range_tests {
         let a2 = Fabric::dwave_advantage2(Z1_SPICE);
         assert_eq!(a2.max_spins, Some(4_400), "Zephyr-12, 4,400+ qubits");
         assert_eq!(a2.max_degree, Some(20), "20-way connectivity");
-        assert_eq!(a2.coupling_range, Some(Range::continuous(-1.0, 1.0)), "j_range");
-        assert_eq!(a2.field_range, Some(Range::continuous(-4.0, 4.0)), "h_range");
-        assert_eq!(a2.coupling_precision, Precision::Unstated,
-                   "analog, and D-Wave publishes no bit count -- Exact would claim every f64 \
-                    arrives intact, which is the opposite of true here");
-        assert!(!a2.native_placement, "variables are placed by minor embedding, not one per qubit");
+        assert_eq!(
+            a2.coupling_range,
+            Some(Range::continuous(-1.0, 1.0)),
+            "j_range"
+        );
+        assert_eq!(
+            a2.field_range,
+            Some(Range::continuous(-4.0, 4.0)),
+            "h_range"
+        );
+        assert_eq!(
+            a2.coupling_precision,
+            Precision::Unstated,
+            "analog, and D-Wave publishes no bit count -- Exact would claim every f64 \
+                    arrives intact, which is the opposite of true here"
+        );
+        assert!(
+            !a2.native_placement,
+            "variables are placed by minor embedding, not one per qubit"
+        );
 
         let a1 = Fabric::dwave_advantage(Z1_SPICE);
         assert_eq!(a1.max_spins, Some(5_640), "Pegasus, 5,640 qubits");
         assert_eq!(a1.max_degree, Some(15), "15-way connectivity");
-        assert!(a1.max_spins > a2.max_spins && a1.max_degree < a2.max_degree,
-                "Advantage has more qubits and fewer couplers each; Advantage2 reverses the trade");
+        assert!(
+            a1.max_spins > a2.max_spins && a1.max_degree < a2.max_degree,
+            "Advantage has more qubits and fewer couplers each; Advantage2 reverses the trade"
+        );
     }
 }
 
@@ -1989,16 +2280,42 @@ mod tests {
         src.push_str("bias 5 0.5\n"); // a field
         let bad = constrained().check(&prog(&src));
 
-        assert!(bad.iter().any(|u| matches!(u, Unsupported::TooManySpins { .. })));
-        assert!(bad.iter().any(|u| matches!(u, Unsupported::TooHighDegree { .. })));
-        assert!(bad.iter().any(|u| matches!(u, Unsupported::ArityTooHigh { .. })));
-        assert!(bad.iter().any(|u| matches!(u, Unsupported::NoFieldSupport { .. })));
-        assert_eq!(bad.len(), 4, "every violation at once, not just the first: {bad:?}");
+        assert!(
+            bad.iter()
+                .any(|u| matches!(u, Unsupported::TooManySpins { .. }))
+        );
+        assert!(
+            bad.iter()
+                .any(|u| matches!(u, Unsupported::TooHighDegree { .. }))
+        );
+        assert!(
+            bad.iter()
+                .any(|u| matches!(u, Unsupported::ArityTooHigh { .. }))
+        );
+        assert!(
+            bad.iter()
+                .any(|u| matches!(u, Unsupported::NoFieldSupport { .. }))
+        );
+        assert_eq!(
+            bad.len(),
+            4,
+            "every violation at once, not just the first: {bad:?}"
+        );
 
         // and each says what to do about it
-        let text = bad.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(" | ");
-        assert!(text.contains("sparsify"), "the degree error should suggest a fix: {text}");
-        assert!(text.contains("pairwise"), "the arity error should suggest a fix: {text}");
+        let text = bad
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        assert!(
+            text.contains("sparsify"),
+            "the degree error should suggest a fix: {text}"
+        );
+        assert!(
+            text.contains("pairwise"),
+            "the arity error should suggest a fix: {text}"
+        );
     }
 
     #[test]
@@ -2007,8 +2324,13 @@ mod tests {
         // nothing about running the model would tell you.
         let p = prog("ftp 1\nspins 3\nfactor 1000 0 1\nfactor 0.5 1 2\n");
         let bad = constrained().check(&p);
-        let prec = bad.iter().find(|u| matches!(u, Unsupported::CouplingPrecision { .. }));
-        assert!(prec.is_some(), "a 2000:1 range in 8 bits must be refused: {bad:?}");
+        let prec = bad
+            .iter()
+            .find(|u| matches!(u, Unsupported::CouplingPrecision { .. }));
+        assert!(
+            prec.is_some(),
+            "a 2000:1 range in 8 bits must be refused: {bad:?}"
+        );
         assert!(prec.unwrap().to_string().contains("requantize"));
     }
 
@@ -2016,37 +2338,58 @@ mod tests {
     fn a_narrow_range_survives_int8_and_is_not_refused() {
         // The check must not fire on models that are fine, or callers will learn to ignore it.
         let p = prog("ftp 1\nspins 4\nfactor 1 0 1\nfactor -1 1 2\nfactor 1 2 3\n");
-        assert!(!constrained()
-            .check(&p)
-            .iter()
-            .any(|u| matches!(u, Unsupported::CouplingPrecision { .. })));
+        assert!(
+            !constrained()
+                .check(&p)
+                .iter()
+                .any(|u| matches!(u, Unsupported::CouplingPrecision { .. }))
+        );
     }
 
     #[test]
     fn requantizing_reports_the_damage_it_did() {
         let mut p = prog("ftp 1\nspins 3\nfactor 1000 0 1\nfactor 0.5 1 2\n");
-        let before: Vec<f64> = p.factors.iter().map(super::super::factor::Factor::weight).collect();
-        let err = constrained().requantize(&mut p);
-        let after: Vec<f64> = p.factors.iter().map(super::super::factor::Factor::weight).collect();
-        assert!(err > 1e-3, "it should admit a real loss, got {err}");
-        assert_ne!(before, after, "and it should actually have changed the weights");
-        // afterwards the program fits the fabric it was quantised for
-        assert!(!constrained()
-            .check(&p)
+        let before: Vec<f64> = p
+            .factors
             .iter()
-            .any(|u| matches!(u, Unsupported::CouplingPrecision { .. })));
+            .map(super::super::factor::Factor::weight)
+            .collect();
+        let err = constrained().requantize(&mut p);
+        let after: Vec<f64> = p
+            .factors
+            .iter()
+            .map(super::super::factor::Factor::weight)
+            .collect();
+        assert!(err > 1e-3, "it should admit a real loss, got {err}");
+        assert_ne!(
+            before, after,
+            "and it should actually have changed the weights"
+        );
+        // afterwards the program fits the fabric it was quantised for
+        assert!(
+            !constrained()
+                .check(&p)
+                .iter()
+                .any(|u| matches!(u, Unsupported::CouplingPrecision { .. }))
+        );
     }
 
     #[test]
     fn the_cpu_backend_runs_a_program_through_the_trait() {
         let mut d = Cpu::default();
-        let p = prog("ftp 1\nspins 5\nfactor -1 0 1\nfactor -1 1 2\nfactor -1 2 3\n\
-                      factor -1 3 4\nfactor -1 4 0\n");
+        let p = prog(
+            "ftp 1\nspins 5\nfactor -1 0 1\nfactor -1 1 2\nfactor -1 2 3\n\
+                      factor -1 3 4\nfactor -1 4 0\n",
+        );
         assert!(d.program(&p).is_empty());
         let s = d.run(&Schedule::geometric(0.05, 6.0, 60, 40), 1).unwrap();
         assert_eq!(s.len(), 5);
         let g = p.to_graph().unwrap();
-        assert_eq!(g.energy(&s), -3.0, "the frustrated 5-cycle optimum, through the Device seam");
+        assert_eq!(
+            g.energy(&s),
+            -3.0,
+            "the frustrated 5-cycle optimum, through the Device seam"
+        );
         assert!(d.ledger().samples > 0, "the ledger must be charged");
     }
 
@@ -2056,7 +2399,10 @@ mod tests {
         // arity 3 cannot become a graph; the refusal must come from `program`, not from `run`
         let p = prog("ftp 1\nspins 4\nfactor 1 0 1 2\n");
         let bad = d.program(&p);
-        assert!(!bad.is_empty(), "a program it cannot lower must be refused up front");
+        assert!(
+            !bad.is_empty(),
+            "a program it cannot lower must be refused up front"
+        );
         assert!(d.run(&Schedule::constant(1.0, 10), 1).is_err());
     }
 }

@@ -31,9 +31,9 @@
 // run: cargo run --release --example energy_to_solution
 
 use ferrotherm::ledger::{KV260_MEASURED, Z1_SPICE};
-use ferrotherm::planted::{frustrated_loops, Planted};
+use ferrotherm::planted::{Planted, frustrated_loops};
 use ferrotherm::portfolio::{Bls, Budget, Search, Sqa, Tabu, Tempering};
-use ferrotherm::tts::{tts, Trial};
+use ferrotherm::tts::{Trial, tts};
 
 /// Success ladder for one arm on one instance: at each run length, how many of `seeds` runs
 /// reached the planted optimum.
@@ -47,7 +47,11 @@ fn ladder(arm: &dyn Search, p: &Planted, lengths: &[u64], seeds: u64) -> Vec<Tri
                     p.solved(&f.state)
                 })
                 .count();
-            Trial { length: len, successes, trials: seeds as usize }
+            Trial {
+                length: len,
+                successes,
+                trials: seeds as usize,
+            }
         })
         .collect()
 }
@@ -66,12 +70,26 @@ fn main() {
     let (l, loops) = (8usize, 96usize);
     let instances = 6u64;
     let seeds = 16u64;
-    let arms: Vec<Box<dyn Search>> = vec![Box::new(Tabu), Box::new(Bls), Box::new(Sqa), Box::new(Tempering)];
+    let arms: Vec<Box<dyn Search>> = vec![
+        Box::new(Tabu),
+        Box::new(Bls),
+        Box::new(Sqa),
+        Box::new(Tempering),
+    ];
     println!("ENERGY TO SOLUTION AT R99, WITH AND WITHOUT THE READS\n");
-    println!("  instances  {instances} planted {l}x{l} frustrated-loop glasses ({loops} loops), known optimum, {seeds} seeds per run length");
-    println!("  prices     Z1_SPICE: {:.3e} J/update, {:.3e} J/read ({:.0} updates per read); KV260_MEASURED: {:.3e} J/update, reads UNSTATED",
-             Z1_SPICE.e_sample, Z1_SPICE.e_read, Z1_SPICE.e_read / Z1_SPICE.e_sample, KV260_MEASURED.e_sample);
-    println!("  TTS        tts::tts at 99%, minimised over run length in proposals; energy = R99 runs x (work + reads) per run\n");
+    println!(
+        "  instances  {instances} planted {l}x{l} frustrated-loop glasses ({loops} loops), known optimum, {seeds} seeds per run length"
+    );
+    println!(
+        "  prices     Z1_SPICE: {:.3e} J/update, {:.3e} J/read ({:.0} updates per read); KV260_MEASURED: {:.3e} J/update, reads UNSTATED",
+        Z1_SPICE.e_sample,
+        Z1_SPICE.e_read,
+        Z1_SPICE.e_read / Z1_SPICE.e_sample,
+        KV260_MEASURED.e_sample
+    );
+    println!(
+        "  TTS        tts::tts at 99%, minimised over run length in proposals; energy = R99 runs x (work + reads) per run\n"
+    );
     let mut rank_changes_end = 0usize;
     let mut priced_any = 0usize;
     // The largest factor by which charging the end-of-run read multiplied any arm's energy, and
@@ -85,7 +103,9 @@ fn main() {
         let mut rows: Vec<Priced> = Vec::new();
         for arm in &arms {
             let trials = ladder(arm.as_ref(), &p, &lengths, seeds);
-            let Some(t) = tts(&trials, 0.99) else { continue };
+            let Some(t) = tts(&trials, 0.99) else {
+                continue;
+            };
             let Some(work) = t.tts else { continue };
             let runs = work / t.best_length as f64;
             // Reads per policy, per run: none; n once; n per sweep of n proposals (= 1 per proposal).
@@ -102,14 +122,22 @@ fn main() {
             });
         }
         if rows.is_empty() {
-            println!("  instance {seed}: no arm reached the optimum on any run length; nothing to rank");
+            println!(
+                "  instance {seed}: no arm reached the optimum on any run length; nothing to rank"
+            );
             continue;
         }
         priced_any += 1;
         let best = |key: &dyn Fn(&Priced) -> f64| -> &'static str {
-            rows.iter().min_by(|a, b| key(a).partial_cmp(&key(b)).unwrap()).map_or("-", |r| r.arm)
+            rows.iter()
+                .min_by(|a, b| key(a).partial_cmp(&key(b)).unwrap())
+                .map_or("-", |r| r.arm)
         };
-        let (b_free, b_end, b_sweep) = (best(&|r| r.read_free_z1), best(&|r| r.read_end_z1), best(&|r| r.read_sweep_z1));
+        let (b_free, b_end, b_sweep) = (
+            best(&|r| r.read_free_z1),
+            best(&|r| r.read_end_z1),
+            best(&|r| r.read_sweep_z1),
+        );
         if b_end != b_free {
             rank_changes_end += 1;
         }
@@ -120,7 +148,9 @@ fn main() {
                 worst_arm = r.arm;
             }
         }
-        println!("  instance {seed} ({n} spins): cheapest read-free {b_free}, read-at-end {b_end}, read-per-sweep {b_sweep}");
+        println!(
+            "  instance {seed} ({n} spins): cheapest read-free {b_free}, read-at-end {b_end}, read-per-sweep {b_sweep}"
+        );
         println!(
             "    {:<10} {:>12} {:>7}   {:>11} {:>11} {:>11}   {:>11}",
             "arm", "work (prop.)", "R99", "Z1 free", "Z1 end", "Z1 sweep", "KV260 free"
@@ -128,20 +158,48 @@ fn main() {
         for r in &rows {
             println!(
                 "    {:<10} {:>12.3e} {:>7.1}   {:>11.3e} {:>11.3e} {:>11.3e}   {:>11.3e}",
-                r.arm, r.work, r.runs, r.read_free_z1, r.read_end_z1, r.read_sweep_z1, r.read_free_kv
+                r.arm,
+                r.work,
+                r.runs,
+                r.read_free_z1,
+                r.read_end_z1,
+                r.read_sweep_z1,
+                r.read_free_kv
             );
         }
-        let arms_unsolved: Vec<&str> = arms.iter().map(|a| a.name()).filter(|nm| !rows.iter().any(|r| r.arm == *nm)).collect();
+        let arms_unsolved: Vec<&str> = arms
+            .iter()
+            .map(|a| a.name())
+            .filter(|nm| !rows.iter().any(|r| r.arm == *nm))
+            .collect();
         if !arms_unsolved.is_empty() {
-            println!("    unsolved at every run length up to {}: {}", lengths.last().unwrap(), arms_unsolved.join(", "));
+            println!(
+                "    unsolved at every run length up to {}: {}",
+                lengths.last().unwrap(),
+                arms_unsolved.join(", ")
+            );
         }
     }
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  Over {priced_any} instances with a ranked winner: charging one read of every node at the end of each");
-    println!("  run changed the cheapest arm on {rank_changes_end}, and multiplied an arm's energy by as much as");
-    println!("  {worst_factor:.1}x ({worst_arm}) -- the margins move on every instance whether the winner does or not.");
-    println!("  A read every sweep is a uniform factor on every arm and cannot reorder them; it is printed for scale.");
-    println!("  The read-free column is what published rankings compute. The end-of-run column is what a device");
-    println!("  that charges 239 updates per read would bill for the same runs -- an arm that needs many short");
-    println!("  runs to reach R99 pays n reads per run, and the tables that exclude readout cannot see it.");
+    println!(
+        "  Over {priced_any} instances with a ranked winner: charging one read of every node at the end of each"
+    );
+    println!(
+        "  run changed the cheapest arm on {rank_changes_end}, and multiplied an arm's energy by as much as"
+    );
+    println!(
+        "  {worst_factor:.1}x ({worst_arm}) -- the margins move on every instance whether the winner does or not."
+    );
+    println!(
+        "  A read every sweep is a uniform factor on every arm and cannot reorder them; it is printed for scale."
+    );
+    println!(
+        "  The read-free column is what published rankings compute. The end-of-run column is what a device"
+    );
+    println!(
+        "  that charges 239 updates per read would bill for the same runs -- an arm that needs many short"
+    );
+    println!(
+        "  runs to reach R99 pays n reads per run, and the tables that exclude readout cannot see it."
+    );
 }

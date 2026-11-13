@@ -141,12 +141,20 @@ fn spread(v: &[f64]) -> (f64, f64, f64) {
     let mut s = v.to_vec();
     s.sort_by(f64::total_cmp);
     let k = s.len();
-    let med = if k % 2 == 1 { s[k / 2] } else { 0.5 * (s[k / 2 - 1] + s[k / 2]) };
+    let med = if k % 2 == 1 {
+        s[k / 2]
+    } else {
+        0.5 * (s[k / 2 - 1] + s[k / 2])
+    };
     (med, s[0], s[k - 1])
 }
 
 fn main() {
-    const NAMES: [&str; 3] = ["single-spin Gibbs", "Swendsen-Wang", "Wolff (1 cluster/sweep)"];
+    const NAMES: [&str; 3] = [
+        "single-spin Gibbs",
+        "Swendsen-Wang",
+        "Wolff (1 cluster/sweep)",
+    ];
     println!("critical slowing down at beta_c = {BETA_C:.6}");
     println!(
         "tau_int of |m| by certify::tau_estimate (Geyer's sequence, long-batch means beside it, the\n\
@@ -173,7 +181,10 @@ fn main() {
                     })
                 })
                 .collect();
-            handles.into_iter().map(|h| h.join().expect("a seed's run panicked")).collect()
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("a seed's run panicked"))
+                .collect()
         });
         for r in per_seed {
             for k in 0..3 {
@@ -190,7 +201,14 @@ fn main() {
         println!("{name}");
         println!(
             "{:>4} {:>8}  {:>26}  {:>8}  {:>8}  {:>9}  {:>10}  {:>6}",
-            "L", "draws", "tau/sweep median [range]", "Geyer", "Sokal", "draws/tau", "tau/visit", "<|m|>"
+            "L",
+            "draws",
+            "tau/sweep median [range]",
+            "Geyer",
+            "Sokal",
+            "draws/tau",
+            "tau/visit",
+            "<|m|>"
         );
         for (si, &l) in SIZES.iter().enumerate() {
             let rs = &runs[k][si];
@@ -200,7 +218,10 @@ fn main() {
             let (sm, _, _) = spread(&rs.iter().map(|r| r.sokal).collect::<Vec<_>>());
             let (vm, _, _) = spread(&rs.iter().map(|r| r.tau * r.visits).collect::<Vec<_>>());
             let (mm, _, _) = spread(&rs.iter().map(|r| r.m).collect::<Vec<_>>());
-            let min_ratio = rs.iter().map(|r| r.draws as f64 / r.tau).fold(f64::INFINITY, f64::min);
+            let min_ratio = rs
+                .iter()
+                .map(|r| r.draws as f64 / r.tau)
+                .fold(f64::INFINITY, f64::min);
             assert!(
                 min_ratio >= ferrotherm::certify::RESOLVED_TAUS,
                 "{name}, L = {l}: a seed's chain is only {min_ratio:.0} of its own tau long; this table \
@@ -216,7 +237,14 @@ fn main() {
             );
         }
         let per_seed_z: Vec<f64> = (0..SEEDS.len())
-            .map(|j| exponent(&SIZES, &(0..SIZES.len()).map(|si| runs[k][si][j].tau).collect::<Vec<_>>()))
+            .map(|j| {
+                exponent(
+                    &SIZES,
+                    &(0..SIZES.len())
+                        .map(|si| runs[k][si][j].tau)
+                        .collect::<Vec<_>>(),
+                )
+            })
             .collect();
         let (zm, zlo, zhi) = spread(&per_seed_z);
         println!(

@@ -13,7 +13,9 @@ use ferrotherm_silicon::frame::assemble;
 use ferrotherm_silicon::framebuf::FrameBuf;
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: header_compare <file.bit>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: header_compare <file.bit>");
     let raw = std::fs::read(&path).expect("read");
     let bit = parse_bit(&raw);
     let sync = find_sync(bit.config).expect("sync");
@@ -25,7 +27,11 @@ fn main() {
         fb.frame_mut(f);
     }
     let ours_all = assemble(0x0363_1093, &fb);
-    let ours_sync = ours_all.iter().position(|&w| w == 0xAA99_5566).expect("our sync") + 1;
+    let ours_sync = ours_all
+        .iter()
+        .position(|&w| w == 0xAA99_5566)
+        .expect("our sync")
+        + 1;
     let ours = &ours_all[ours_sync..];
 
     // compare up to the first FDRI payload (headers only)
@@ -38,7 +44,10 @@ fn main() {
     for i in 0..stop {
         if ours[i] != theirs[i] {
             if diffs < 8 {
-                println!("  word {i:3}: ours 0x{:08X}  theirs 0x{:08X}", ours[i], theirs[i]);
+                println!(
+                    "  word {i:3}: ours 0x{:08X}  theirs 0x{:08X}",
+                    ours[i], theirs[i]
+                );
             }
             diffs += 1;
         }

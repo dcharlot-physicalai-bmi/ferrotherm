@@ -12,8 +12,12 @@ fn strip(w: usize, h: usize) -> ferrotherm::graph::Graph {
     for y in 0..h {
         for x in 0..w {
             let i = y * w + x;
-            if x + 1 < w { b.couple(i, y * w + x + 1, 1.0); }
-            if y + 1 < h { b.couple(i, (y + 1) * w + x, 1.0); }
+            if x + 1 < w {
+                b.couple(i, y * w + x + 1, 1.0);
+            }
+            if y + 1 < h {
+                b.couple(i, (y + 1) * w + x, 1.0);
+            }
         }
     }
     b.build()
@@ -26,7 +30,10 @@ fn row(name: String, g: &ferrotherm::graph::Graph, treewidth: usize) {
 }
 
 fn main() {
-    println!("{:>12} {:>7} {:>8} {:>12}", "graph", "spins", "width", "treewidth");
+    println!(
+        "{:>12} {:>7} {:>8} {:>12}",
+        "graph", "spins", "width", "treewidth"
+    );
     for (w, h) in [(3, 20), (4, 20), (5, 30), (6, 40), (8, 50), (10, 10)] {
         row(format!("{w}x{h} strip"), &strip(w, h), w.min(h));
     }
@@ -34,11 +41,17 @@ fn main() {
     // is the family `ising::lattice2d` actually builds, and the one every sampler here is verified
     // against, so leaving it out of the width table left the drift that matters undocumented.
     for l in [6usize, 8, 10, 12, 14] {
-        row(format!("torus {l}x{l}"), &ferrotherm::ising::lattice2d(l, 1.0), 2 * l);
+        row(
+            format!("torus {l}x{l}"),
+            &ferrotherm::ising::lattice2d(l, 1.0),
+            2 * l,
+        );
     }
     for n in [100, 500, 2000] {
         let mut b = GraphBuilder::new(n);
-        for i in 0..n - 1 { b.couple(i, i + 1, 1.0); }
+        for i in 0..n - 1 {
+            b.couple(i, i + 1, 1.0);
+        }
         row(format!("chain {n}"), &b.build(), 1);
     }
 }

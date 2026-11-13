@@ -9,8 +9,8 @@
 //! they borrow an unrelated slice's LUT as a buffer and only conduct if that LUT happens to be
 //! programmed, so a path through one is a path that may silently not exist.
 
-use crate::json::{parse, Json};
-use crate::pips::{PipDb, Pip};
+use crate::json::{Json, parse};
+use crate::pips::{Pip, PipDb};
 use crate::tilegrid::TileGrid;
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -36,12 +36,16 @@ pub struct Conn {
 /// A message naming what was malformed.
 pub fn parse_tileconn(text: &str) -> Result<Vec<Conn>, String> {
     let j = parse(text)?;
-    let Json::Arr(items) = j else { return Err("tileconn.json must be an array".into()) };
+    let Json::Arr(items) = j else {
+        return Err("tileconn.json must be an array".into());
+    };
     let mut out = Vec::new();
     for it in items {
-        let (Some(Json::Arr(types)), Some(Json::Arr(deltas)), Some(Json::Arr(pairs))) =
-            (it.get("tile_types"), it.get("grid_deltas"), it.get("wire_pairs"))
-        else {
+        let (Some(Json::Arr(types)), Some(Json::Arr(deltas)), Some(Json::Arr(pairs))) = (
+            it.get("tile_types"),
+            it.get("grid_deltas"),
+            it.get("wire_pairs"),
+        ) else {
             continue;
         };
         if types.len() != 2 || deltas.len() != 2 {
@@ -50,15 +54,25 @@ pub fn parse_tileconn(text: &str) -> Result<Vec<Conn>, String> {
         let mut map = HashMap::new();
         for p in pairs {
             if let Json::Arr(pair) = p
-                && let (Some(a), Some(b)) = (pair.first().and_then(super::json::Json::as_str), pair.get(1).and_then(super::json::Json::as_str)) {
-                    map.insert(a.to_string(), b.to_string());
-                }
+                && let (Some(a), Some(b)) = (
+                    pair.first().and_then(super::json::Json::as_str),
+                    pair.get(1).and_then(super::json::Json::as_str),
+                )
+            {
+                map.insert(a.to_string(), b.to_string());
+            }
         }
         out.push(Conn {
             from_type: types[0].as_str().unwrap_or("").to_string(),
             to_type: types[1].as_str().unwrap_or("").to_string(),
-            dx: match deltas[0] { Json::Num(n) => n as i32, _ => 0 },
-            dy: match deltas[1] { Json::Num(n) => n as i32, _ => 0 },
+            dx: match deltas[0] {
+                Json::Num(n) => n as i32,
+                _ => 0,
+            },
+            dy: match deltas[1] {
+                Json::Num(n) => n as i32,
+                _ => 0,
+            },
             pairs: map,
         });
     }
@@ -130,7 +144,15 @@ impl<'g> Fabric<'g> {
             from_type.entry(c.from_type.clone()).or_default().push(i);
             to_type.entry(c.to_type.clone()).or_default().push(i);
         }
-        Fabric { grid, pipdbs, ppips, conns, at, from_type, to_type }
+        Fabric {
+            grid,
+            pipdbs,
+            ppips,
+            conns,
+            at,
+            from_type,
+            to_type,
+        }
     }
 
     fn tile_type(&self, tile: &str) -> Option<&str> {
@@ -141,12 +163,17 @@ impl<'g> Fabric<'g> {
     #[must_use]
     pub fn successors(&self, node: &Node) -> Vec<(Node, Option<RouteStep>)> {
         let mut out = Vec::new();
-        let Some(tile) = self.grid.tiles.get(&node.0) else { return out };
+        let Some(tile) = self.grid.tiles.get(&node.0) else {
+            return out;
+        };
         // PIPs within this tile
         if let Some(db) = self.pipdbs.get(&tile.kind) {
             for p in db.from(&node.1) {
                 let feat = p.feature(&tile.kind);
-                let kind = self.ppips.get(&tile.kind).and_then(|pp| pp.kinds.get(&feat));
+                let kind = self
+                    .ppips
+                    .get(&tile.kind)
+                    .and_then(|pp| pp.kinds.get(&feat));
                 let step = match kind.map(std::string::String::as_str) {
                     // permanent wiring: usable, but there is nothing to configure
                     Some("always") => None,
@@ -171,11 +198,13 @@ impl<'g> Fabric<'g> {
             let c = &self.conns[ci];
             if let Some(w2) = c.pairs.get(&node.1) {
                 let (nx, ny) = (tile.grid_x as i32 + c.dx, tile.grid_y as i32 + c.dy);
-                if nx >= 0 && ny >= 0
+                if nx >= 0
+                    && ny >= 0
                     && let Some(name) = self.at.get(&(nx as u32, ny as u32))
-                        && self.tile_type(name) == Some(c.to_type.as_str()) {
-                            out.push(((name.clone(), w2.clone()), None));
-                        }
+                    && self.tile_type(name) == Some(c.to_type.as_str())
+                {
+                    out.push(((name.clone(), w2.clone()), None));
+                }
             }
         }
         // and inward (the same physical wire, described from the other side)
@@ -184,11 +213,13 @@ impl<'g> Fabric<'g> {
             for (a, b) in &c.pairs {
                 if b == &node.1 {
                     let (nx, ny) = (tile.grid_x as i32 - c.dx, tile.grid_y as i32 - c.dy);
-                    if nx >= 0 && ny >= 0
+                    if nx >= 0
+                        && ny >= 0
                         && let Some(name) = self.at.get(&(nx as u32, ny as u32))
-                            && self.tile_type(name) == Some(c.from_type.as_str()) {
-                                out.push(((name.clone(), a.clone()), None));
-                            }
+                        && self.tile_type(name) == Some(c.from_type.as_str())
+                    {
+                        out.push(((name.clone(), a.clone()), None));
+                    }
                 }
             }
         }
@@ -233,9 +264,10 @@ impl<'g> Fabric<'g> {
                     continue;
                 }
                 if let Some(k) = self.tile_type(&next.0)
-                    && !allow(&next.0, k) {
-                        continue;
-                    }
+                    && !allow(&next.0, k)
+                {
+                    continue;
+                }
                 seen.insert(next.clone());
                 prev.insert(next.clone(), (n.clone(), step));
                 q.push_back(next);
@@ -379,7 +411,13 @@ mod tests {
     fn conns() -> Vec<Conn> {
         let mut pairs = HashMap::new();
         pairs.insert("EE2A0".to_string(), "EE2END0".to_string());
-        vec![Conn { from_type: "INT_L".into(), to_type: "INT_R".into(), dx: 1, dy: 0, pairs }]
+        vec![Conn {
+            from_type: "INT_L".into(),
+            to_type: "INT_R".into(),
+            dx: 1,
+            dy: 0,
+            pairs,
+        }]
     }
 
     #[test]
@@ -399,7 +437,11 @@ mod tests {
                 &interconnect_only,
             )
             .expect("a route exists");
-        assert_eq!(path.len(), 2, "one PIP per tile, the boundary hop costs none");
+        assert_eq!(
+            path.len(),
+            2,
+            "one PIP per tile, the boundary hop costs none"
+        );
         assert_eq!(path[0].tile, "INT_L_X0Y0");
         assert_eq!(path[0].feature(), "INT_L.EE2A0.SRC");
         assert_eq!(path[1].tile, "INT_R_X1Y0");
@@ -416,14 +458,15 @@ mod tests {
         dbs.insert("INT_L".to_string(), PipDb::parse(l).unwrap());
         dbs.insert("INT_R".to_string(), PipDb::parse(r).unwrap());
         let fab = Fabric::new(&grid, dbs, conns());
-        assert!(fab
-            .route(
+        assert!(
+            fab.route(
                 &("INT_L_X0Y0".into(), "SRC".into()),
                 &("INT_R_X1Y0".into(), "PSEUDO".into()),
                 10_000,
                 &interconnect_only,
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     /// The search must not wander into CLE tiles, whose PIPs are LUT route-throughs.
@@ -432,14 +475,20 @@ mod tests {
         assert!(interconnect_only("INT_L_X0Y0", "INT_L") && interconnect_only("t", "INT_R"));
         assert!(!interconnect_only("CLBLL_L_X2Y0", "CLBLL_L"));
         assert!(!interconnect_only("t", "CLBLM_R"));
-        assert!(is_interconnect("BRKH_INT"), "clock-region break tiles carry wires");
+        assert!(
+            is_interconnect("BRKH_INT"),
+            "clock-region break tiles carry wires"
+        );
         assert!(is_interconnect("B_TERM_INT"));
         assert!(!is_interconnect("CLBLL_L"));
         // endpoints are reachable but never transited
         let rule = interconnect_with_endpoints("CLBLL_L_X2Y0", "CLBLL_L_X2Y9");
         assert!(rule("CLBLL_L_X2Y0", "CLBLL_L"), "source endpoint allowed");
         assert!(rule("CLBLL_L_X2Y9", "CLBLL_L"), "target endpoint allowed");
-        assert!(!rule("CLBLL_L_X2Y5", "CLBLL_L"), "any other logic tile is refused");
+        assert!(
+            !rule("CLBLL_L_X2Y5", "CLBLL_L"),
+            "any other logic tile is refused"
+        );
     }
 
     /// A vertical route must cross the horizontal clock row. The column here is the real shape:
@@ -464,7 +513,13 @@ mod tests {
         let up = |from: &str, to: &str, a: &str, b: &str| {
             let mut pairs = HashMap::new();
             pairs.insert(a.to_string(), b.to_string());
-            Conn { from_type: from.into(), to_type: to.into(), dx: 0, dy: 1, pairs }
+            Conn {
+                from_type: from.into(),
+                to_type: to.into(),
+                dx: 0,
+                dy: 1,
+                pairs,
+            }
         };
         let conns = vec![
             up("INT_L", "HCLK_L", "NN2A0", "HCLK_NN2A0"),
@@ -485,7 +540,10 @@ mod tests {
         assert_eq!(path[0].tile, "INT_L_X0Y0");
         assert_eq!(path[1].tile, "INT_L_X0Y2");
         assert!(is_interconnect("HCLK_L") && is_interconnect("HCLK_R"));
-        assert!(is_interconnect("HCLK_L_BOT_UTURN"), "the uturn variants sit in the same column");
+        assert!(
+            is_interconnect("HCLK_L_BOT_UTURN"),
+            "the uturn variants sit in the same column"
+        );
         // The clock row's own service tiles are not interconnect and must stay out of the walk.
         assert!(!is_interconnect("HCLK_CLB"));
         assert!(!is_interconnect("HCLK_BRAM"));
@@ -508,7 +566,10 @@ mod tests {
         };
         // Two nets, different sources, same driven wire in the same tile.
         let clash = vec![
-            vec![step("INT_L_X0Y0", "A", "SHARED"), step("INT_L_X0Y1", "SHARED", "B")],
+            vec![
+                step("INT_L_X0Y0", "A", "SHARED"),
+                step("INT_L_X0Y1", "SHARED", "B"),
+            ],
             vec![step("INT_L_X0Y0", "C", "SHARED")],
         ];
         let found = contentions(&clash);
@@ -522,7 +583,11 @@ mod tests {
             vec![step("INT_L_X0Y0", "A", "SHARED")],
             vec![step("INT_L_X0Y0", "A", "SHARED")],
         ];
-        assert_eq!(contentions(&same_source).len(), 1, "a shared source is not a defence");
+        assert_eq!(
+            contentions(&same_source).len(),
+            1,
+            "a shared source is not a defence"
+        );
 
         // Disjoint nets, and a net that drives two different wires in one tile, are both clean.
         let clean = vec![
@@ -540,6 +605,9 @@ mod tests {
         let c = parse_tileconn(src).unwrap();
         assert_eq!(c.len(), 1);
         assert_eq!((c[0].dx, c[0].dy), (1, 0));
-        assert_eq!(c[0].pairs.get("EE2A1").map(std::string::String::as_str), Some("EE2END1"));
+        assert_eq!(
+            c[0].pairs.get("EE2A1").map(std::string::String::as_str),
+            Some("EE2END1")
+        );
     }
 }

@@ -61,22 +61,54 @@ fn main() {
     // wires: reals[0]=x, reals[1]=err, reals[2]=u, reals[3]=accumulated cost
     let mut gates = Vec::new();
     for _ in 0..T {
-        gates.push(Gate::Err { err: 1, x: 0, tgt: 0.0 });
-        gates.push(Gate::CtrlGauss { u: 2, err: 1, p_k: 0, sigma: SG });
-        gates.push(Gate::CostQuad { acc: 3, x: 0, u: 2, q: Q, r: R }); // stage cost BEFORE the step
-        gates.push(Gate::Lin { x: 0, u: 2, a: A, b: B });
+        gates.push(Gate::Err {
+            err: 1,
+            x: 0,
+            tgt: 0.0,
+        });
+        gates.push(Gate::CtrlGauss {
+            u: 2,
+            err: 1,
+            p_k: 0,
+            sigma: SG,
+        });
+        gates.push(Gate::CostQuad {
+            acc: 3,
+            x: 0,
+            u: 2,
+            q: Q,
+            r: R,
+        }); // stage cost BEFORE the step
+        gates.push(Gate::Lin {
+            x: 0,
+            u: 2,
+            a: A,
+            b: B,
+        });
     }
-    let prog = Program { gates, graphs: vec![], n_params: 1 };
-    let init = State { bits: vec![], reals: vec![X0, 0.0, 0.0, 0.0] };
+    let prog = Program {
+        gates,
+        graphs: vec![],
+        n_params: 1,
+    };
+    let init = State {
+        bits: vec![],
+        reals: vec![X0, 0.0, 0.0, 0.0],
+    };
     let loss = |s: &State| s.reals[3];
 
     // ---- verify the program's expected cost against the exact recursion at a probe gain ----
     let probe_k = 2.0;
     let (_, mean_probe) = prog.reinforce_grad(&init, &[probe_k], &loss, 100_000, 0xCAB);
     let exact_probe = exact_cost(probe_k);
-    println!("probe k = {probe_k}: program E[cost] = {mean_probe:.3}, exact recursion = {exact_probe:.3}");
+    println!(
+        "probe k = {probe_k}: program E[cost] = {mean_probe:.3}, exact recursion = {exact_probe:.3}"
+    );
     let probe_ok = (mean_probe - exact_probe).abs() / exact_probe < 0.01;
-    println!("  agreement: {}\n", if probe_ok { "ok (<1%)" } else { "FAIL" });
+    println!(
+        "  agreement: {}\n",
+        if probe_ok { "ok (<1%)" } else { "FAIL" }
+    );
 
     // ---- train the gain by REINFORCE ----
     let mut k = 0.3f64;
@@ -89,15 +121,22 @@ fn main() {
     let c_trained = exact_cost(k); // evaluate the LEARNED gain on the exact recursion
     println!("trained by stochastic-program gradient descent (REINFORCE, 250 iters):");
     println!("  k trained = {k:.3}    k* exact = {k_star:.3}");
-    println!("  expected cost at k trained = {c_trained:.3}   at k* = {c_star:.3}   excess = {:.2}%",
-             100.0 * (c_trained - c_star) / c_star);
-    println!("  (control-effort term R*E[sum u^2] is the actuation proxy: what the arm would pay for this policy)");
+    println!(
+        "  expected cost at k trained = {c_trained:.3}   at k* = {c_star:.3}   excess = {:.2}%",
+        100.0 * (c_trained - c_star) / c_star
+    );
+    println!(
+        "  (control-effort term R*E[sum u^2] is the actuation proxy: what the arm would pay for this policy)"
+    );
 
     let ok = probe_ok && (k - k_star).abs() < 0.2 && (c_trained - c_star) / c_star < 0.01;
-    println!("\n  verdict: {}", if ok {
-        "PASS — trained stochastic controller matches the provable optimum"
-    } else {
-        "FAIL"
-    });
+    println!(
+        "\n  verdict: {}",
+        if ok {
+            "PASS — trained stochastic controller matches the provable optimum"
+        } else {
+            "FAIL"
+        }
+    );
     std::process::exit(if ok { 0 } else { 1 });
 }

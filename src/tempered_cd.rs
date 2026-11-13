@@ -96,7 +96,9 @@ impl Ladder {
             }
         }
         if (self.betas[r - 1] - 1.0).abs() > 1e-12 {
-            return Err(Error::NotAnchored { top: self.betas[r - 1] });
+            return Err(Error::NotAnchored {
+                top: self.betas[r - 1],
+            });
         }
         Ok(())
     }
@@ -136,7 +138,10 @@ impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Error::TooShort { rungs } => {
-                write!(f, "a tempered ladder needs at least two rungs and this one has {rungs}")
+                write!(
+                    f,
+                    "a tempered ladder needs at least two rungs and this one has {rungs}"
+                )
             }
             Error::NotIncreasing { at, betas } => write!(
                 f,
@@ -194,8 +199,13 @@ fn reverse_sweep(smp: &mut Sampler) {
 pub fn log_accept(betas: &[f64], hot: &[f64], cool: &[f64]) -> f64 {
     let r = betas.len();
     assert!(r >= 2, "a tempered transition needs at least two rungs");
-    assert!(hot.len() == r - 1 && cool.len() == r - 1, "one energy per rung crossed, on each leg");
-    (0..r - 1).map(|t| (betas[r - 1 - t] - betas[r - 2 - t]) * (hot[t] - cool[t])).sum()
+    assert!(
+        hot.len() == r - 1 && cool.len() == r - 1,
+        "one energy per rung crossed, on each leg"
+    );
+    (0..r - 1)
+        .map(|t| (betas[r - 1 - t] - betas[r - 2 - t]) * (hot[t] - cool[t]))
+        .sum()
 }
 
 /// Apply one tempered transition to `smp` in place; `true` if the excursion was accepted.
@@ -264,7 +274,10 @@ impl Replicas {
     /// If the ladder has fewer than two rungs.
     #[must_use]
     pub fn new(n: usize, betas: &[f64], seed: u64) -> Replicas {
-        assert!(betas.len() >= 2, "a swapped ladder needs at least two rungs");
+        assert!(
+            betas.len() >= 2,
+            "a swapped ladder needs at least two rungs"
+        );
         let mut rng = Pcg::new(seed, 0x00EB_7700);
         let chains = (0..betas.len())
             .map(|i| {
@@ -373,14 +386,25 @@ fn check_fit(g: &Graph, data: &Dataset) -> Result<(), crate::ebm::Error> {
         return Err(crate::ebm::Error::NoData);
     }
     if g.n < data.visible {
-        return Err(crate::ebm::Error::TooSmall { spins: g.n, visible: data.visible });
+        return Err(crate::ebm::Error::TooSmall {
+            spins: g.n,
+            visible: data.visible,
+        });
     }
     for (r, row) in data.rows.iter().enumerate() {
         if row.len() != data.visible {
-            return Err(crate::ebm::Error::RowWidth { row: r, len: row.len(), want: data.visible });
+            return Err(crate::ebm::Error::RowWidth {
+                row: r,
+                len: row.len(),
+                want: data.visible,
+            });
         }
         if let Some(at) = row.iter().position(|&v| v != 1 && v != -1) {
-            return Err(crate::ebm::Error::NotASpin { row: r, at, value: row[at] });
+            return Err(crate::ebm::Error::NotASpin {
+                row: r,
+                at,
+                value: row[at],
+            });
         }
     }
     Ok(())
@@ -470,8 +494,11 @@ pub fn train_tempered(
             order.swap(i, j);
         }
         let g = build(&edges, &bias);
-        let decay =
-            if p.epochs > 1 { 1.0 - 0.9 * epoch as f64 / (p.epochs - 1) as f64 } else { 1.0 };
+        let decay = if p.epochs > 1 {
+            1.0 - 0.9 * epoch as f64 / (p.epochs - 1) as f64
+        } else {
+            1.0
+        };
 
         for chunk in order.chunks(slots) {
             let mut d_edge = vec![0.0f64; edges.len()];
@@ -542,7 +569,14 @@ pub fn train_tempered(
 
     let graph = build(&edges, &bias);
     let log_likelihood = crate::ebm::exact_log_likelihood(&graph, data).ok();
-    Ok(TemperedFit { fit: Trained { graph, log_likelihood, epochs_run: p.epochs }, acceptance })
+    Ok(TemperedFit {
+        fit: Trained {
+            graph,
+            log_likelihood,
+            epochs_run: p.epochs,
+        },
+        acceptance,
+    })
 }
 
 #[cfg(test)]
@@ -575,7 +609,11 @@ mod tests {
     }
 
     fn key(s: &[i8]) -> usize {
-        s.iter().enumerate().filter(|&(_, &v)| v == 1).map(|(i, _)| 1usize << i).sum()
+        s.iter()
+            .enumerate()
+            .filter(|&(_, &v)| v == 1)
+            .map(|(i, _)| 1usize << i)
+            .sum()
     }
 
     /// A LADDER OF ONES IS PLAIN GIBBS. Every gap is zero, so `log a` is zero for any pair of
@@ -591,8 +629,14 @@ mod tests {
         let g = two_modes(6, 0.3, 0.0);
         let mut smp = Sampler::new(&g, 1.0, 4);
         for _ in 0..200 {
-            assert!(tempered_transition(&mut smp, &betas, 1), "a zero gap must never reject");
-            assert_eq!(smp.beta, 1.0, "the transition must restore the model's own beta");
+            assert!(
+                tempered_transition(&mut smp, &betas, 1),
+                "a zero gap must never reject"
+            );
+            assert_eq!(
+                smp.beta, 1.0,
+                "the transition must restore the model's own beta"
+            );
         }
     }
 
@@ -601,14 +645,20 @@ mod tests {
     /// sites, so its update draws each of them from `p_up` of a field the class cannot change.
     fn sweep_kernel(g: &Graph, beta: f64, reversed: bool) -> Vec<Vec<f64>> {
         let m = 1usize << g.n;
-        let mut acc: Vec<Vec<f64>> =
-            (0..m).map(|x| (0..m).map(|y| f64::from(u8::from(x == y))).collect()).collect();
-        let classes: Vec<&Vec<u32>> =
-            if reversed { g.classes.iter().rev().collect() } else { g.classes.iter().collect() };
+        let mut acc: Vec<Vec<f64>> = (0..m)
+            .map(|x| (0..m).map(|y| f64::from(u8::from(x == y))).collect())
+            .collect();
+        let classes: Vec<&Vec<u32>> = if reversed {
+            g.classes.iter().rev().collect()
+        } else {
+            g.classes.iter().collect()
+        };
         for class in classes {
             let mut k = vec![vec![0.0f64; m]; m];
             for x in 0..m {
-                let s: Vec<i8> = (0..g.n).map(|i| if x >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|i| if x >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 // Both tails directly (`crate::kernel::p_pair`), never `1 - p_up`.
                 let up: Vec<(f64, f64)> = class
                     .iter()
@@ -670,7 +720,9 @@ mod tests {
         let pi = exact_boltzmann(&g, 1.0);
         let energy: Vec<f64> = (0..m)
             .map(|x| {
-                let s: Vec<i8> = (0..g.n).map(|i| if x >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|i| if x >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 g.energy(&s)
             })
             .collect();
@@ -678,10 +730,12 @@ mod tests {
         for betas in [vec![0.35, 1.0], vec![0.2, 0.6, 1.0]] {
             let r = betas.len();
             // Heating step `t` and cooling step `t` both run at `betas[r - 2 - t]`.
-            let fwd: Vec<Vec<Vec<f64>>> =
-                (0..r - 1).map(|t| sweep_kernel(&g, betas[r - 2 - t], false)).collect();
-            let rev: Vec<Vec<Vec<f64>>> =
-                (0..r - 1).map(|t| sweep_kernel(&g, betas[r - 2 - t], true)).collect();
+            let fwd: Vec<Vec<Vec<f64>>> = (0..r - 1)
+                .map(|t| sweep_kernel(&g, betas[r - 2 - t], false))
+                .collect();
+            let rev: Vec<Vec<Vec<f64>>> = (0..r - 1)
+                .map(|t| sweep_kernel(&g, betas[r - 2 - t], true))
+                .collect();
 
             let mut p = vec![vec![0.0f64; m]; m];
             // Walk every trajectory: the start, the r-1 heating results, the r-1 cooling results.
@@ -715,7 +769,10 @@ mod tests {
 
             for x in 0..m {
                 let row: f64 = p[x].iter().sum();
-                assert!((row - 1.0).abs() < 1e-12, "row {x} of the kernel sums to {row}");
+                assert!(
+                    (row - 1.0).abs() < 1e-12,
+                    "row {x} of the kernel sums to {row}"
+                );
             }
 
             // AND THE IMPLEMENTATION MUST BE THAT KERNEL. Everything above is the mathematics; it
@@ -741,7 +798,10 @@ mod tests {
                     got[z] += 1.0 / draws as f64;
                 }
                 let d = tv(&got, &p[x0]);
-                assert!(d < 0.02, "{r} rungs, row {x0}: sampled kernel is {d} from the exact one");
+                assert!(
+                    d < 0.02,
+                    "{r} rungs, row {x0}: sampled kernel is {d} from the exact one"
+                );
             }
 
             for z in 0..m {
@@ -790,8 +850,14 @@ mod tests {
         }
         let gibbs = tv(&flat, &pi);
 
-        assert!(tempered < 0.06, "tempered transitions should reproduce the model: tv = {tempered}");
-        assert!(gibbs > 0.4, "plain Gibbs should be stuck in one mode: tv = {gibbs}");
+        assert!(
+            tempered < 0.06,
+            "tempered transitions should reproduce the model: tv = {tempered}"
+        );
+        assert!(
+            gibbs > 0.4,
+            "plain Gibbs should be stuck in one mode: tv = {gibbs}"
+        );
     }
 
     /// The same statement for the swapped ladder: its cold chain's histogram must be the exact
@@ -817,7 +883,10 @@ mod tests {
             hist[key(reps.cold())] += 1.0 / draws as f64;
         }
         let d = tv(&hist, &pi);
-        assert!(d < 0.06, "the cold chain should reproduce the model: tv = {d}");
+        assert!(
+            d < 0.06,
+            "the cold chain should reproduce the model: tv = {d}"
+        );
         assert!(
             reps.swap_rates().iter().all(|&r| r > 0.05),
             "a ladder nothing crosses is not a ladder: {:?}",
@@ -846,24 +915,39 @@ mod tests {
         let n = 4;
         let data = bimodal(n);
         let structure = two_modes(n, 0.0, 0.0);
-        let p = Params { epochs: 1, ..Params::default() };
+        let p = Params {
+            epochs: 1,
+            ..Params::default()
+        };
         let bad = |betas: Vec<f64>| {
             train_tempered(
                 &structure,
                 &data,
                 &p,
-                &Ladder { betas, negative: Negative::ParallelTempering },
+                &Ladder {
+                    betas,
+                    negative: Negative::ParallelTempering,
+                },
                 0,
             )
             .unwrap_err()
         };
         assert_eq!(bad(vec![1.0]), Error::TooShort { rungs: 1 });
-        assert_eq!(bad(vec![0.5, 0.5, 1.0]), Error::NotIncreasing { at: 0, betas: (0.5, 0.5) });
+        assert_eq!(
+            bad(vec![0.5, 0.5, 1.0]),
+            Error::NotIncreasing {
+                at: 0,
+                betas: (0.5, 0.5)
+            }
+        );
         assert_eq!(bad(vec![0.5, 0.8]), Error::NotAnchored { top: 0.8 });
         assert!(matches!(
             train_tempered(
                 &structure,
-                &Dataset { visible: n, rows: Vec::new() },
+                &Dataset {
+                    visible: n,
+                    rows: Vec::new()
+                },
                 &p,
                 &Ladder::geometric(0.2, 4, Negative::ParallelTempering),
                 0,
@@ -886,10 +970,15 @@ mod tests {
             .map(|_| {
                 let u = rng.f64();
                 let mask = cdf.partition_point(|&c| c < u).min(cdf.len() - 1);
-                (0..g.n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect()
+                (0..g.n)
+                    .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect()
             })
             .collect();
-        Dataset { visible: g.n, rows: out }
+        Dataset {
+            visible: g.n,
+            rows: out,
+        }
     }
 
     /// The fixture the two training tests share: the tilted model, 200 exact draws from it, the
@@ -902,12 +991,22 @@ mod tests {
         // The ceiling has plateaued here: 1000, 2000, 4000 and 8000 epochs give -0.7395, -0.7361,
         // -0.7345 and -0.7336, so the last 6000 epochs are worth 0.003 nats and the fractions
         // below are not sensitive to where in that range it is cut off.
-        let ceiling =
-            ebm::train_exact(&structure, &data, &ebm::FitParams { epochs: 2_000, lr: 0.1, l2: 0.0 })
-                .unwrap()
-                .log_likelihood
-                .unwrap();
-        assert!(ceiling > untrained + 5.0, "the ceiling must be worth reaching: {ceiling}");
+        let ceiling = ebm::train_exact(
+            &structure,
+            &data,
+            &ebm::FitParams {
+                epochs: 2_000,
+                lr: 0.1,
+                l2: 0.0,
+            },
+        )
+        .unwrap()
+        .log_likelihood
+        .unwrap();
+        assert!(
+            ceiling > untrained + 5.0,
+            "the ceiling must be worth reaching: {ceiling}"
+        );
         (structure, data, untrained, ceiling)
     }
 
@@ -954,9 +1053,14 @@ mod tests {
             persistent: true,
         };
         let ladder = Ladder::geometric(0.05, rungs, Negative::ParallelTempering);
-        let excursion =
-            Ladder { betas: ladder.betas.clone(), negative: Negative::TemperedTransitions };
-        let pcd = Params { k: base.k * rungs, ..base };
+        let excursion = Ladder {
+            betas: ladder.betas.clone(),
+            negative: Negative::TemperedTransitions,
+        };
+        let pcd = Params {
+            k: base.k * rungs,
+            ..base
+        };
 
         for seed in 0..3u64 {
             let a = train_tempered(&structure, &data, &base, &ladder, seed).unwrap();
@@ -968,15 +1072,28 @@ mod tests {
                 frac(b.fit.log_likelihood.unwrap()),
                 frac(c.log_likelihood.unwrap()),
             );
-            assert!(fa > 0.9, "seed {seed}: swapped ladder reached {fa} of the ceiling");
-            assert!(fb > 0.9, "seed {seed}: tempered transitions reached {fb} of the ceiling");
-            assert!(fc < 0.5, "seed {seed}: PCD reached {fc} -- it is meant to collapse here");
+            assert!(
+                fa > 0.9,
+                "seed {seed}: swapped ladder reached {fa} of the ceiling"
+            );
+            assert!(
+                fb > 0.9,
+                "seed {seed}: tempered transitions reached {fb} of the ceiling"
+            );
+            assert!(
+                fc < 0.5,
+                "seed {seed}: PCD reached {fc} -- it is meant to collapse here"
+            );
             assert!(
                 a.acceptance.iter().all(|&r| r > 0.05),
                 "seed {seed}: swap rates {:?}",
                 a.acceptance
             );
-            assert!(b.acceptance[0] > 0.05, "seed {seed}: excursion acceptance {:?}", b.acceptance);
+            assert!(
+                b.acceptance[0] > 0.05,
+                "seed {seed}: excursion acceptance {:?}",
+                b.acceptance
+            );
         }
     }
 
@@ -1011,16 +1128,30 @@ mod tests {
             persistent: true,
         };
         let run = |beta_min: f64, negative: Negative| {
-            train_tempered(&structure, &data, &base, &Ladder::geometric(beta_min, 12, negative), 0)
-                .unwrap()
+            train_tempered(
+                &structure,
+                &data,
+                &base,
+                &Ladder::geometric(beta_min, 12, negative),
+                0,
+            )
+            .unwrap()
         };
         for negative in [Negative::ParallelTempering, Negative::TemperedTransitions] {
             let deep = run(0.05, negative);
             let shallow = run(0.95, negative);
-            let (fd, fs) =
-                (frac(deep.fit.log_likelihood.unwrap()), frac(shallow.fit.log_likelihood.unwrap()));
-            assert!(fd > 0.9, "{negative:?}: a ladder reaching beta 0.05 got {fd}");
-            assert!(fs < 0.6, "{negative:?}: a ladder stopping at beta 0.95 got {fs}");
+            let (fd, fs) = (
+                frac(deep.fit.log_likelihood.unwrap()),
+                frac(shallow.fit.log_likelihood.unwrap()),
+            );
+            assert!(
+                fd > 0.9,
+                "{negative:?}: a ladder reaching beta 0.05 got {fd}"
+            );
+            assert!(
+                fs < 0.6,
+                "{negative:?}: a ladder stopping at beta 0.95 got {fs}"
+            );
             assert!(
                 shallow.acceptance.iter().all(|&r| r > 0.9),
                 "{negative:?}: the failed ladder still accepted {:?}",
@@ -1035,7 +1166,12 @@ mod tests {
         let n = 6;
         let data = bimodal(n);
         let structure = two_modes(n, 0.0, 0.0);
-        let p = Params { epochs: 20, k: 1, batch: 4, ..Params::default() };
+        let p = Params {
+            epochs: 20,
+            k: 1,
+            batch: 4,
+            ..Params::default()
+        };
         for negative in [Negative::ParallelTempering, Negative::TemperedTransitions] {
             let ladder = Ladder::geometric(0.1, 5, negative);
             let a = train_tempered(&structure, &data, &p, &ladder, 3).unwrap();

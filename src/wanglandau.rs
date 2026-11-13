@@ -148,7 +148,11 @@ impl Dos {
 
     /// `ln g(E) - beta E` per level, the log-weights every moment below is taken against.
     fn weights(&self, beta: f64) -> Vec<f64> {
-        self.log_g.iter().zip(&self.energy).map(|(lg, e)| lg - beta * e).collect()
+        self.log_g
+            .iter()
+            .zip(&self.energy)
+            .map(|(lg, e)| lg - beta * e)
+            .collect()
     }
 
     /// Normalised probability of each level at `beta`.
@@ -161,7 +165,11 @@ impl Dos {
     /// Mean energy at `beta`.
     #[must_use]
     pub fn mean_energy(&self, beta: f64) -> f64 {
-        self.probabilities(beta).iter().zip(&self.energy).map(|(p, e)| p * e).sum()
+        self.probabilities(beta)
+            .iter()
+            .zip(&self.energy)
+            .map(|(p, e)| p * e)
+            .sum()
     }
 
     /// Heat capacity per spin at `beta`: `beta^2 (<E^2> - <E>^2) / n`.
@@ -263,7 +271,10 @@ impl<'g> Wl<'g> {
             return Ok(i);
         }
         if self.energy.len() >= MAX_LEVELS {
-            return Err(TooManyLevels { found: self.energy.len(), cap: MAX_LEVELS });
+            return Err(TooManyLevels {
+                found: self.energy.len(),
+                cap: MAX_LEVELS,
+            });
         }
         let floor = self.log_g.iter().copied().fold(f64::INFINITY, f64::min);
         let i = self.energy.len();
@@ -427,7 +438,11 @@ impl<'g> Wl<'g> {
         for x in &mut log_g {
             *x += target - total;
         }
-        Dos { energy, log_g, steps }
+        Dos {
+            energy,
+            log_g,
+            steps,
+        }
     }
 }
 
@@ -440,7 +455,9 @@ mod tests {
     fn exact_dos(g: &Graph) -> BTreeMap<i64, (f64, u64)> {
         let mut out: BTreeMap<i64, (f64, u64)> = BTreeMap::new();
         for m in 0u64..(1u64 << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             let e = g.energy(&s);
             #[allow(clippy::cast_possible_truncation)]
             let k = (e / 1e-9).round() as i64;
@@ -465,7 +482,9 @@ mod tests {
         ] {
             let want = exact_dos(&g);
             let mut wl = Wl::new(&g, 4);
-            let dos = wl.run(1e-4, 40_000_000).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let dos = wl
+                .run(1e-4, 40_000_000)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(
                 dos.energy.len(),
                 want.len(),
@@ -496,7 +515,9 @@ mod tests {
         ] {
             let want = exact_dos(&g);
             let mut wl = Wl::new(&g, 7);
-            let dos = wl.run(1e-5, 80_000_000).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let dos = wl
+                .run(1e-5, 80_000_000)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
 
             let total = log_sum_exp(&dos.log_g);
             assert!(
@@ -553,8 +574,9 @@ mod tests {
         for beta in [0.1, 0.4, 1.0] {
             let (mut z, mut m1, mut m2) = (0.0f64, 0.0f64, 0.0f64);
             for m in 0u64..(1u64 << g.n) {
-                let s: Vec<i8> =
-                    (0..g.n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 let e = g.energy(&s);
                 let w = (-beta * e).exp();
                 z += w;
@@ -600,7 +622,10 @@ mod tests {
             wl.step(1.0).unwrap();
         }
         let visits: u64 = wl.hist.iter().sum();
-        assert_eq!(visits, 2_000, "every proposal must be recorded, not every acceptance");
+        assert_eq!(
+            visits, 2_000,
+            "every proposal must be recorded, not every acceptance"
+        );
         let moved = before.iter().zip(&wl.s).filter(|(a, b)| a != b).count();
         assert!(
             moved < g.n,
@@ -656,7 +681,10 @@ mod tests {
             wl.energy.push(0.0);
             wl.log_g.push(0.0);
         }
-        assert!(wl.flat(), "four equal counts are as flat as a histogram gets");
+        assert!(
+            wl.flat(),
+            "four equal counts are as flat as a histogram gets"
+        );
 
         wl.hist[2] = 90; // mean 97.5, ratio 0.923 -- above the 0.8 bar
         assert!(wl.flat(), "a level at 0.92 of the mean is within the bar");

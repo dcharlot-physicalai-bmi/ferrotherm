@@ -45,7 +45,10 @@ impl core::fmt::Display for FactorError {
                  lowers its order"
             ),
             FactorError::OutOfRange { var, n } => {
-                write!(f, "variable {var} is out of range for a model of {n} variables")
+                write!(
+                    f,
+                    "variable {var} is out of range for a model of {n} variables"
+                )
             }
             FactorError::NonFinite => write!(f, "a factor's weight must be finite"),
         }
@@ -89,11 +92,17 @@ impl Factor {
                 j += 1;
             }
             if j - i > 1 {
-                return Err(FactorError::RepeatedVariable { var: sorted[i], times: j - i });
+                return Err(FactorError::RepeatedVariable {
+                    var: sorted[i],
+                    times: j - i,
+                });
             }
             i = j;
         }
-        Ok(Factor { vars: vars.iter().map(|&v| v as u32).collect(), weight })
+        Ok(Factor {
+            vars: vars.iter().map(|&v| v as u32).collect(),
+            weight,
+        })
     }
 
     /// The variables this factor touches, in order.
@@ -153,7 +162,9 @@ mod tests {
         // would have behaved as the order-1 factor [1], not the order-3 factor written.
         let honest = Factor::new(&[1], 1.0, 4).unwrap();
         for mask in 0..16usize {
-            let s: Vec<i8> = (0..4).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..4)
+                .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                .collect();
             // s0 * s1 * s0 == s1
             let would_have_been = -(s[0] as f64 * s[1] as f64 * s[0] as f64);
             assert_eq!(would_have_been, honest.energy(&s));
@@ -163,9 +174,15 @@ mod tests {
     #[test]
     fn other_malformed_factors_are_rejected() {
         assert_eq!(Factor::new(&[], 1.0, 4), Err(FactorError::Empty));
-        assert_eq!(Factor::new(&[9], 1.0, 4), Err(FactorError::OutOfRange { var: 9, n: 4 }));
+        assert_eq!(
+            Factor::new(&[9], 1.0, 4),
+            Err(FactorError::OutOfRange { var: 9, n: 4 })
+        );
         assert_eq!(Factor::new(&[0], f64::NAN, 4), Err(FactorError::NonFinite));
-        assert_eq!(Factor::new(&[0], f64::INFINITY, 4), Err(FactorError::NonFinite));
+        assert_eq!(
+            Factor::new(&[0], f64::INFINITY, 4),
+            Err(FactorError::NonFinite)
+        );
     }
 
     #[test]
@@ -184,7 +201,11 @@ mod tests {
         // of error that produces a plausible-looking wrong answer rather than a crash.
         let f = Factor::new(&[0, 1, 2], 1.0, 3).unwrap();
         assert_eq!(f.energy(&[1, 1, 1]), -1.0, "aligned should be LOW energy");
-        assert_eq!(f.energy(&[1, 1, -1]), 1.0, "product -1 should be HIGH energy");
+        assert_eq!(
+            f.energy(&[1, 1, -1]),
+            1.0,
+            "product -1 should be HIGH energy"
+        );
         let anti = Factor::new(&[0, 1, 2], -1.0, 3).unwrap();
         assert_eq!(anti.energy(&[1, 1, 1]), 1.0);
         assert_eq!(anti.energy(&[1, 1, -1]), -1.0);

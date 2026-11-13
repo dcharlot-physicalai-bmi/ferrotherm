@@ -32,8 +32,8 @@ use ferrotherm::invertible::{Multiplier, multiplier, read};
 /// verified. The pin is `2 x` the total coefficient magnitude, so no assignment can profit by
 /// breaking it.
 fn clamp(g: &Graph, product: &[usize], value: u64) -> Graph {
-    let scale: f64 = g.w.iter().map(|w| w.abs()).sum::<f64>()
-        + g.h.iter().map(|h| h.abs()).sum::<f64>();
+    let scale: f64 =
+        g.w.iter().map(|w| w.abs()).sum::<f64>() + g.h.iter().map(|h| h.abs()).sum::<f64>();
     let pin = 2.0 * scale + 1.0;
     let mut b = GraphBuilder::new(g.n);
     for i in 0..g.n {
@@ -56,7 +56,11 @@ fn clamp(g: &Graph, product: &[usize], value: u64) -> Graph {
 /// Did this state factor `target`? Checked by multiplying back, never by energy.
 fn factored(m: &Multiplier, s: &[i8], target: u64) -> Option<(u64, u64)> {
     let (x, y) = (read(&m.a, s), read(&m.b, s));
-    if x > 1 && y > 1 && x * y == target { Some((x, y)) } else { None }
+    if x > 1 && y > 1 && x * y == target {
+        Some((x, y))
+    } else {
+        None
+    }
 }
 
 fn main() {

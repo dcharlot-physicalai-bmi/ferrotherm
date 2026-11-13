@@ -7,7 +7,7 @@
 .{
     .name = .ferrotherm,
     .version = "0.44.0",
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.1",
     .fingerprint = 0xd771a4733b9b84a1,
     .dependencies = .{},
     .paths = .{

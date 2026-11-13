@@ -62,10 +62,21 @@ fn main() {
     for bottom_half in [false, true] {
         for row in 0..3u8 {
             for column in 0..96u16 {
-                let far = Far { block_type: 0, bottom_half, row, column, minor: 0 }.encode();
-                let Ok(first) = tap.capture_frames(far, FRAMES) else { continue };
+                let far = Far {
+                    block_type: 0,
+                    bottom_half,
+                    row,
+                    column,
+                    minor: 0,
+                }
+                .encode();
+                let Ok(first) = tap.capture_frames(far, FRAMES) else {
+                    continue;
+                };
                 std::thread::sleep(std::time::Duration::from_millis(30));
-                let Ok(second) = tap.capture_frames(far, FRAMES) else { continue };
+                let Ok(second) = tap.capture_frames(far, FRAMES) else {
+                    continue;
+                };
                 scanned += 1;
                 let moved = differing_bits(&first, &second);
                 if moved > 0 {
@@ -75,16 +86,24 @@ fn main() {
         }
     }
     live.sort_by_key(|&(_, moved)| core::cmp::Reverse(moved));
-    println!("  scanned {scanned} columns; {} show flip-flop state moving between captures", live.len());
+    println!(
+        "  scanned {scanned} columns; {} show flip-flop state moving between captures",
+        live.len()
+    );
     if live.is_empty() {
-        println!("  nothing moved. Either this design holds no free-running state, or GCAPTURE did not");
+        println!(
+            "  nothing moved. Either this design holds no free-running state, or GCAPTURE did not"
+        );
         println!("  latch. This run cannot tell those apart, and does not claim to.");
         return;
     }
 
     println!();
     println!("  pass 2: the three-way check on the liveliest columns");
-    println!("  {:>10}  {:>13}  {:>15}  {:>21}", "FAR", "plain vs plain", "capture vs capture", "plain-after vs capture");
+    println!(
+        "  {:>10}  {:>13}  {:>15}  {:>21}",
+        "FAR", "plain vs plain", "capture vs capture", "plain-after vs capture"
+    );
     let (mut ok, mut tried) = (0usize, 0usize);
     for &(far, _) in live.iter().take(8) {
         let p1 = tap.read_frames(far, FRAMES).expect("plain 1");
@@ -93,16 +112,25 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_millis(30));
         let c2 = tap.capture_frames(far, FRAMES).expect("capture 2");
         let after = tap.read_frames(far, FRAMES).expect("plain after");
-        let (pp, cc, ac) = (differing_bits(&p1, &p2), differing_bits(&c1, &c2), differing_bits(&after, &c2));
+        let (pp, cc, ac) = (
+            differing_bits(&p1, &p2),
+            differing_bits(&c1, &c2),
+            differing_bits(&after, &c2),
+        );
         tried += 1;
         let pass = pp == 0 && cc > 0 && ac == 0;
         if pass {
             ok += 1;
         }
-        println!("  0x{far:08X}  {pp:>13}  {cc:>15}  {ac:>21}   {}", if pass { "PASS" } else { "" });
+        println!(
+            "  0x{far:08X}  {pp:>13}  {cc:>15}  {ac:>21}   {}",
+            if pass { "PASS" } else { "" }
+        );
     }
     println!();
-    println!("  {ok} of {tried} columns pass all three: static memory reads back identically, captured");
+    println!(
+        "  {ok} of {tried} columns pass all three: static memory reads back identically, captured"
+    );
     println!("  state moves, and what a capture latched is what a plain readback then finds.");
     if ok > 0 {
         println!("  GCAPTURE latches live flip-flop state into configuration memory on this part.");

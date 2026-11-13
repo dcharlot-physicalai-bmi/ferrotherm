@@ -8,7 +8,7 @@
 //
 // usage: cargo run -p ferrotherm-silicon --features flash --release --example config_trace -- design.bit
 use ferrotherm_silicon::bitstream::{parse_bit, reg};
-use ferrotherm_silicon::flash::{Ftdi, Tap, IR_CFG_IN, IR_JPROGRAM, IR_JSTART, IR_BYPASS};
+use ferrotherm_silicon::flash::{Ftdi, IR_BYPASS, IR_CFG_IN, IR_JPROGRAM, IR_JSTART, Tap};
 
 /// The value observed while the board's stored design was running — the target state.
 const RUNNING: u32 = 0x5010_79FC;
@@ -17,16 +17,23 @@ fn stat(tap: &mut Tap, label: &str) -> u32 {
     match tap.read_config_reg(reg::STAT) {
         Ok(s) => {
             let d = s ^ RUNNING;
-            println!("  {label:<22} STAT=0x{s:08X}   differs from running in bits {:?}",
-                     (0..32).filter(|b| d >> b & 1 == 1).collect::<Vec<_>>());
+            println!(
+                "  {label:<22} STAT=0x{s:08X}   differs from running in bits {:?}",
+                (0..32).filter(|b| d >> b & 1 == 1).collect::<Vec<_>>()
+            );
             s
         }
-        Err(e) => { println!("  {label:<22} read failed: {e}"); 0 }
+        Err(e) => {
+            println!("  {label:<22} read failed: {e}");
+            0
+        }
     }
 }
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: config_trace <file.bit>");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: config_trace <file.bit>");
     let raw = std::fs::read(&path).expect("read");
     let bit = parse_bit(&raw);
     let (ftdi, product) = Ftdi::open("Alchitry").expect("no board");
@@ -44,7 +51,11 @@ fn main() {
     }
 
     println!("\nCFG_IN (stream the payload):");
-    let payload: Vec<u8> = bit.config.iter().map(|b| ferrotherm_silicon::flash::reverse_byte(*b)).collect();
+    let payload: Vec<u8> = bit
+        .config
+        .iter()
+        .map(|b| ferrotherm_silicon::flash::reverse_byte(*b))
+        .collect();
     tap.shift_ir(IR_CFG_IN).unwrap();
     match tap.shift_dr(&payload, false) {
         Ok(_) => println!("  payload shifted ({} bytes)", payload.len()),

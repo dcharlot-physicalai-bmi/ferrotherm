@@ -219,7 +219,11 @@ impl RegionGraph {
                 return Err(RegionError::OutOfRange { index, var, n });
             }
             if v.len() > MAX_REGION {
-                return Err(RegionError::TooLarge { index, vars: v.len(), max: MAX_REGION });
+                return Err(RegionError::TooLarge {
+                    index,
+                    vars: v.len(),
+                    max: MAX_REGION,
+                });
             }
             norm.push(v);
         }
@@ -286,14 +290,23 @@ impl RegionGraph {
         for p in 0..k {
             for &c in &descendants[p] {
                 let covered = descendants[p].iter().any(|&m| {
-                    m != c && contains(&regions[m], &regions[c]) && regions[m].len() > regions[c].len()
+                    m != c
+                        && contains(&regions[m], &regions[c])
+                        && regions[m].len() > regions[c].len()
                 });
                 if !covered {
                     edges.push((p, c));
                 }
             }
         }
-        Ok(RegionGraph { n, regions, counting, edges, ancestors, descendants })
+        Ok(RegionGraph {
+            n,
+            regions,
+            counting,
+            edges,
+            ancestors,
+            descendants,
+        })
     }
 
     /// The Bethe region graph: every coupling is an outer region, plus a singleton for any node the
@@ -401,7 +414,12 @@ pub fn grid_plaquettes(w: usize, h: usize) -> Vec<Vec<usize>> {
     let mut out = Vec::new();
     for y in 0..h.saturating_sub(1) {
         for x in 0..w.saturating_sub(1) {
-            out.push(vec![y * w + x, y * w + x + 1, (y + 1) * w + x, (y + 1) * w + x + 1]);
+            out.push(vec![
+                y * w + x,
+                y * w + x + 1,
+                (y + 1) * w + x,
+                (y + 1) * w + x + 1,
+            ]);
         }
     }
     out
@@ -499,7 +517,9 @@ fn split_log_factor(g: &Graph, beta: f64, pv: &[usize], cv: &[usize]) -> Vec<f64
 }
 
 fn coupling(g: &Graph, i: usize, j: usize) -> Option<f64> {
-    (g.offset[i]..g.offset[i + 1]).find(|&e| g.nbr[e] as usize == j).map(|e| g.w[e])
+    (g.offset[i]..g.offset[i + 1])
+        .find(|&e| g.nbr[e] as usize == j)
+        .map(|e| g.w[e])
 }
 
 fn contains(big: &[usize], small: &[usize]) -> bool {
@@ -507,14 +527,22 @@ fn contains(big: &[usize], small: &[usize]) -> bool {
 }
 
 fn intersect(a: &[usize], b: &[usize]) -> Vec<usize> {
-    a.iter().copied().filter(|x| b.binary_search(x).is_ok()).collect()
+    a.iter()
+        .copied()
+        .filter(|x| b.binary_search(x).is_ok())
+        .collect()
 }
 
 /// Bit positions, within `outer`'s variable list, of each of `inner`'s variables.
 fn positions(outer: &[usize], inner: &[usize]) -> Vec<usize> {
     inner
         .iter()
-        .map(|x| outer.iter().position(|y| y == x).expect("inner is a subset of outer"))
+        .map(|x| {
+            outer
+                .iter()
+                .position(|y| y == x)
+                .expect("inner is a subset of outer")
+        })
         .collect()
 }
 
@@ -568,13 +596,19 @@ pub fn generalized_belief_propagation(
     iters: usize,
     damping: f64,
 ) -> Gbp {
-    assert_eq!(rg.n, g.n, "the region graph was built over a different model");
+    assert_eq!(
+        rg.n, g.n,
+        "the region graph was built over a different model"
+    );
     assert!((0.0..1.0).contains(&damping), "damping must be in [0, 1)");
     assert!(beta.is_finite(), "beta must be finite; got {beta}");
 
     let k = rg.len();
-    let local: Vec<Vec<f64>> =
-        rg.regions.iter().map(|vars| region_log_factor(g, beta, vars)).collect();
+    let local: Vec<Vec<f64>> = rg
+        .regions
+        .iter()
+        .map(|vars| region_log_factor(g, beta, vars))
+        .collect();
 
     // inside[r] marks R and its descendants: the subtree E(R) is defined against.
     let mut inside: Vec<Vec<bool>> = vec![vec![false; k]; k];
@@ -646,8 +680,16 @@ pub fn generalized_belief_propagation(
                 }
                 let u = project(t, &plan.child_pos);
                 // log-add in place, max-shifted so a large beta cannot overflow the exponential.
-                let (lo, hi) = if acc[u] < val { (acc[u], val) } else { (val, acc[u]) };
-                acc[u] = if lo.is_finite() { hi + (lo - hi).exp().ln_1p() } else { hi };
+                let (lo, hi) = if acc[u] < val {
+                    (acc[u], val)
+                } else {
+                    (val, acc[u])
+                };
+                acc[u] = if lo.is_finite() {
+                    hi + (lo - hi).exp().ln_1p()
+                } else {
+                    hi
+                };
             }
             for u in 0..acc.len() {
                 for (mi, pos) in &plan.denom {
@@ -660,7 +702,11 @@ pub fn generalized_belief_propagation(
                 .enumerate()
                 .map(|(u, &a)| {
                     let fresh = a - lse;
-                    if damping > 0.0 { damping * log_m[e][u] + (1.0 - damping) * fresh } else { fresh }
+                    if damping > 0.0 {
+                        damping * log_m[e][u] + (1.0 - damping) * fresh
+                    } else {
+                        fresh
+                    }
                 })
                 .collect();
             let renorm = log_sum_exp(&next);
@@ -747,12 +793,19 @@ pub fn generalized_belief_propagation(
 /// If `rg` was not built over `g`, or `beliefs` is not one table of `2^|R|` entries per region.
 #[must_use]
 pub fn kikuchi_free_energy(g: &Graph, rg: &RegionGraph, beta: f64, beliefs: &[Vec<f64>]) -> f64 {
-    assert_eq!(rg.n, g.n, "the region graph was built over a different model");
+    assert_eq!(
+        rg.n, g.n,
+        "the region graph was built over a different model"
+    );
     assert_eq!(beliefs.len(), rg.len(), "one belief table per region");
     let mut f = 0.0;
     for r in 0..rg.len() {
         let vars = &rg.regions[r];
-        assert_eq!(beliefs[r].len(), 1usize << vars.len(), "region {r} belief is the wrong size");
+        assert_eq!(
+            beliefs[r].len(),
+            1usize << vars.len(),
+            "region {r} belief is the wrong size"
+        );
         let local = region_log_factor(g, beta, vars);
         let mut energy = 0.0;
         let mut neg_entropy = 0.0;
@@ -831,7 +884,10 @@ mod tests {
             }
             let bp = belief_propagation(&g, beta, 4000, 0.4);
             let gbp = generalized_belief_propagation(&g, &rg, beta, 4000, 0.4);
-            assert!(bp.converged(1e-12) && gbp.converged(1e-12), "{name}: not converged");
+            assert!(
+                bp.converged(1e-12) && gbp.converged(1e-12),
+                "{name}: not converged"
+            );
             assert!(
                 (gbp.log_z - bp.log_z).abs() < 1e-9,
                 "{name}: Kikuchi {} vs Bethe {}",
@@ -906,17 +962,39 @@ mod tests {
             let g = ising::grid2d(side, side, 0.8);
             let truth = exact_log_z(&g, beta);
             let rg = RegionGraph::new(g.n, &grid_plaquettes(side, side)).unwrap();
-            assert_eq!(rg.len(), regions, "{side}x{side}: faces + shared bonds + shared corners");
+            assert_eq!(
+                rg.len(),
+                regions,
+                "{side}x{side}: faces + shared bonds + shared corners"
+            );
             assert!(rg.counts_each_variable_once() && rg.counts_each_coupling_once(&g));
             let gbp = generalized_belief_propagation(&g, &rg, beta, 20_000, 0.5);
-            assert!(gbp.converged(1e-12), "{side} b{beta}: residual {}", gbp.residual);
-            assert!(gbp.consistency < 1e-10, "{side} b{beta}: polytope {}", gbp.consistency);
+            assert!(
+                gbp.converged(1e-12),
+                "{side} b{beta}: residual {}",
+                gbp.residual
+            );
+            assert!(
+                gbp.consistency < 1e-10,
+                "{side} b{beta}: polytope {}",
+                gbp.consistency
+            );
             let bethe = belief_propagation(&g, beta, 20_000, 0.5);
-            assert!(bethe.converged(1e-12), "{side} b{beta}: BP residual {}", bethe.residual);
+            assert!(
+                bethe.converged(1e-12),
+                "{side} b{beta}: BP residual {}",
+                bethe.residual
+            );
             let (ke, be) = ((gbp.log_z - truth).abs(), (bethe.log_z - truth).abs());
-            assert!(ke > 1e-9, "{side} b{beta}: Kikuchi must be an approximation here, not an \
-                                enumeration, or this test compares nothing: error {ke}");
-            assert!(ke < be / 100.0, "{side} b{beta}: Kikuchi error {ke} vs Bethe {be}");
+            assert!(
+                ke > 1e-9,
+                "{side} b{beta}: Kikuchi must be an approximation here, not an \
+                                enumeration, or this test compares nothing: error {ke}"
+            );
+            assert!(
+                ke < be / 100.0,
+                "{side} b{beta}: Kikuchi error {ke} vs Bethe {be}"
+            );
         }
     }
 
@@ -936,7 +1014,9 @@ mod tests {
             for (a, &i) in vars.iter().enumerate() {
                 gb.bias(a, g.h[i]);
                 for (b, &j) in vars.iter().enumerate() {
-                    if b > a && let Some(w) = coupling(&g, i, j) {
+                    if b > a
+                        && let Some(w) = coupling(&g, i, j)
+                    {
                         gb.couple(a, b, w);
                     }
                 }
@@ -944,10 +1024,15 @@ mod tests {
             let sub = gb.build();
             let got = region_log_factor(&g, beta, &vars);
             for t in 0..(1usize << vars.len()) {
-                let s: Vec<i8> =
-                    (0..vars.len()).map(|b| if (t >> b) & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..vars.len())
+                    .map(|b| if (t >> b) & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 let want = -beta * sub.energy(&s);
-                assert!((got[t] - want).abs() < 1e-12, "vars {vars:?} cfg {t}: {} vs {want}", got[t]);
+                assert!(
+                    (got[t] - want).abs() < 1e-12,
+                    "vars {vars:?} cfg {t}: {} vs {want}",
+                    got[t]
+                );
             }
             // And the parent/child split reconstructs the parent exactly.
             if vars.len() == 4 {
@@ -975,8 +1060,16 @@ mod tests {
             ("bethe tree", random_tree(14, 5), Vec::new()),
             ("bethe 4x4 torus", ising::lattice2d(4, 1.0), Vec::new()),
             ("bethe ring", ising::ring(9, 1.0, 0.3), Vec::new()),
-            ("plaquettes 4x4", ising::grid2d(4, 4, 1.0), grid_plaquettes(4, 4)),
-            ("plaquettes 3x5", ising::grid2d(3, 5, 1.0), grid_plaquettes(3, 5)),
+            (
+                "plaquettes 4x4",
+                ising::grid2d(4, 4, 1.0),
+                grid_plaquettes(4, 4),
+            ),
+            (
+                "plaquettes 3x5",
+                ising::grid2d(3, 5, 1.0),
+                grid_plaquettes(3, 5),
+            ),
         ];
         for (name, g, outer) in cases {
             let rg = if outer.is_empty() {
@@ -1031,7 +1124,13 @@ mod tests {
             4,
             "each neighbouring pair of faces shares a bond"
         );
-        assert_eq!(rg.regions.iter().filter(|r| r.len() == 1).collect::<Vec<_>>(), vec![&vec![4]]);
+        assert_eq!(
+            rg.regions
+                .iter()
+                .filter(|r| r.len() == 1)
+                .collect::<Vec<_>>(),
+            vec![&vec![4]]
+        );
         for (r, c) in rg.regions.iter().zip(&rg.counting) {
             let want = match r.len() {
                 4 | 1 => 1,
@@ -1055,8 +1154,15 @@ mod tests {
             let rg = RegionGraph::new(n, &[(0..n).collect()]).unwrap();
             let gbp = generalized_belief_propagation(&g, &rg, beta, 10, 0.0);
             let truth = exact_log_z(&g, beta);
-            assert!((gbp.log_z - truth).abs() < 1e-13, "n {n}: {} vs {truth}", gbp.log_z);
-            assert_eq!(gbp.consistency, 0.0, "no edges, so nothing to be inconsistent about");
+            assert!(
+                (gbp.log_z - truth).abs() < 1e-13,
+                "n {n}: {} vs {truth}",
+                gbp.log_z
+            );
+            assert_eq!(
+                gbp.consistency, 0.0,
+                "no edges, so nothing to be inconsistent about"
+            );
         }
     }
 
@@ -1072,8 +1178,11 @@ mod tests {
         let gbp = generalized_belief_propagation(&g, &rg, beta, 5000, 0.4);
         let at_fixed = kikuchi_free_energy(&g, &rg, beta, &gbp.beliefs);
         assert!((at_fixed - gbp.free_energy).abs() < 1e-14);
-        let uniform: Vec<Vec<f64>> =
-            rg.regions.iter().map(|r| vec![1.0 / (1usize << r.len()) as f64; 1 << r.len()]).collect();
+        let uniform: Vec<Vec<f64>> = rg
+            .regions
+            .iter()
+            .map(|r| vec![1.0 / (1usize << r.len()) as f64; 1 << r.len()])
+            .collect();
         let at_uniform = kikuchi_free_energy(&g, &rg, beta, &uniform);
         assert!(
             (at_uniform - at_fixed).abs() > 1e-3,
@@ -1081,24 +1190,39 @@ mod tests {
         );
         // At beta = 0 the uniform beliefs ARE the fixed point and -F is exactly n ln 2.
         let zero = kikuchi_free_energy(&g, &rg, 0.0, &uniform);
-        assert!((-zero - 4.0 * std::f64::consts::LN_2).abs() < 1e-14, "beta 0: {}", -zero);
+        assert!(
+            (-zero - 4.0 * std::f64::consts::LN_2).abs() < 1e-14,
+            "beta 0: {}",
+            -zero
+        );
     }
 
     /// Every way of handing in a set of regions that is not one.
     #[test]
     fn the_constructor_refuses_what_it_cannot_count() {
-        assert_eq!(RegionGraph::new(3, &[]).unwrap_err(), RegionError::NoOuterRegions { n: 3 });
+        assert_eq!(
+            RegionGraph::new(3, &[]).unwrap_err(),
+            RegionError::NoOuterRegions { n: 3 }
+        );
         assert_eq!(
             RegionGraph::new(3, &[vec![0, 1], vec![]]).unwrap_err(),
             RegionError::EmptyRegion { index: 1 }
         );
         assert_eq!(
             RegionGraph::new(3, &[vec![0, 1], vec![1, 7]]).unwrap_err(),
-            RegionError::OutOfRange { index: 1, var: 7, n: 3 }
+            RegionError::OutOfRange {
+                index: 1,
+                var: 7,
+                n: 3
+            }
         );
         assert_eq!(
             RegionGraph::new(40, &[(0..40).collect()]).unwrap_err(),
-            RegionError::TooLarge { index: 0, vars: 40, max: MAX_REGION }
+            RegionError::TooLarge {
+                index: 0,
+                vars: 40,
+                max: MAX_REGION
+            }
         );
         assert_eq!(
             RegionGraph::new(4, &[vec![0, 1], vec![1, 2]]).unwrap_err(),
@@ -1122,8 +1246,16 @@ mod tests {
         for e in [
             RegionError::NoOuterRegions { n: 3 },
             RegionError::EmptyRegion { index: 1 },
-            RegionError::OutOfRange { index: 1, var: 7, n: 3 },
-            RegionError::TooLarge { index: 0, vars: 40, max: MAX_REGION },
+            RegionError::OutOfRange {
+                index: 1,
+                var: 7,
+                n: 3,
+            },
+            RegionError::TooLarge {
+                index: 0,
+                vars: 40,
+                max: MAX_REGION,
+            },
             RegionError::Uncovered { var: 3 },
         ] {
             assert!(e.to_string().len() > 20, "{e:?}");
@@ -1143,8 +1275,15 @@ mod tests {
         let beta = 0.8;
         let gbp = generalized_belief_propagation(&g, &rg, beta, 2000, 0.0);
         // A tree plus a free spin: Bethe is exact, so this is exact.
-        assert!((gbp.log_z - exact_log_z(&g, beta)).abs() < 1e-12, "{}", gbp.log_z);
-        assert!((gbp.m[3] - (beta * 0.9).tanh()).abs() < 1e-12, "the free spin: {}", gbp.m[3]);
+        assert!(
+            (gbp.log_z - exact_log_z(&g, beta)).abs() < 1e-12,
+            "{}",
+            gbp.log_z
+        );
+        assert!(
+            (gbp.m[3] - (beta * 0.9).tanh()).abs() < 1e-12,
+            "the free spin: {}",
+            gbp.m[3]
+        );
     }
 }
-

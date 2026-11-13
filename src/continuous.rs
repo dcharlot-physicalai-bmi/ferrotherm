@@ -131,7 +131,15 @@ impl Gbm {
     pub fn gaussian(n: usize, a: Vec<f64>, b: Vec<f64>) -> Gbm {
         assert_eq!(a.len(), n * n);
         assert_eq!(b.len(), n);
-        Gbm { n_real: n, n_spin: 0, a, b, c: Vec::new(), h: Vec::new(), j: Vec::new() }
+        Gbm {
+            n_real: n,
+            n_spin: 0,
+            a,
+            b,
+            c: Vec::new(),
+            h: Vec::new(),
+            j: Vec::new(),
+        }
     }
 
     /// `E(x, s)`.
@@ -192,7 +200,13 @@ impl Gbm {
 
     /// Draw after `burn_in` sweeps, recording `draws` states.
     #[must_use]
-    pub fn collect(&self, beta: f64, burn_in: usize, draws: usize, seed: u64) -> (Vec<Vec<f64>>, Vec<Vec<i8>>) {
+    pub fn collect(
+        &self,
+        beta: f64,
+        burn_in: usize,
+        draws: usize,
+        seed: u64,
+    ) -> (Vec<Vec<f64>>, Vec<Vec<i8>>) {
         let mut rng = Pcg::new(seed, 31);
         let mut x = vec![0.0; self.n_real];
         let mut s = vec![1i8; self.n_spin];
@@ -224,7 +238,8 @@ impl Gbm {
         let inv = inverse(&self.a, n)?;
         let cov: Vec<f64> = inv.iter().map(|v| v / beta).collect();
         let quad: f64 = (0..n).map(|i| self.b[i] * mean[i]).sum();
-        let ln_z = 0.5 * beta * quad + 0.5 * n as f64 * (core::f64::consts::TAU / beta).ln() - 0.5 * log_det(&self.a, n)?;
+        let ln_z = 0.5 * beta * quad + 0.5 * n as f64 * (core::f64::consts::TAU / beta).ln()
+            - 0.5 * log_det(&self.a, n)?;
         Some((mean, cov, ln_z))
     }
 
@@ -324,11 +339,18 @@ mod tests {
             let mut copy = a.clone();
             let _vectors = crate::linalg::jacobi_eig(&mut copy, n);
             let want: f64 = (0..n).map(|i| copy[i * n + i].ln()).sum();
-            assert!((log_det(&a, n).unwrap() - want).abs() < 1e-8, "n={n}: {} vs {want}", log_det(&a, n).unwrap());
+            assert!(
+                (log_det(&a, n).unwrap() - want).abs() < 1e-8,
+                "n={n}: {} vs {want}",
+                log_det(&a, n).unwrap()
+            );
             // a matrix that is not positive definite is refused, not factored
             let mut bad = a.clone();
             bad[0] = -1.0;
-            assert!(cholesky(&bad, n).is_none(), "n={n}: a negative pivot must be refused");
+            assert!(
+                cholesky(&bad, n).is_none(),
+                "n={n}: a negative pivot must be refused"
+            );
         }
         assert!(cholesky(&[-1.0], 1).is_none());
     }
@@ -344,17 +366,32 @@ mod tests {
         let (mean, cov, _) = g.exact_gaussian(beta).unwrap();
         let (xs, _) = g.collect(beta, 2000, 60_000, 3);
         let k = xs.len() as f64;
-        let m: Vec<f64> = (0..n).map(|i| xs.iter().map(|x| x[i]).sum::<f64>() / k).collect();
+        let m: Vec<f64> = (0..n)
+            .map(|i| xs.iter().map(|x| x[i]).sum::<f64>() / k)
+            .collect();
         for i in 0..n {
             // the chain's own standard error on the mean is sqrt(cov_ii / k), inflated for
             // autocorrelation; five of those is a wide but honest window
             let se = (cov[i * n + i] / k).sqrt();
-            assert!((m[i] - mean[i]).abs() < 8.0 * se + 0.01, "mean {i}: {} vs {}", m[i], mean[i]);
+            assert!(
+                (m[i] - mean[i]).abs() < 8.0 * se + 0.01,
+                "mean {i}: {} vs {}",
+                m[i],
+                mean[i]
+            );
         }
         for i in 0..n {
             for j in 0..n {
-                let c: f64 = xs.iter().map(|x| (x[i] - m[i]) * (x[j] - m[j])).sum::<f64>() / k;
-                assert!((c - cov[i * n + j]).abs() < 0.06, "cov ({i},{j}): {c} vs {}", cov[i * n + j]);
+                let c: f64 = xs
+                    .iter()
+                    .map(|x| (x[i] - m[i]) * (x[j] - m[j]))
+                    .sum::<f64>()
+                    / k;
+                assert!(
+                    (c - cov[i * n + j]).abs() < 0.06,
+                    "cov ({i},{j}): {c} vs {}",
+                    cov[i * n + j]
+                );
             }
         }
     }
@@ -376,7 +413,11 @@ mod tests {
                 (-beta * (0.5 * a * x * x - b * x)).exp() * h
             })
             .sum();
-        assert!((ln_z - z.ln()).abs() < 1e-6, "closed form {ln_z} vs quadrature {}", z.ln());
+        assert!(
+            (ln_z - z.ln()).abs() < 1e-6,
+            "closed form {ln_z} vs quadrature {}",
+            z.ln()
+        );
     }
 
     /// With spins the model still has an exact ln Z, and the sampler agrees with the marginals it
@@ -393,7 +434,15 @@ mod tests {
         j[m] = 0.3;
         j[m + 2] = -0.25;
         j[2 * m + 1] = -0.25;
-        let g = Gbm { n_real: n, n_spin: m, a, b, c, h, j };
+        let g = Gbm {
+            n_real: n,
+            n_spin: m,
+            a,
+            b,
+            c,
+            h,
+            j,
+        };
         let beta = 1.1;
         let ln_z = g.exact_log_z(beta).unwrap();
         assert!(ln_z.is_finite());
@@ -411,7 +460,11 @@ mod tests {
         let k = ss.len() as f64;
         for cc in 0..m {
             let got: f64 = ss.iter().map(|s| s[cc] as f64).sum::<f64>() / k;
-            assert!((got - exact_mag(cc)).abs() < 0.03, "spin {cc}: {got} vs {}", exact_mag(cc));
+            assert!(
+                (got - exact_mag(cc)).abs() < 0.03,
+                "spin {cc}: {got} vs {}",
+                exact_mag(cc)
+            );
         }
         // and the continuous means, likewise by differentiating in b_i
         for i in 0..n {
@@ -420,7 +473,8 @@ mod tests {
             up.b[i] += eps;
             let mut dn = g.clone();
             dn.b[i] -= eps;
-            let want = (up.exact_log_z(beta).unwrap() - dn.exact_log_z(beta).unwrap()) / (2.0 * eps * beta);
+            let want = (up.exact_log_z(beta).unwrap() - dn.exact_log_z(beta).unwrap())
+                / (2.0 * eps * beta);
             let got: f64 = xs.iter().map(|x| x[i]).sum::<f64>() / k;
             assert!((got - want).abs() < 0.03, "real {i}: {got} vs {want}");
         }
@@ -521,7 +575,10 @@ impl ContinuousEbm {
         assert_eq!(w.len(), n * n);
         for i in 0..n {
             for j in 0..n {
-                assert!((w[i * n + j] - w[j * n + i]).abs() < 1e-12, "W must be symmetric");
+                assert!(
+                    (w[i * n + j] - w[j * n + i]).abs() < 1e-12,
+                    "W must be symmetric"
+                );
             }
         }
         ContinuousEbm { potentials, w }
@@ -552,7 +609,14 @@ impl ContinuousEbm {
     ///
     /// An infinite energy (a proposal outside the support) is rejected, which is what keeps
     /// [`Potential::HopfieldTanh`]'s hard box honest.
-    pub fn sweep(&self, beta: f64, x: &mut [f64], step: &[f64], rng: &mut Pcg, accepts: &mut [u64]) {
+    pub fn sweep(
+        &self,
+        beta: f64,
+        x: &mut [f64],
+        step: &[f64],
+        rng: &mut Pcg,
+        accepts: &mut [u64],
+    ) {
         let n = self.n();
         for i in 0..n {
             let before = self.local_energy(x, i);
@@ -760,7 +824,11 @@ impl ContinuousEbm {
         }
         let (order, width) = crate::exact::min_fill_order(n, &adj);
         if width > max_width {
-            return Err(TooWide { width, allowed: max_width, grid });
+            return Err(TooWide {
+                width,
+                allowed: max_width,
+                grid,
+            });
         }
 
         let h = (hi - lo) / grid as f64;
@@ -783,9 +851,15 @@ impl ContinuousEbm {
 
         let mut factors: Vec<Factor> = Vec::new();
         for i in 0..n {
-            let table: Vec<f64> =
-                x.iter().map(|&u| (-beta * self.potentials[i].energy(u)).exp()).collect();
-            factors.push(Factor { scope: vec![i], table, log_scale: 0.0 });
+            let table: Vec<f64> = x
+                .iter()
+                .map(|&u| (-beta * self.potentials[i].energy(u)).exp())
+                .collect();
+            factors.push(Factor {
+                scope: vec![i],
+                table,
+                log_scale: 0.0,
+            });
         }
         for i in 0..n {
             for j in (i + 1)..n {
@@ -800,7 +874,11 @@ impl ContinuousEbm {
                         table[a * grid + b] = (beta * w * xa * xb).exp();
                     }
                 }
-                factors.push(Factor { scope: vec![i, j], table, log_scale: 0.0 });
+                factors.push(Factor {
+                    scope: vec![i, j],
+                    table,
+                    log_scale: 0.0,
+                });
             }
         }
 
@@ -861,7 +939,11 @@ impl ContinuousEbm {
             if scope.is_empty() {
                 log_total += log_scale + summed[0].max(f64::MIN_POSITIVE).ln();
             } else {
-                factors.push(Factor { scope, table: summed, log_scale });
+                factors.push(Factor {
+                    scope,
+                    table: summed,
+                    log_scale,
+                });
             }
         }
         // Anything left is a scalar: a disconnected piece whose variables all eliminated cleanly.
@@ -908,7 +990,9 @@ impl ContinuousEbm {
         }
         let h = (hi - lo) / grid as f64;
         let x: Vec<f64> = (0..grid).map(|k| lo + (k as f64 + 0.5) * h).collect();
-        let v: Vec<Vec<f64>> = (0..n).map(|i| x.iter().map(|&u| self.potentials[i].energy(u)).collect()).collect();
+        let v: Vec<Vec<f64>> = (0..n)
+            .map(|i| x.iter().map(|&u| self.potentials[i].energy(u)).collect())
+            .collect();
         // carry a log-scale running vector to keep the product from underflowing
         let mut log_scale = 0.0f64;
         // Each transfer matrix carries HALF of the potential at each of its two sites, so an
@@ -940,7 +1024,11 @@ impl ContinuousEbm {
             log_scale += mx.ln();
             vec = next;
         }
-        let total: f64 = vec.iter().enumerate().map(|(b, u)| u * (-beta * 0.5 * v[n - 1][b]).exp()).sum();
+        let total: f64 = vec
+            .iter()
+            .enumerate()
+            .map(|(b, u)| u * (-beta * 0.5 * v[n - 1][b]).exp())
+            .sum();
         Some(log_scale + total.ln() + n as f64 * h.ln())
     }
 }
@@ -960,12 +1048,19 @@ mod nonlinear_tests {
         let g = Gbm::gaussian(1, vec![a], vec![b]);
         let (mean, cov, ln_z) = g.exact_gaussian(beta).unwrap();
         let (q_ln_z, q_mean) = ebm.exact_by_quadrature(beta, -8.0, 8.0, 40_000);
-        assert!((q_ln_z - ln_z).abs() < 1e-6, "quadrature {q_ln_z} vs closed form {ln_z}");
+        assert!(
+            (q_ln_z - ln_z).abs() < 1e-6,
+            "quadrature {q_ln_z} vs closed form {ln_z}"
+        );
         assert!((q_mean[0] - mean[0]).abs() < 1e-9);
         let xs = ebm.run(beta, 20_000, 200_000, 3);
         let m: f64 = xs.iter().map(|x| x[0]).sum::<f64>() / xs.len() as f64;
         let se = (cov[0] / xs.len() as f64).sqrt();
-        assert!((m - mean[0]).abs() < 10.0 * se + 0.01, "sampled {m} vs exact {}", mean[0]);
+        assert!(
+            (m - mean[0]).abs() < 10.0 * se + 0.01,
+            "sampled {m} vs exact {}",
+            mean[0]
+        );
     }
 
     /// Continuous Hopfield: the sampler matches quadrature, and respects the hard box.
@@ -981,10 +1076,17 @@ mod nonlinear_tests {
         let (ln_z, mean) = ebm.exact_by_quadrature(beta, -1.0, 1.0, 1200);
         assert!(ln_z.is_finite());
         let xs = ebm.run(beta, 30_000, 200_000, 5);
-        assert!(xs.iter().all(|x| x.iter().all(|v| v.abs() < 1.0)), "a sample left the support");
+        assert!(
+            xs.iter().all(|x| x.iter().all(|v| v.abs() < 1.0)),
+            "a sample left the support"
+        );
         for d in 0..n {
             let m: f64 = xs.iter().map(|x| x[d]).sum::<f64>() / xs.len() as f64;
-            assert!((m - mean[d]).abs() < 0.02, "unit {d}: sampled {m} vs quadrature {}", mean[d]);
+            assert!(
+                (m - mean[d]).abs() < 0.02,
+                "unit {d}: sampled {m} vs quadrature {}",
+                mean[d]
+            );
         }
     }
 
@@ -1020,9 +1122,14 @@ mod nonlinear_tests {
             w[j * 3 + i] = 0.35;
         }
         let tri = ContinuousEbm::new(vec![Potential::Quadratic { a: 2.0, b: 0.3 }; 3], w);
-        assert!(tri.chain_log_z(1.0, -3.0, 3.0, 200).is_none(), "a triangle is not a chain");
+        assert!(
+            tri.chain_log_z(1.0, -3.0, 3.0, 200).is_none(),
+            "a triangle is not a chain"
+        );
         let (q, _) = tri.exact_by_quadrature(1.0, -3.0, 3.0, 220);
-        let e2 = tri.eliminate_log_z(1.0, -3.0, 3.0, 220, 4).expect("width 2");
+        let e2 = tri
+            .eliminate_log_z(1.0, -3.0, 3.0, 220, 4)
+            .expect("width 2");
         assert!((q - e2).abs() < 1e-9, "quadrature {q} vs elimination {e2}");
 
         // 3. the case that was out of reach: a TREE of twelve units. Not a chain, so the transfer
@@ -1035,10 +1142,20 @@ mod nonlinear_tests {
             w[parent * n + i] = 0.3;
         }
         let tree = ContinuousEbm::new(vec![Potential::Quadratic { a: 2.0, b: 0.0 }; n], w.clone());
-        assert!(tree.chain_log_z(1.0, -6.0, 6.0, 200).is_none(), "a binary tree is not a chain");
-        let t1 = tree.eliminate_log_z(1.0, -6.0, 6.0, 200, 4).expect("a tree eliminates at width 1");
-        let t2 = tree.eliminate_log_z(1.0, -6.0, 6.0, 600, 4).expect("a tree eliminates at width 1");
-        assert!((t1 - t2).abs() < 1e-6, "grid 200 gives {t1}, grid 600 gives {t2}");
+        assert!(
+            tree.chain_log_z(1.0, -6.0, 6.0, 200).is_none(),
+            "a binary tree is not a chain"
+        );
+        let t1 = tree
+            .eliminate_log_z(1.0, -6.0, 6.0, 200, 4)
+            .expect("a tree eliminates at width 1");
+        let t2 = tree
+            .eliminate_log_z(1.0, -6.0, 6.0, 600, 4)
+            .expect("a tree eliminates at width 1");
+        assert!(
+            (t1 - t2).abs() < 1e-6,
+            "grid 200 gives {t1}, grid 600 gives {t2}"
+        );
 
         // ... and it is RIGHT, not merely stable: for quadratic potentials the model is Gaussian
         // with A = diag(a) - W, and ln Z = (n/2) ln(2 pi / beta) - (1/2) ln det A in closed form.
@@ -1091,8 +1208,13 @@ mod nonlinear_tests {
             w[parent * n + i] = 0.15;
         }
         let big = ContinuousEbm::new(vec![Potential::Quadratic { a: 2.0, b: 0.0 }; n], w);
-        let lz = big.eliminate_log_z(1.0, -6.0, 6.0, 120, 2).expect("a tree is width 1");
-        assert!(lz.is_finite(), "a hundred-unit tree has a finite ln Z, got {lz}");
+        let lz = big
+            .eliminate_log_z(1.0, -6.0, 6.0, 120, 2)
+            .expect("a tree is width 1");
+        assert!(
+            lz.is_finite(),
+            "a hundred-unit tree has a finite ln Z, got {lz}"
+        );
     }
 
     #[test]
@@ -1114,15 +1236,20 @@ mod nonlinear_tests {
         let long = chain(12, Potential::DoubleWell { a: 1.0, b: 2.0 }, 0.4);
         let a = long.chain_log_z(1.0, -3.0, 3.0, 300).unwrap();
         let b = long.chain_log_z(1.0, -3.0, 3.0, 900).unwrap();
-        assert!((a - b).abs() < 1e-6, "grid 300 gives {a}, grid 900 gives {b}");
+        assert!(
+            (a - b).abs() < 1e-6,
+            "grid 300 gives {a}, grid 900 gives {b}"
+        );
 
         // a graph that is not a chain is refused rather than answered wrongly
         let mut w = vec![0.0; 9];
         w[2] = 0.5;
         w[6] = 0.5;
-        assert!(ContinuousEbm::new(vec![Potential::Quadratic { a: 2.0, b: 0.0 }; 3], w)
-            .chain_log_z(1.0, -3.0, 3.0, 50)
-            .is_none());
+        assert!(
+            ContinuousEbm::new(vec![Potential::Quadratic { a: 2.0, b: 0.0 }; 3], w)
+                .chain_log_z(1.0, -3.0, 3.0, 50)
+                .is_none()
+        );
     }
 
     /// The nonlinear SAMPLER is now checkable at twelve units, where quadrature refuses past three.
@@ -1147,7 +1274,10 @@ mod nonlinear_tests {
         let want = -(up - dn) / (2.0 * h);
         let xs = ebm.run(beta, 40_000, 300_000, 19);
         let got: f64 = xs.iter().map(|x| ebm.energy(x)).sum::<f64>() / xs.len() as f64;
-        assert!((got - want).abs() < 0.12, "sampled <E> {got} vs transfer-operator {want}");
+        assert!(
+            (got - want).abs() < 0.12,
+            "sampled <E> {got} vs transfer-operator {want}"
+        );
     }
 
     /// A double well is bimodal, and the sampler visits both wells rather than one.
@@ -1158,15 +1288,27 @@ mod nonlinear_tests {
         let ebm = ContinuousEbm::new(vec![Potential::DoubleWell { a: 1.0, b: 4.0 }], vec![0.0]);
         let beta = 1.0;
         let (_, mean) = ebm.exact_by_quadrature(beta, -4.0, 4.0, 40_000);
-        assert!(mean[0].abs() < 1e-9, "the double well is symmetric: {}", mean[0]);
+        assert!(
+            mean[0].abs() < 1e-9,
+            "the double well is symmetric: {}",
+            mean[0]
+        );
         let xs = ebm.run(beta, 20_000, 200_000, 7);
         let left = xs.iter().filter(|x| x[0] < 0.0).count();
         let frac = left as f64 / xs.len() as f64;
-        assert!((0.3..0.7).contains(&frac), "only {frac} of samples in the left well -- it is stuck");
+        assert!(
+            (0.3..0.7).contains(&frac),
+            "only {frac} of samples in the left well -- it is stuck"
+        );
         // and the second moment, which a stuck chain would also get wrong
         let m2: f64 = xs.iter().map(|x| x[0] * x[0]).sum::<f64>() / xs.len() as f64;
-        let pts: Vec<f64> = (0..40_000).map(|i| -4.0 + (i as f64 + 0.5) * 8.0 / 40_000.0).collect();
-        let ws: Vec<f64> = pts.iter().map(|&v| (-beta * ebm.energy(&[v])).exp()).collect();
+        let pts: Vec<f64> = (0..40_000)
+            .map(|i| -4.0 + (i as f64 + 0.5) * 8.0 / 40_000.0)
+            .collect();
+        let ws: Vec<f64> = pts
+            .iter()
+            .map(|&v| (-beta * ebm.energy(&[v])).exp())
+            .collect();
         let z: f64 = ws.iter().sum();
         let want: f64 = pts.iter().zip(&ws).map(|(p, w)| w * p * p).sum::<f64>() / z;
         assert!((m2 - want).abs() < 0.05, "second moment {m2} vs {want}");
@@ -1206,7 +1348,10 @@ mod nonlinear_tests {
 /// If the model has spins: this is the objective for the continuous part.
 #[must_use]
 pub fn score_matching_objective(g: &Gbm, data: &[Vec<f64>]) -> f64 {
-    assert_eq!(g.n_spin, 0, "score matching here is for the continuous part");
+    assert_eq!(
+        g.n_spin, 0,
+        "score matching here is for the continuous part"
+    );
     let n = g.n_real;
     let tr: f64 = (0..n).map(|i| g.a[i * n + i]).sum();
     let mut acc = 0.0;
@@ -1236,7 +1381,9 @@ pub fn score_match_gaussian(data: &[Vec<f64>]) -> Option<Gbm> {
     if data.len() <= n {
         return None;
     }
-    let mu: Vec<f64> = (0..n).map(|i| data.iter().map(|x| x[i]).sum::<f64>() / k).collect();
+    let mu: Vec<f64> = (0..n)
+        .map(|i| data.iter().map(|x| x[i]).sum::<f64>() / k)
+        .collect();
     let mut cov = vec![0.0; n * n];
     for x in data {
         for i in 0..n {
@@ -1249,7 +1396,9 @@ pub fn score_match_gaussian(data: &[Vec<f64>]) -> Option<Gbm> {
         *v /= k - 1.0;
     }
     let a = inverse(&cov, n)?;
-    let b = (0..n).map(|i| (0..n).map(|j| a[i * n + j] * mu[j]).sum()).collect();
+    let b = (0..n)
+        .map(|i| (0..n).map(|j| a[i * n + j] * mu[j]).sum())
+        .collect();
     Some(Gbm::gaussian(n, a, b))
 }
 
@@ -1285,7 +1434,9 @@ pub fn denoising_score_match_gaussian(data: &[Vec<f64>], sigma: f64) -> Option<G
     if data.len() <= n {
         return None;
     }
-    let mu: Vec<f64> = (0..n).map(|i| data.iter().map(|x| x[i]).sum::<f64>() / k).collect();
+    let mu: Vec<f64> = (0..n)
+        .map(|i| data.iter().map(|x| x[i]).sum::<f64>() / k)
+        .collect();
     let mut cov = vec![0.0; n * n];
     for x in data {
         for i in 0..n {
@@ -1302,7 +1453,9 @@ pub fn denoising_score_match_gaussian(data: &[Vec<f64>], sigma: f64) -> Option<G
         cov[i * n + i] += sigma * sigma;
     }
     let a = inverse(&cov, n)?;
-    let b = (0..n).map(|i| (0..n).map(|j| a[i * n + j] * mu[j]).sum()).collect();
+    let b = (0..n)
+        .map(|i| (0..n).map(|j| a[i * n + j] * mu[j]).sum())
+        .collect();
     Some(Gbm::gaussian(n, a, b))
 }
 
@@ -1342,9 +1495,17 @@ mod score_tests {
         for i in 0..n {
             for j in 0..n {
                 let (got, want) = (fit.a[i * n + j], a[i * n + j]);
-                assert!((got - want).abs() < 0.06 * want.abs().max(1.0), "A({i},{j}) = {got}, want {want}");
+                assert!(
+                    (got - want).abs() < 0.06 * want.abs().max(1.0),
+                    "A({i},{j}) = {got}, want {want}"
+                );
             }
-            assert!((fit.b[i] - b[i]).abs() < 0.06, "b({i}) = {}, want {}", fit.b[i], b[i]);
+            assert!(
+                (fit.b[i] - b[i]).abs() < 0.06,
+                "b({i}) = {}, want {}",
+                fit.b[i],
+                b[i]
+            );
         }
     }
 
@@ -1359,11 +1520,17 @@ mod score_tests {
         let mut rng = Pcg::new(31, 0);
         for _ in 0..40 {
             let mut p = fit.clone();
-            let (i, j) = ((rng.f64() * n as f64) as usize % n, (rng.f64() * n as f64) as usize % n);
+            let (i, j) = (
+                (rng.f64() * n as f64) as usize % n,
+                (rng.f64() * n as f64) as usize % n,
+            );
             let d = 0.05 * (rng.f64() - 0.5);
             p.a[i * n + j] += d;
             p.a[j * n + i] += d; // keep it symmetric, which the family requires
-            assert!(score_matching_objective(&p, &xs) >= base - 1e-12, "a perturbation lowered the objective");
+            assert!(
+                score_matching_objective(&p, &xs) >= base - 1e-12,
+                "a perturbation lowered the objective"
+            );
         }
         // and it beats a deliberately wrong model by a wide margin
         let wrong = Gbm::gaussian(n, vec![1.0, 0.0, 0.0, 1.0], vec![0.0, 0.0]);
@@ -1394,7 +1561,10 @@ mod score_tests {
             for i in 0..n {
                 for j in 0..n {
                     let (got, w) = (fit.a[i * n + j], want[i * n + j]);
-                    assert!((got - w).abs() < 0.08 * w.abs().max(1.0), "sigma {sigma} A({i},{j}) = {got}, want {w}");
+                    assert!(
+                        (got - w).abs() < 0.08 * w.abs().max(1.0),
+                        "sigma {sigma} A({i},{j}) = {got}, want {w}"
+                    );
                 }
             }
         }
@@ -1408,16 +1578,30 @@ mod score_tests {
         let lo = denoising_score_match_gaussian(&xs, 0.2).unwrap();
         let hi = denoising_score_match_gaussian(&xs, 1.5).unwrap();
         for i in 0..n {
-            assert!(hi.a[i * n + i] < lo.a[i * n + i], "noise must flatten the model");
+            assert!(
+                hi.a[i * n + i] < lo.a[i * n + i],
+                "noise must flatten the model"
+            );
         }
     }
 
     /// Data that does not determine a model is refused, not fitted.
     #[test]
     fn underdetermined_data_is_refused() {
-        assert!(score_match_gaussian(&[vec![1.0, 2.0], vec![2.0, 4.0]]).is_none(), "2 points in 2D");
+        assert!(
+            score_match_gaussian(&[vec![1.0, 2.0], vec![2.0, 4.0]]).is_none(),
+            "2 points in 2D"
+        );
         // an exactly collinear coordinate leaves the covariance singular
-        let collinear: Vec<Vec<f64>> = (0..50).map(|i| { let t = i as f64; vec![t, 2.0 * t] }).collect();
-        assert!(score_match_gaussian(&collinear).is_none(), "a collinear coordinate has no inverse covariance");
+        let collinear: Vec<Vec<f64>> = (0..50)
+            .map(|i| {
+                let t = i as f64;
+                vec![t, 2.0 * t]
+            })
+            .collect();
+        assert!(
+            score_match_gaussian(&collinear).is_none(),
+            "a collinear coordinate has no inverse covariance"
+        );
     }
 }

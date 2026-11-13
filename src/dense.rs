@@ -52,7 +52,14 @@ impl Padded {
                 active[i * k + slot] = 1;
             }
         }
-        Padded { n, k, nbr, w, active, h: g.h.clone() }
+        Padded {
+            n,
+            k,
+            nbr,
+            w,
+            active,
+            h: g.h.clone(),
+        }
     }
 
     /// Local field at node `i`: `sum_j J_ij s_j + h_i`.
@@ -118,11 +125,16 @@ mod tests {
             let d = Padded::from_graph(&g);
             let mut rng = Pcg::new(seed, 99);
             for _ in 0..20 {
-                let s: Vec<i8> = (0..n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..n)
+                    .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+                    .collect();
                 for i in 0..n {
                     let a = g.field(i, &s);
                     assert!((a - d.field(i, &s)).abs() < 1e-12, "n={n} i={i}");
-                    assert!((a - d.field_masked(i, &s)).abs() < 1e-12, "masked n={n} i={i}");
+                    assert!(
+                        (a - d.field_masked(i, &s)).abs() < 1e-12,
+                        "masked n={n} i={i}"
+                    );
                 }
             }
         }
@@ -138,7 +150,10 @@ mod tests {
         for t in 0..d.n * d.k {
             if d.active[t] == 0 {
                 assert_eq!(d.w[t], 0.0, "a padded slot must weigh exactly zero");
-                assert!((d.nbr[t] as usize) < d.n, "a padded slot must still index in range");
+                assert!(
+                    (d.nbr[t] as usize) < d.n,
+                    "a padded slot must still index in range"
+                );
             }
         }
         // field() ignores the mask entirely and still agrees with the CSR truth
@@ -161,7 +176,10 @@ mod tests {
         }
         let s: Vec<i8> = (0..d.n).map(|_| 1).collect();
         let ruined = (0..d.n).any(|i| (g.field(i, &s) - d.field(i, &s)).abs() > 1.0);
-        assert!(ruined, "a sentinel in the padding should wreck an unmasked field, and it did");
+        assert!(
+            ruined,
+            "a sentinel in the padding should wreck an unmasked field, and it did"
+        );
     }
 
     #[test]
@@ -182,6 +200,10 @@ mod tests {
         }
         let d = Padded::from_graph(&b.build());
         assert_eq!(d.k, 19);
-        assert!(d.occupancy() < 0.11, "a star should pad badly, got {}", d.occupancy());
+        assert!(
+            d.occupancy() < 0.11,
+            "a star should pad badly, got {}",
+            d.occupancy()
+        );
     }
 }

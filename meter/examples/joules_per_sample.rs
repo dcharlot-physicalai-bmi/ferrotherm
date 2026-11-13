@@ -49,8 +49,8 @@
 // run: cargo run --release -p ferrotherm-meter --example joules_per_sample
 
 use ferrotherm::certify::tau_int;
-use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::gibbs::Sampler;
+use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::host;
 use ferrotherm::rng::Pcg;
 use ferrotherm::tempering::parallel_tempering_observed;
@@ -146,7 +146,9 @@ fn measure_pair(
             // settle window puts the baseline tens of watts high, and every workload afterwards
             // reads BELOW it. That is a fact about the machine, not a bug here, so say which.
             eprintln!("\n  this run could not be priced: {e}");
-            eprintln!("  Build first, let the machine settle, and run the compiled binary directly:");
+            eprintln!(
+                "  Build first, let the machine settle, and run the compiled binary directly:"
+            );
             eprintln!("    cargo build --release -p ferrotherm-meter --example joules_per_sample");
             eprintln!("    ./target/release/examples/joules_per_sample");
             std::process::exit(2);
@@ -166,7 +168,9 @@ fn measure_pair(
     let mut out = None;
     let run_b = meter
         .measure(idle, || {
-            out = Some(parallel_tempering_observed(g, betas, rounds, 1, burn_in, 0xB0B, None));
+            out = Some(parallel_tempering_observed(
+                g, betas, rounds, 1, burn_in, 0xB0B, None,
+            ));
         })
         .unwrap_or_else(|e| {
             // The meter refuses a delta inside its own noise, and the usual cause is that the
@@ -174,7 +178,9 @@ fn measure_pair(
             // settle window puts the baseline tens of watts high, and every workload afterwards
             // reads BELOW it. That is a fact about the machine, not a bug here, so say which.
             eprintln!("\n  this run could not be priced: {e}");
-            eprintln!("  Build first, let the machine settle, and run the compiled binary directly:");
+            eprintln!(
+                "  Build first, let the machine settle, and run the compiled binary directly:"
+            );
             eprintln!("    cargo build --release -p ferrotherm-meter --example joules_per_sample");
             eprintln!("    ./target/release/examples/joules_per_sample");
             std::process::exit(2);
@@ -223,7 +229,9 @@ fn main() {
     println!("JOULES PER INDEPENDENT SAMPLE, ACROSS TEMPERATURE");
     println!("  graph      Pegasus P_{m} fabric, {n} nodes, random +-1 couplings, no fields");
     println!("  machine    {}", meter.machine());
-    println!("  budget     escalates from {rounds_start} rounds per point to at most {rounds_cap}, iso-flip");
+    println!(
+        "  budget     escalates from {rounds_start} rounds per point to at most {rounds_cap}, iso-flip"
+    );
 
     let idle = match meter.idle(std::time::Duration::from_secs(3)) {
         Ok(b) => b,
@@ -237,12 +245,22 @@ fn main() {
         idle.watts,
         idle.sigma,
         idle.samples,
-        idle.load1.map_or("unknown".to_string(), |l| format!("{l:.2}"))
+        idle.load1
+            .map_or("unknown".to_string(), |l| format!("{l:.2}"))
     );
 
-    println!("  {:>5} {:>6} {:>7}   {:>11} {:>11}   {:>13} {:>13}   {:>7} {:>8}  cheaper",
-             "beta", "rungs", "rounds", "J/flip Gibbs", "J/flip PT", "J/ind Gibbs", "J/ind PT",
-             "flip", "indep");
+    println!(
+        "  {:>5} {:>6} {:>7}   {:>11} {:>11}   {:>13} {:>13}   {:>7} {:>8}  cheaper",
+        "beta",
+        "rungs",
+        "rounds",
+        "J/flip Gibbs",
+        "J/flip PT",
+        "J/ind Gibbs",
+        "J/ind PT",
+        "flip",
+        "indep"
+    );
     println!("  {:>62}   {:>7} {:>8}", "", "Gibbs by", "PT by");
     let mut rows: Vec<(f64, String)> = Vec::new();
     let mut flips_seen: Vec<f64> = Vec::new();
@@ -269,7 +287,10 @@ fn main() {
         }
         let rungs = betas.len();
         if worst_tuned < 0.05 {
-            println!("  {beta_cold:>5.2} {rungs:>6} {:>7}   ladder never came alive (worst pair {worst_tuned:.3}); nothing priced", "-");
+            println!(
+                "  {beta_cold:>5.2} {rungs:>6} {:>7}   ladder never came alive (worst pair {worst_tuned:.3}); nothing priced",
+                "-"
+            );
             continue;
         }
 
@@ -360,21 +381,33 @@ fn main() {
     }
 
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  J/flip is nearly flat in temperature and always favours plain Gibbs: it is the same");
+    println!(
+        "  J/flip is nearly flat in temperature and always favours plain Gibbs: it is the same"
+    );
     println!("  kernel, and tempering runs a whole ladder to produce one cold draw. That is the");
     println!("  number this field publishes, and on it Gibbs wins everywhere.");
     println!();
-    println!("  J/independent-sample is not flat. As the glass freezes, Gibbs' autocorrelation runs");
-    println!("  away and its cost per ANSWER diverges while its cost per flip does not move. Where");
-    println!("  the verdict column says PT, the two metrics disagree about which sampler is cheaper,");
+    println!(
+        "  J/independent-sample is not flat. As the glass freezes, Gibbs' autocorrelation runs"
+    );
+    println!(
+        "  away and its cost per ANSWER diverges while its cost per flip does not move. Where"
+    );
+    println!(
+        "  the verdict column says PT, the two metrics disagree about which sampler is cheaper,"
+    );
     println!("  and only one of them is about the cost of getting an answer.");
     println!();
     println!("  PER-POINT EVIDENCE, so no row is read as tighter than it is:");
     for (_, line) in &rows {
         println!("    {line}");
     }
-    println!("    tau_int's relative error is about 1/sqrt(ESS); every J/indep figure inherits it,");
-    println!("    and a row below ESS {MIN_ESS:.0} is printed as `unresolved` rather than estimated.");
+    println!(
+        "    tau_int's relative error is about 1/sqrt(ESS); every J/indep figure inherits it,"
+    );
+    println!(
+        "    and a row below ESS {MIN_ESS:.0} is printed as `unresolved` rather than estimated."
+    );
     if let (Some(lo), Some(hi)) = (
         flips_seen.iter().copied().reduce(f64::min),
         flips_seen.iter().copied().reduce(f64::max),
@@ -389,7 +422,9 @@ fn main() {
         );
         println!("    that column -- ours or anyone's -- is tighter than it.");
     }
-    println!("    `>=X` means the sampler produced LESS THAN ONE independent draw in the budget, so");
+    println!(
+        "    `>=X` means the sampler produced LESS THAN ONE independent draw in the budget, so"
+    );
     println!("    the whole run's joules is a lower bound on the cost of its first one.");
     if let Some(c) = quiet.caveat() {
         println!("\n  {c}");

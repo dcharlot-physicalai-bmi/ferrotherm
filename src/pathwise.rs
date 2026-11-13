@@ -85,7 +85,11 @@ pub struct Grads {
 /// If `phi0` is not length `n` or `dt` is not finite.
 #[must_use]
 pub fn trajectory(sys: &Kuramoto, phi0: &[f64], dt: f64, steps: usize) -> Vec<Vec<f64>> {
-    assert_eq!(phi0.len(), sys.n(), "initial phases must have one entry per oscillator");
+    assert_eq!(
+        phi0.len(),
+        sys.n(),
+        "initial phases must have one entry per oscillator"
+    );
     assert!(dt.is_finite(), "the step size must be finite, got {dt}");
     let n = sys.n();
     let mut tape = Vec::with_capacity(steps + 1);
@@ -123,8 +127,14 @@ pub fn features_of(phi: &[f64]) -> Vec<f64> {
 /// If the cotangent is not length `2n`.
 #[must_use]
 pub fn feature_cotangent(phi: &[f64], g: &[f64]) -> Vec<f64> {
-    assert_eq!(g.len(), 2 * phi.len(), "a feature cotangent has two entries per oscillator");
-    (0..phi.len()).map(|i| -g[2 * i] * phi[i].sin() + g[2 * i + 1] * phi[i].cos()).collect()
+    assert_eq!(
+        g.len(),
+        2 * phi.len(),
+        "a feature cotangent has two entries per oscillator"
+    );
+    (0..phi.len())
+        .map(|i| -g[2 * i] * phi[i].sin() + g[2 * i + 1] * phi[i].cos())
+        .collect()
 }
 
 /// The exact gradient of a loss on the terminal phases, back through every Euler step.
@@ -140,8 +150,15 @@ pub fn feature_cotangent(phi: &[f64], g: &[f64]) -> Vec<f64> {
 #[must_use]
 pub fn euler_adjoint(sys: &Kuramoto, tape: &[Vec<f64>], dt: f64, cotangent: &[f64]) -> Grads {
     let n = sys.n();
-    assert!(!tape.is_empty(), "an empty tape carries no trajectory to differentiate");
-    assert_eq!(cotangent.len(), n, "the cotangent must have one entry per oscillator");
+    assert!(
+        !tape.is_empty(),
+        "an empty tape carries no trajectory to differentiate"
+    );
+    assert_eq!(
+        cotangent.len(),
+        n,
+        "the cotangent must have one entry per oscillator"
+    );
     let mut lam = cotangent.to_vec();
     let mut d_k = vec![0.0; n * n];
     let mut d_omega = vec![0.0; n];
@@ -190,7 +207,11 @@ pub fn euler_adjoint(sys: &Kuramoto, tape: &[Vec<f64>], dt: f64, cotangent: &[f6
 /// If `phi` is not length `n`.
 pub fn step_rk4(sys: &Kuramoto, phi: &mut [f64], dt: f64) {
     let n = sys.n();
-    assert_eq!(phi.len(), n, "phase vector must have one entry per oscillator");
+    assert_eq!(
+        phi.len(),
+        n,
+        "phase vector must have one entry per oscillator"
+    );
     let mut k1 = vec![0.0; n];
     let mut k2 = vec![0.0; n];
     let mut k3 = vec![0.0; n];
@@ -280,7 +301,11 @@ pub fn integrator_gap(
     cotangent: &[f64],
 ) -> IntegratorGap {
     let n = sys.n();
-    assert_eq!(cotangent.len(), 2 * n, "a feature cotangent has two entries per oscillator");
+    assert_eq!(
+        cotangent.len(),
+        2 * n,
+        "a feature cotangent has two entries per oscillator"
+    );
     let coarse = trajectory(sys, phi0, dt, steps);
     let fine_end = rk4_to(sys, phi0, dt, steps, refine);
     let coarse_end = coarse.last().expect("a tape always has its initial state");
@@ -295,7 +320,10 @@ pub fn integrator_gap(
     let g_coarse = euler_adjoint(sys, &coarse, dt, &feature_cotangent(coarse_end, cotangent));
     let h = dt / refine as f64;
     let fine = trajectory(sys, phi0, h, steps * refine);
-    let fine_last = fine.last().expect("a tape always has its initial state").clone();
+    let fine_last = fine
+        .last()
+        .expect("a tape always has its initial state")
+        .clone();
     let g_fine = euler_adjoint(sys, &fine, h, &feature_cotangent(&fine_last, cotangent));
 
     let mut gerr = 0.0f64;
@@ -317,7 +345,11 @@ pub fn integrator_gap(
 #[must_use]
 pub fn circle_distance(a: f64, b: f64) -> f64 {
     let d = (a - b).rem_euclid(TAU);
-    if d > core::f64::consts::PI { TAU - d } else { d }
+    if d > core::f64::consts::PI {
+        TAU - d
+    } else {
+        d
+    }
 }
 
 #[cfg(test)]
@@ -356,10 +388,21 @@ mod tests {
         let end = tape.last().expect("a tape always has its initial state");
         let delta = {
             let d = (end[1] - end[0]).rem_euclid(TAU);
-            if d > core::f64::consts::PI { d - TAU } else { d }
+            if d > core::f64::consts::PI {
+                d - TAU
+            } else {
+                d
+            }
         };
-        assert!((delta - want).abs() < 1e-6, "taped trajectory locked at {delta}, closed form {want}");
-        assert_eq!(tape.len(), 200_001, "the tape must carry every state the adjoint needs");
+        assert!(
+            (delta - want).abs() < 1e-6,
+            "taped trajectory locked at {delta}, closed form {want}"
+        );
+        assert_eq!(
+            tape.len(),
+            200_001,
+            "the tape must carry every state the adjoint needs"
+        );
     }
 
     /// The adjoint against central differences, entry by entry, on a system with no symmetry left
@@ -439,14 +482,20 @@ mod tests {
         let end = tape.last().expect("tape").clone();
         let grads = euler_adjoint(&sys, &tape, 0.02, &feature_cotangent(&end, &g));
         let biggest = grads.d_k.iter().fold(0.0f64, |m, v| m.max(v.abs()));
-        assert!(biggest > 1e-3, "the loss does not depend on the coupling at all: {biggest}");
+        assert!(
+            biggest > 1e-3,
+            "the loss does not depend on the coupling at all: {biggest}"
+        );
         let mut asym = 0.0f64;
         for i in 0..n {
             for j in 0..n {
                 asym = asym.max((grads.d_k[i * n + j] - grads.d_k[j * n + i]).abs());
             }
         }
-        assert!(asym > 1e-3, "an asymmetric system gave a symmetric gradient, which is an index bug");
+        assert!(
+            asym > 1e-3,
+            "an asymmetric system gave a symmetric gradient, which is an index bug"
+        );
     }
 
     /// Runge–Kutta converges at fourth order and Euler at first, which is what makes the fine
@@ -462,7 +511,10 @@ mod tests {
             let err = (0..3).fold(0.0f64, |m, i| m.max(circle_distance(got[i], truth[i])));
             if let (Some(p), true) = (previous, err > 1e-14) {
                 let ratio = p / err;
-                assert!(ratio > 8.0, "halving the step should cut a 4th-order error by ~16, got {ratio}");
+                assert!(
+                    ratio > 8.0,
+                    "halving the step should cut a 4th-order error by ~16, got {ratio}"
+                );
             }
             previous = Some(err);
         }
@@ -480,8 +532,14 @@ mod tests {
         let g: Vec<f64> = (0..2 * n).map(|i| 0.5 + 0.2 * i as f64).collect();
         for dt in [0.2f64, 0.1, 0.05, 0.025, 0.0125] {
             let gap = integrator_gap(&sys, &phi0, dt, 50, 64, &g);
-            assert!(gap.phase_error > 0.0, "Euler at dt = {dt} agreed with RK4 exactly");
-            assert!(gap.grad_error > 0.0, "the gradients agreed exactly at dt = {dt}");
+            assert!(
+                gap.phase_error > 0.0,
+                "Euler at dt = {dt} agreed with RK4 exactly"
+            );
+            assert!(
+                gap.grad_error > 0.0,
+                "the gradients agreed exactly at dt = {dt}"
+            );
             assert!(
                 gap.gradient_penalty() > 2.0,
                 "at dt = {dt} the gradient's relative error {} was not twice the trajectory's {}",
@@ -509,10 +567,16 @@ mod tests {
             "the documented exception has disappeared: penalty {} at dt = 0.0125",
             gap.gradient_penalty()
         );
-        assert!(gap.phase_relative < 0.01 && gap.grad_relative < 0.01, "and both should be small");
+        assert!(
+            gap.phase_relative < 0.01 && gap.grad_relative < 0.01,
+            "and both should be small"
+        );
         // The same system at a coarse step is the other side of it.
         let coarse = integrator_gap(&sys, &phi0, 0.2, 20, 64, &g);
-        assert!(coarse.gradient_penalty() > 1.0, "at a coarse step the penalty returns");
+        assert!(
+            coarse.gradient_penalty() > 1.0,
+            "at a coarse step the penalty returns"
+        );
     }
 
     /// Euler's trajectory error falls when the step does, which is what makes `dt` the knob.
@@ -530,13 +594,18 @@ mod tests {
             coarse.phase_error,
             fine.phase_error
         );
-        assert!(coarse.grad_error > 1.5 * fine.grad_error, "and the gradient's with it");
+        assert!(
+            coarse.grad_error > 1.5 * fine.grad_error,
+            "and the gradient's with it"
+        );
     }
 
     #[test]
     fn the_circle_distance_wraps() {
         assert!((circle_distance(0.1, TAU - 0.1) - 0.2).abs() < 1e-12);
-        assert!((circle_distance(0.0, core::f64::consts::PI) - core::f64::consts::PI).abs() < 1e-12);
+        assert!(
+            (circle_distance(0.0, core::f64::consts::PI) - core::f64::consts::PI).abs() < 1e-12
+        );
         assert_eq!(circle_distance(1.3, 1.3), 0.0);
     }
 }

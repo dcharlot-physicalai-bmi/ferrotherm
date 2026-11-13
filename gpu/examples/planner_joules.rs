@@ -84,8 +84,12 @@ fn main() {
     };
     println!("machine : {}", meter.machine());
     println!();
-    println!("PREDICTED before measuring: planning at this budget costs joules of the same order as");
-    println!("the arm's actuation, not orders below it. Falsified if the compute share is under 1%.");
+    println!(
+        "PREDICTED before measuring: planning at this budget costs joules of the same order as"
+    );
+    println!(
+        "the arm's actuation, not orders below it. Falsified if the compute share is under 1%."
+    );
     println!();
 
     let horizon = 16usize;
@@ -103,7 +107,10 @@ fn main() {
         // the first noisy one throws away the good windows that come after it.
         let idle = match meter.idle(Duration::from_secs(4)) {
             Ok(b) => b,
-            Err(e) => { println!("  pass {}: baseline refused, {e}", pass + 1); continue; }
+            Err(e) => {
+                println!("  pass {}: baseline refused, {e}", pass + 1);
+                continue;
+            }
         };
         // ALL CORES, for two reasons that happen to agree. One busy core is invisible on this SoC:
         // the first version of this bench drew -1.60 W against a baseline wandering by 1.45 W and
@@ -138,17 +145,31 @@ fn main() {
             });
         }) {
             Ok(r) => r,
-            Err(e) => { println!("  pass {}: refused, {e}", pass + 1); continue; }
+            Err(e) => {
+                println!("  pass {}: refused, {e}", pass + 1);
+                continue;
+            }
         };
         let evals = evals.load(std::sync::atomic::Ordering::Relaxed);
         let sink = *sink.lock().unwrap();
         let j_per_eval = run.joules_above_idle / evals as f64;
         println!(
             "pass {}  {:>6.2} s  {:>6.2} W above {:>5.2} W idle (sigma {:.2})  {:>12} evals  {:.3e} J/eval",
-            pass + 1, run.seconds, run.mean_watts - run.idle_watts, run.idle_watts,
-            run.idle_sigma, evals, j_per_eval);
+            pass + 1,
+            run.seconds,
+            run.mean_watts - run.idle_watts,
+            run.idle_watts,
+            run.idle_sigma,
+            evals,
+            j_per_eval
+        );
         let _ = threads;
-        rows.push((j_per_eval, run.mean_watts - run.idle_watts, run.idle_sigma, sink.abs().min(1.0)));
+        rows.push((
+            j_per_eval,
+            run.mean_watts - run.idle_watts,
+            run.idle_sigma,
+            sink.abs().min(1.0),
+        ));
     }
 
     // A pass whose BASELINE wandered is not a pass. The first run of this bench averaged a pass
@@ -159,21 +180,37 @@ fn main() {
     println!();
     for (i, r) in rows.iter().enumerate() {
         let ok = r.2 < 0.25 * r.1;
-        println!("  pass {}  idle sigma {:>5.2} W against a {:>5.2} W signal  {}",
-                 i + 1, r.2, r.1, if ok { "kept" } else { "set aside, baseline too noisy" });
+        println!(
+            "  pass {}  idle sigma {:>5.2} W against a {:>5.2} W signal  {}",
+            i + 1,
+            r.2,
+            r.1,
+            if ok {
+                "kept"
+            } else {
+                "set aside, baseline too noisy"
+            }
+        );
     }
     if kept.is_empty() {
         println!();
         println!("No pass had a baseline quiet enough to divide by. This machine is running other");
-        println!("work; the figure below would be noise wearing a decimal point. Re-run when idle.");
+        println!(
+            "work; the figure below would be noise wearing a decimal point. Re-run when idle."
+        );
         return;
     }
     let j_eval = kept.iter().map(|r| r.0).sum::<f64>() / kept.len() as f64;
-    let (lo, hi) = kept.iter().fold((f64::MAX, 0.0f64), |(l, h), r| (l.min(r.0), h.max(r.0)));
+    let (lo, hi) = kept
+        .iter()
+        .fold((f64::MAX, 0.0f64), |(l, h), r| (l.min(r.0), h.max(r.0)));
     println!();
     if kept.len() > 1 {
-        println!("joules per dynamics evaluation: {j_eval:.3e}   ({} passes kept, agreeing to {:.2}x)",
-                 kept.len(), hi / lo);
+        println!(
+            "joules per dynamics evaluation: {j_eval:.3e}   ({} passes kept, agreeing to {:.2}x)",
+            kept.len(),
+            hi / lo
+        );
     } else {
         println!("joules per dynamics evaluation: {j_eval:.3e}   (ONE pass kept; unrepeated)");
     }
@@ -187,15 +224,32 @@ fn main() {
     println!();
     println!("=== the two halves of one completed task ===");
     println!("{:<34}{:>14}{:>12}", "quantity", "value", "provenance");
-    println!("{:<34}{:>14}{:>12}", "actions in a median reach", actions, "TR-2026-40");
-    println!("{:<34}{:>14}{:>12}", "dynamics evaluations per task", evals_task, "TR-2026-40");
-    println!("{:<34}{:>12.2} J{:>12}", "compute, this machine", e_compute, "measured");
-    println!("{:<34}{:>12.2} J{:>12}", "actuation, sampling controller", E_ACT_MPPI, "modelled");
-    println!("{:<34}{:>12.2} J{:>12}", "actuation, reference controller", E_ACT_REFERENCE, "modelled");
+    println!(
+        "{:<34}{:>14}{:>12}",
+        "actions in a median reach", actions, "TR-2026-40"
+    );
+    println!(
+        "{:<34}{:>14}{:>12}",
+        "dynamics evaluations per task", evals_task, "TR-2026-40"
+    );
+    println!(
+        "{:<34}{:>12.2} J{:>12}",
+        "compute, this machine", e_compute, "measured"
+    );
+    println!(
+        "{:<34}{:>12.2} J{:>12}",
+        "actuation, sampling controller", E_ACT_MPPI, "modelled"
+    );
+    println!(
+        "{:<34}{:>12.2} J{:>12}",
+        "actuation, reference controller", E_ACT_REFERENCE, "modelled"
+    );
     println!();
     let share = 100.0 * e_compute / (e_compute + E_ACT_MPPI);
-    println!("compute share of E_task: {share:.1} %   (E_task = {:.2} J, mixed provenance)",
-             e_compute + E_ACT_MPPI);
+    println!(
+        "compute share of E_task: {share:.1} %   (E_task = {:.2} J, mixed provenance)",
+        e_compute + E_ACT_MPPI
+    );
     println!();
     if share < 1.0 {
         println!("PREDICTION FALSIFIED: the compute term is negligible at this budget.");
@@ -204,7 +258,9 @@ fn main() {
     }
     println!();
     println!("Read this as an UPPER BOUND on the compute half. It prices a general-purpose CPU");
-    println!("doing the planning, which is the machine the argument is about escaping. An embedded");
+    println!(
+        "doing the planning, which is the machine the argument is about escaping. An embedded"
+    );
     println!("part, a fixed-function sampler or a settling fabric would each land lower, and the");
     println!("distance between this number and theirs is exactly what a substrate has to buy.");
 }

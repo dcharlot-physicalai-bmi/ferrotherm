@@ -53,8 +53,8 @@
 //      (build first, let the machine settle, then run the binary directly -- see the refusal text)
 
 use ferrotherm::certify::{tau_int, tau_int_batch};
-use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::gibbs::Sampler;
+use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::hdl::FixedFabric;
 use ferrotherm::host;
 use ferrotherm::ledger::{KV260_MEASURED, Z1_SPICE};
@@ -207,7 +207,10 @@ fn cpu_arms(
             }
         })
         .unwrap_or_else(|e| refuse(&e));
-    let (ts, tb) = (tau_int(&trace_g) * rungs as f64, tau_int_batch(&trace_g, 20) * rungs as f64);
+    let (ts, tb) = (
+        tau_int(&trace_g) * rungs as f64,
+        tau_int_batch(&trace_g, 20) * rungs as f64,
+    );
     let gibbs = Arm {
         label: "CPU Gibbs f64 (metered)",
         flips: (n * sweeps_g) as f64,
@@ -223,7 +226,9 @@ fn cpu_arms(
     let mut out = None;
     let run_p = meter
         .measure(idle, || {
-            out = Some(parallel_tempering_observed(g, betas, rounds, 1, burn_in, 0xB0B, None));
+            out = Some(parallel_tempering_observed(
+                g, betas, rounds, 1, burn_in, 0xB0B, None,
+            ));
         })
         .unwrap_or_else(|e| refuse(&e));
     let (_res, tr) = out.expect("the closure ran");
@@ -251,7 +256,9 @@ fn main() {
         }
     };
     let Some(mut meter) = ferrotherm_meter::Meter::detect() else {
-        eprintln!("no power backend on this machine; nothing to report and no modelled number in its place.");
+        eprintln!(
+            "no power backend on this machine; nothing to report and no modelled number in its place."
+        );
         std::process::exit(2);
     };
 
@@ -259,7 +266,10 @@ fn main() {
     let g = lattice_glass(l, 0xC0FFEE);
     let n = g.n;
     if g.classes.len() != 2 {
-        eprintln!("the lattice glass coloured to {} classes; the v1 fabric needs exactly 2", g.classes.len());
+        eprintln!(
+            "the lattice glass coloured to {} classes; the v1 fabric needs exactly 2",
+            g.classes.len()
+        );
         std::process::exit(2);
     }
     let seed_f = 0xFAB;
@@ -267,11 +277,22 @@ fn main() {
     let rounds_cap = 256_000usize;
 
     println!("THE FABRIC'S FLIPS, PRICED PER INDEPENDENT SAMPLE, AGAINST A METERED CPU LADDER");
-    println!("  graph      {l}x{l} periodic lattice, {n} nodes, random +-1 couplings, no fields (the KV260 configuration)");
-    println!("  fabric     hdl::FixedFabric, Q.{} weights, {}-entry ROM, xorshift32 per node -- priced at {:.3e} J/flip",
-             ferrotherm::hdl::FRAC, 1usize << ferrotherm::hdl::LUT_BITS, KV260_MEASURED.e_sample);
-    println!("  machine    {}  (CPU arms metered above idle)", meter.machine());
-    println!("  budget     fabric escalates its own sweeps until tau resolves; CPU ladder from {rounds_start} rounds to at most {rounds_cap}");
+    println!(
+        "  graph      {l}x{l} periodic lattice, {n} nodes, random +-1 couplings, no fields (the KV260 configuration)"
+    );
+    println!(
+        "  fabric     hdl::FixedFabric, Q.{} weights, {}-entry ROM, xorshift32 per node -- priced at {:.3e} J/flip",
+        ferrotherm::hdl::FRAC,
+        1usize << ferrotherm::hdl::LUT_BITS,
+        KV260_MEASURED.e_sample
+    );
+    println!(
+        "  machine    {}  (CPU arms metered above idle)",
+        meter.machine()
+    );
+    println!(
+        "  budget     fabric escalates its own sweeps until tau resolves; CPU ladder from {rounds_start} rounds to at most {rounds_cap}"
+    );
 
     let idle = match meter.idle(std::time::Duration::from_secs(3)) {
         Ok(b) => b,
@@ -285,12 +306,21 @@ fn main() {
         idle.watts,
         idle.sigma,
         idle.samples,
-        idle.load1.map_or("unknown".to_string(), |l| format!("{l:.2}"))
+        idle.load1
+            .map_or("unknown".to_string(), |l| format!("{l:.2}"))
     );
 
     println!(
         "  {:>5} {:>6}   {:>10} {:>10}   {:>11} {:>11} {:>11}   {:>9} {:>9}  cheaper/indep",
-        "beta", "rungs", "J/flip F", "J/flip CPU", "J/ind F", "J/ind PT", "J/ind Gibbs", "F/PT flip", "F/PT ind"
+        "beta",
+        "rungs",
+        "J/flip F",
+        "J/flip CPU",
+        "J/ind F",
+        "J/ind PT",
+        "J/ind Gibbs",
+        "F/PT flip",
+        "F/PT ind"
     );
     let mut evidence: Vec<String> = Vec::new();
     let mut crossings: Vec<(f64, f64)> = Vec::new();
@@ -320,7 +350,9 @@ fn main() {
         }
         let rungs = betas.len();
         if worst < 0.05 {
-            println!("  {beta:>5.2} {rungs:>6}   ladder never came alive (worst pair {worst:.3}); CPU arms not priced");
+            println!(
+                "  {beta:>5.2} {rungs:>6}   ladder never came alive (worst pair {worst:.3}); CPU arms not priced"
+            );
             continue;
         }
 
@@ -350,7 +382,10 @@ fn main() {
         let verdict = if pt.ess() < MIN_ESS {
             "PT unresolved".to_string()
         } else if f.ess() < 1.0 {
-            format!("PT (fabric produced <1 indep. draw; F >= {:.2e} J)", f.joules)
+            format!(
+                "PT (fabric produced <1 indep. draw; F >= {:.2e} J)",
+                f.joules
+            )
         } else if f.ess() < MIN_ESS {
             format!("PT? (fabric ESS {:.0}, unresolved)", f.ess())
         } else if f.j_per_independent() < pt.j_per_independent() {
@@ -405,31 +440,60 @@ fn main() {
         // came from the batch side because the window closed early. A truncated arm's tau -- and
         // every J/ind built on it -- is a lower bound on the cost, not a value.
         let window = |a: &Arm| -> String {
-            let flag = if a.tau_batch.is_finite() && a.tau_batch > 2.0 * a.tau_sokal { " TRUNCATED" } else { "" };
-            format!("{} Sokal {:.1} / batch {:.1}{flag}", a.label, a.tau_sokal, a.tau_batch)
+            let flag = if a.tau_batch.is_finite() && a.tau_batch > 2.0 * a.tau_sokal {
+                " TRUNCATED"
+            } else {
+                ""
+            };
+            format!(
+                "{} Sokal {:.1} / batch {:.1}{flag}",
+                a.label, a.tau_sokal, a.tau_batch
+            )
         };
-        evidence.push(format!("    windows: {}; {}; {}", window(&f), window(&gibbs), window(&pt)));
+        evidence.push(format!(
+            "    windows: {}; {}; {}",
+            window(&f),
+            window(&gibbs),
+            window(&pt)
+        ));
     }
 
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  J/flip: the fabric's measured price against this CPU's measured price, the ratio the");
+    println!(
+        "  J/flip: the fabric's measured price against this CPU's measured price, the ratio the"
+    );
     println!("  field publishes. J/ind: the same joules divided by effective samples. Where the");
-    println!("  verdict column changes from `fabric` to `PT`, the figure of merit has ranked the two");
+    println!(
+        "  verdict column changes from `fabric` to `PT`, the figure of merit has ranked the two"
+    );
     println!("  machines backwards, and the row's `F/PT ind` is by how much.");
     if let Some((b, t)) = crossings.iter().find(|(_, t)| *t < KV260_MEASURED.e_sample) {
-        println!("\n  The first temperature at which the fabric's own flips cost more per independent sample");
+        println!(
+            "\n  The first temperature at which the fabric's own flips cost more per independent sample"
+        );
         println!("  than the metered ladder is beta = {b}; there, a fabric would have to flip at");
-        println!("  {t:.3e} J/flip -- {:.1e}x below the measured KV260 price -- to tie.", KV260_MEASURED.e_sample / t);
+        println!(
+            "  {t:.3e} J/flip -- {:.1e}x below the measured KV260 price -- to tie.",
+            KV260_MEASURED.e_sample / t
+        );
     } else {
-        println!("\n  No row crossed: the fabric stayed cheaper per independent sample at every resolved beta.");
+        println!(
+            "\n  No row crossed: the fabric stayed cheaper per independent sample at every resolved beta."
+        );
     }
     println!("\n  PER-POINT EVIDENCE:");
     for e in &evidence {
         println!("    {e}");
     }
-    println!("    tau_int's relative error is about 1/sqrt(ESS); every J/ind inherits it. `>=X` means the");
-    println!("    arm produced LESS THAN ONE independent draw in its budget, so its whole joules is a lower");
-    println!("    bound on the cost of its first one. The fabric's joules are PRICED at a measured per-flip");
+    println!(
+        "    tau_int's relative error is about 1/sqrt(ESS); every J/ind inherits it. `>=X` means the"
+    );
+    println!(
+        "    arm produced LESS THAN ONE independent draw in its budget, so its whole joules is a lower"
+    );
+    println!(
+        "    bound on the cost of its first one. The fabric's joules are PRICED at a measured per-flip"
+    );
     println!("    cost with reads UNSTATED; the CPU arms are METERED above idle on this machine.");
     if let Some(c) = quiet.caveat() {
         println!("\n  {c}");

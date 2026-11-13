@@ -18,7 +18,9 @@
 //
 // run: cargo run --release --example stale_exact
 
-use ferrotherm::autocorr::{boltzmann, kemeny_constant, stationary_solved, total_variation, Kernel};
+use ferrotherm::autocorr::{
+    Kernel, boltzmann, kemeny_constant, stationary_solved, total_variation,
+};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -83,7 +85,10 @@ fn nearest_beta(g: &Graph, law: &[f64], lo: f64, hi: f64) -> (f64, f64) {
 }
 
 fn run(name: &str, g: &Graph) {
-    let degree = (0..g.n).map(|i| g.offset[i + 1] - g.offset[i]).max().unwrap_or(0);
+    let degree = (0..g.n)
+        .map(|i| g.offset[i + 1] - g.offset[i])
+        .max()
+        .unwrap_or(0);
     println!("  {name}: {} spins, max degree {degree}\n", g.n);
     println!(
         "  {:>5} {:>5}   {:>10} {:>9} {:>10} {:>12}   {:>12} {:>7}",
@@ -97,7 +102,11 @@ fn run(name: &str, g: &Graph) {
             let law = stationary_solved(g, beta, k).expect("small");
             let tv = total_variation(&law, &b);
             let (b_eff, tv_eff) = nearest_beta(g, &law, 0.1 * beta, 2.0 * beta);
-            let shift = if p > 0.0 { format!("{:>12.4}", (b_eff - beta) / beta / p) } else { format!("{:>12}", "-") };
+            let shift = if p > 0.0 {
+                format!("{:>12.4}", (b_eff - beta) / beta / p)
+            } else {
+                format!("{:>12}", "-")
+            };
             let kk = if p == 0.03 || p == 0.3 || p == 1.0 {
                 let kk = kemeny_constant(g, beta, k).expect("small");
                 format!("{kk:>12.4e} {:>7.3}", kk / k_seq)
@@ -106,23 +115,47 @@ fn run(name: &str, g: &Graph) {
             } else {
                 format!("{:>12} {:>7}", "-", "-")
             };
-            println!("  {beta:>5.2} {p:>5.2}   {tv:>10.3e} {b_eff:>9.4} {tv_eff:>10.3e} {shift}   {kk}");
+            println!(
+                "  {beta:>5.2} {p:>5.2}   {tv:>10.3e} {b_eff:>9.4} {tv_eff:>10.3e} {shift}   {kk}"
+            );
         }
     }
     println!();
 }
 
 fn main() {
-    println!("STALE NEIGHBOUR READS AGAINST THE BOLTZMANN DISTRIBUTION, EXACTLY, ON ALL 2^12 STATES\n");
-    println!("  kernel   Kernel::Stale {{ p }}: sequential sweep, each read of an already-updated neighbour stale with probability p");
-    println!("  oracle   direct solve for the stationary law; Kemeny's constant against the p = 0 sweep\n");
-    run("4x3 grid, +-1 couplings, fields in [-0.2, 0.2]", &grid_glass(4, 3, 7));
-    run("K_{6,6}, +-1 couplings, fields in [-0.2, 0.2]", &dense_bipartite(5));
+    println!(
+        "STALE NEIGHBOUR READS AGAINST THE BOLTZMANN DISTRIBUTION, EXACTLY, ON ALL 2^12 STATES\n"
+    );
+    println!(
+        "  kernel   Kernel::Stale {{ p }}: sequential sweep, each read of an already-updated neighbour stale with probability p"
+    );
+    println!(
+        "  oracle   direct solve for the stationary law; Kemeny's constant against the p = 0 sweep\n"
+    );
+    run(
+        "4x3 grid, +-1 couplings, fields in [-0.2, 0.2]",
+        &grid_glass(4, 3, 7),
+    );
+    run(
+        "K_{6,6}, +-1 couplings, fields in [-0.2, 0.2]",
+        &dense_bipartite(5),
+    );
     println!("  WHAT THE TABLES SAY.\n");
-    println!("  TV(stale,B) is the equilibrium error the collisions leave, the part no number of sweeps removes;");
-    println!("  beta_eff is the temperature whose Boltzmann law is nearest and TV at eff what survives that shift,");
-    println!("  so the two together say whether stale reads act as a temperature error (a certifiable, correctable");
-    println!("  shift) or as a change of law. dbeta/beta/p is the shift per unit collision fraction: constant down");
-    println!("  a column means the shift is linear in p there. K/K_seq is relaxation per sweep against the clean");
+    println!(
+        "  TV(stale,B) is the equilibrium error the collisions leave, the part no number of sweeps removes;"
+    );
+    println!(
+        "  beta_eff is the temperature whose Boltzmann law is nearest and TV at eff what survives that shift,"
+    );
+    println!(
+        "  so the two together say whether stale reads act as a temperature error (a certifiable, correctable"
+    );
+    println!(
+        "  shift) or as a change of law. dbeta/beta/p is the shift per unit collision fraction: constant down"
+    );
+    println!(
+        "  a column means the shift is linear in p there. K/K_seq is relaxation per sweep against the clean"
+    );
     println!("  sequential sweep; p = 1 is the fully synchronous sweep and its Peretto law.");
 }

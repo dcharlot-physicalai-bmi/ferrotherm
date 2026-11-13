@@ -38,7 +38,11 @@ pub struct Task {
 /// Hamming loss `ℓ(s) = Σ_o (1 − s_o t_o) / 2`, in units of wrong output spins.
 #[must_use]
 pub fn hamming_loss(task: &Task, s: &[i8], target: &[i8]) -> f64 {
-    task.outputs.iter().zip(target).map(|(&o, &t)| (1.0 - (s[o] as i32 * t as i32) as f64) / 2.0).sum()
+    task.outputs
+        .iter()
+        .zip(target)
+        .map(|(&o, &t)| (1.0 - (s[o] as i32 * t as i32) as f64) / 2.0)
+        .sum()
 }
 
 /// Gradient of the expected loss with respect to every coupling (per edge slot, `i < j` once) and
@@ -68,7 +72,13 @@ fn pairs_of(g: &Graph) -> Vec<(usize, usize)> {
 
 /// The graph with `input` spins fixed to `x` (their biases become large) is the wrong tool; the
 /// crate clamps in the sampler. For enumeration we instead sum only over states agreeing with `x`.
-fn enumerate_moments(g: &Graph, task: &Task, x: &[i8], target: &[i8], nudge: f64) -> (f64, Vec<f64>, Vec<f64>) {
+fn enumerate_moments(
+    g: &Graph,
+    task: &Task,
+    x: &[i8],
+    target: &[i8],
+    nudge: f64,
+) -> (f64, Vec<f64>, Vec<f64>) {
     // returns (⟨ℓ⟩, ⟨s_i s_j⟩ per pair, ⟨s_i⟩ per site) under exp(−(E + nudge·ℓ)), inputs clamped.
     assert!(g.n <= 20);
     let pairs = pairs_of(g);
@@ -145,16 +155,31 @@ pub fn exact_gradient(g: &Graph, task: &Task, x: &[i8], target: &[i8]) -> Gradie
             db[i] += p * (l - mean_l) * st[i] as f64;
         }
     }
-    Gradient { pairs, d_couplings: dc, d_biases: db }
+    Gradient {
+        pairs,
+        d_couplings: dc,
+        d_biases: db,
+    }
 }
 
 /// Equilibrium propagation by enumeration: the one-sided quotient `(⟨·⟩₀ − ⟨·⟩_β)/β`, or the
 /// centered `(⟨·⟩_{−β} − ⟨·⟩_{+β})/2β` when `centered`.
 #[must_use]
-pub fn eqprop_gradient_exact(g: &Graph, task: &Task, x: &[i8], target: &[i8], beta: f64, centered: bool) -> Gradient {
+pub fn eqprop_gradient_exact(
+    g: &Graph,
+    task: &Task,
+    x: &[i8],
+    target: &[i8],
+    beta: f64,
+    centered: bool,
+) -> Gradient {
     let pairs = pairs_of(g);
     let (_, mp, m1p) = enumerate_moments(g, task, x, target, beta);
-    let (_, mm, m1m) = if centered { enumerate_moments(g, task, x, target, -beta) } else { enumerate_moments(g, task, x, target, 0.0) };
+    let (_, mm, m1m) = if centered {
+        enumerate_moments(g, task, x, target, -beta)
+    } else {
+        enumerate_moments(g, task, x, target, 0.0)
+    };
     let denom = if centered { 2.0 * beta } else { beta };
     Gradient {
         pairs,
@@ -173,7 +198,9 @@ pub fn eqprop_gradient_exact(g: &Graph, task: &Task, x: &[i8], target: &[i8], be
 pub fn nudged(g: &Graph, task: &Task, target: &[i8], beta: f64) -> Graph {
     let mut gb = GraphBuilder::new(g.n);
     for (i, j) in pairs_of(g) {
-        let e = (g.offset[i]..g.offset[i + 1]).find(|&e| g.nbr[e] as usize == j).unwrap();
+        let e = (g.offset[i]..g.offset[i + 1])
+            .find(|&e| g.nbr[e] as usize == j)
+            .unwrap();
         gb.couple(i, j, g.w[e]);
     }
     for i in 0..g.n {
@@ -187,7 +214,14 @@ pub fn nudged(g: &Graph, task: &Task, target: &[i8], beta: f64) -> Graph {
 
 /// Sampled moments `(⟨s_i s_j⟩ per pair, ⟨s_i⟩ per site)` at unit temperature with inputs clamped.
 #[must_use]
-pub fn sampled_moments(g: &Graph, task: &Task, x: &[i8], burn_in: usize, draws: usize, seed: u64) -> (Vec<f64>, Vec<f64>) {
+pub fn sampled_moments(
+    g: &Graph,
+    task: &Task,
+    x: &[i8],
+    burn_in: usize,
+    draws: usize,
+    seed: u64,
+) -> (Vec<f64>, Vec<f64>) {
     let pairs = pairs_of(g);
     let mut sm = Sampler::new(g, 1.0, seed);
     for (k, &i) in task.inputs.iter().enumerate() {
@@ -206,13 +240,26 @@ pub fn sampled_moments(g: &Graph, task: &Task, x: &[i8], burn_in: usize, draws: 
         }
     }
     let d = draws as f64;
-    (mm.iter().map(|v| v / d).collect(), m1.iter().map(|v| v / d).collect())
+    (
+        mm.iter().map(|v| v / d).collect(),
+        m1.iter().map(|v| v / d).collect(),
+    )
 }
 
 /// Equilibrium propagation by sampling: two chains (free and nudged, or `∓β` when centered) and
 /// their difference quotient.
 #[must_use]
-pub fn eqprop_gradient(g: &Graph, task: &Task, x: &[i8], target: &[i8], beta: f64, centered: bool, burn_in: usize, draws: usize, seed: u64) -> Gradient {
+pub fn eqprop_gradient(
+    g: &Graph,
+    task: &Task,
+    x: &[i8],
+    target: &[i8],
+    beta: f64,
+    centered: bool,
+    burn_in: usize,
+    draws: usize,
+    seed: u64,
+) -> Gradient {
     let pairs = pairs_of(g);
     let plus = nudged(g, task, target, beta);
     let (mp, m1p) = sampled_moments(&plus, task, x, burn_in, draws, seed);
@@ -281,7 +328,9 @@ fn uniform_law(g: &Graph, clamp: &[Option<i8>]) -> Vec<f64> {
     let m = 1usize << g.n;
     let ok: Vec<bool> = (0..m).map(|xi| obeys(g.n, xi, clamp)).collect();
     let count = ok.iter().filter(|b| **b).count() as f64;
-    ok.iter().map(|b| if *b { 1.0 / count } else { 0.0 }).collect()
+    ok.iter()
+        .map(|b| if *b { 1.0 / count } else { 0.0 })
+        .collect()
 }
 
 /// The Boltzmann law at unit temperature over the states a clamp permits — the equilibrium the
@@ -310,7 +359,10 @@ pub fn boltzmann_law(g: &Graph, clamp: &[Option<i8>]) -> Vec<f64> {
         *l = -g.energy(&s);
     }
     let mx = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let w: Vec<f64> = logs.iter().map(|l| if l.is_finite() { (l - mx).exp() } else { 0.0 }).collect();
+    let w: Vec<f64> = logs
+        .iter()
+        .map(|l| if l.is_finite() { (l - mx).exp() } else { 0.0 })
+        .collect();
     let z: f64 = w.iter().sum();
     w.iter().map(|v| v / z).collect()
 }
@@ -332,7 +384,11 @@ fn relax_once(g: &Graph, clamp: &[Option<i8>], mu: &[f64]) -> Vec<f64> {
     let mut cur = mu.to_vec();
     let mut s = vec![-1i8; n];
     for class in &g.classes {
-        let sites: Vec<usize> = class.iter().map(|&i| i as usize).filter(|&i| clamp[i].is_none()).collect();
+        let sites: Vec<usize> = class
+            .iter()
+            .map(|&i| i as usize)
+            .filter(|&i| clamp[i].is_none())
+            .collect();
         if sites.is_empty() {
             continue;
         }
@@ -344,7 +400,10 @@ fn relax_once(g: &Graph, clamp: &[Option<i8>], mu: &[f64]) -> Vec<f64> {
             }
             spins_of(n, xi, &mut s);
             // Both tails directly (`crate::kernel::p_pair`), never `1 - p_up`.
-            let qs: Vec<(f64, f64)> = sites.iter().map(|&i| crate::kernel::p_pair(g.field(i, &s), 1.0)).collect();
+            let qs: Vec<(f64, f64)> = sites
+                .iter()
+                .map(|&i| crate::kernel::p_pair(g.field(i, &s), 1.0))
+                .collect();
             for combo in 0..(1usize << sites.len()) {
                 let (mut y, mut w) = (xi, mass);
                 for (k, &i) in sites.iter().enumerate() {
@@ -414,7 +473,10 @@ pub fn eqprop_gradient_relaxed(
     start: Relaxation,
 ) -> Gradient {
     assert!(g.n <= 20, "the law is enumerated over 2^n states");
-    assert!(beta > 0.0 && beta.is_finite(), "beta must be positive and finite, got {beta}");
+    assert!(
+        beta > 0.0 && beta.is_finite(),
+        "beta must be positive and finite, got {beta}"
+    );
     let pairs = pairs_of(g);
     let clamp = clamp_mask(g, task, x);
     let plus_g = nudged(g, task, target, beta);
@@ -422,7 +484,10 @@ pub fn eqprop_gradient_relaxed(
     // classes are the same and the sweep visits sites in the same order in both phases. The scan
     // order matters here -- permuting it changes the one-sided numbers materially -- so this is
     // asserted rather than assumed.
-    debug_assert_eq!(plus_g.classes, g.classes, "nudging must not reorder the sweep");
+    debug_assert_eq!(
+        plus_g.classes, g.classes,
+        "nudging must not reorder the sweep"
+    );
     let (free_law, nudged_start) = match start {
         Relaxation::Cold => {
             let u = uniform_law(g, &clamp);
@@ -459,7 +524,9 @@ pub fn eqprop_gradient_relaxed(
 pub fn step(g: &Graph, grad: &Gradient, eta: f64) -> Graph {
     let mut gb = GraphBuilder::new(g.n);
     for (k, &(i, j)) in grad.pairs.iter().enumerate() {
-        let e = (g.offset[i]..g.offset[i + 1]).find(|&e| g.nbr[e] as usize == j).unwrap();
+        let e = (g.offset[i]..g.offset[i + 1])
+            .find(|&e| g.nbr[e] as usize == j)
+            .unwrap();
         let w = g.w[e] - eta * grad.d_couplings[k];
         if w != 0.0 {
             gb.couple(i, j, w);
@@ -494,11 +561,22 @@ mod tests {
         for i in 0..6 {
             gb.bias(i, 0.3 * (rng.f64() - 0.5));
         }
-        (gb.build(), Task { inputs: vec![0, 1], outputs: vec![5] })
+        (
+            gb.build(),
+            Task {
+                inputs: vec![0, 1],
+                outputs: vec![5],
+            },
+        )
     }
 
     fn max_err(a: &Gradient, b: &Gradient) -> f64 {
-        a.d_couplings.iter().zip(&b.d_couplings).chain(a.d_biases.iter().zip(&b.d_biases)).map(|(x, y)| (x - y).abs()).fold(0.0, f64::max)
+        a.d_couplings
+            .iter()
+            .zip(&b.d_couplings)
+            .chain(a.d_biases.iter().zip(&b.d_biases))
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0, f64::max)
     }
 
     /// **A warm start turns the relaxation residual into a 1/β divergence** — and symmetric
@@ -551,7 +629,10 @@ mod tests {
         let (x, t) = ([1i8, -1], [1i8]);
         let truth = exact_gradient(&g, &task, &x, &t);
         let err = |beta: f64, centered: bool, sweeps: usize, start: Relaxation| {
-            max_err(&eqprop_gradient_relaxed(&g, &task, &x, &t, beta, centered, sweeps, start), &truth)
+            max_err(
+                &eqprop_gradient_relaxed(&g, &task, &x, &t, beta, centered, sweeps, start),
+                &truth,
+            )
         };
 
         // CONTROL 0. The chromatic sweep is reversible with respect to the Boltzmann law, so that
@@ -563,14 +644,28 @@ mod tests {
             let eq = boltzmann_law(&g, &clamp);
             for sweeps in [1usize, 3, 17] {
                 let moved = relax(&g, &clamp, &eq, sweeps);
-                let drift = eq.iter().zip(&moved).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max);
-                assert!(drift < 1e-15, "the Boltzmann law is the sweep's fixed point: drift {drift:e} after {sweeps}");
+                let drift = eq
+                    .iter()
+                    .zip(&moved)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0f64, f64::max);
+                assert!(
+                    drift < 1e-15,
+                    "the Boltzmann law is the sweep's fixed point: drift {drift:e} after {sweeps}"
+                );
             }
             // and it is a fixed point of THIS operator, not of any operator: the uniform law is not.
             let uni = uniform_law(&g, &clamp);
             let moved = relax(&g, &clamp, &uni, 1);
-            let drift = uni.iter().zip(&moved).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max);
-            assert!(drift > 1e-6, "the uniform law must NOT be a fixed point, else the operator does nothing: {drift:e}");
+            let drift = uni
+                .iter()
+                .zip(&moved)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f64, f64::max);
+            assert!(
+                drift > 1e-6,
+                "the uniform law must NOT be a fixed point, else the operator does nothing: {drift:e}"
+            );
         }
 
         // CONTROL. The finite-budget operator must become the crate's existing exact estimator when
@@ -579,35 +674,87 @@ mod tests {
         // this anchors the new operator rather than restating it.
         for centered in [false, true] {
             for &beta in &[0.2f64, 0.05] {
-                let lim = eqprop_gradient_relaxed(&g, &task, &x, &t, beta, centered, 400, Relaxation::Cold);
+                let lim = eqprop_gradient_relaxed(
+                    &g,
+                    &task,
+                    &x,
+                    &t,
+                    beta,
+                    centered,
+                    400,
+                    Relaxation::Cold,
+                );
                 let ex = eqprop_gradient_exact(&g, &task, &x, &t, beta, centered);
                 let d = max_err(&lim, &ex);
-                assert!(d < 1e-12, "the sweeps-to-infinity limit must be the exact estimator: {d:e}");
+                assert!(
+                    d < 1e-12,
+                    "the sweeps-to-infinity limit must be the exact estimator: {d:e}"
+                );
             }
         }
 
         // THE DIVERGENCE. Same estimator, same budget; only the protocol differs.
         let (hot, cold_beta) = (0.4f64, 0.001f64);
-        let warm_one = (err(hot, false, 1, Relaxation::Warm), err(cold_beta, false, 1, Relaxation::Warm));
-        let cold_one = (err(hot, false, 1, Relaxation::Cold), err(cold_beta, false, 1, Relaxation::Cold));
-        let warm_ctr = (err(hot, true, 1, Relaxation::Warm), err(cold_beta, true, 1, Relaxation::Warm));
+        let warm_one = (
+            err(hot, false, 1, Relaxation::Warm),
+            err(cold_beta, false, 1, Relaxation::Warm),
+        );
+        let cold_one = (
+            err(hot, false, 1, Relaxation::Cold),
+            err(cold_beta, false, 1, Relaxation::Cold),
+        );
+        let warm_ctr = (
+            err(hot, true, 1, Relaxation::Warm),
+            err(cold_beta, true, 1, Relaxation::Warm),
+        );
 
         // Measured 1.104e1 / 8.705e-2 = 127x.
-        assert!(warm_one.1 / warm_one.0 > 100.0, "warm one-sided must diverge as beta falls: {warm_one:?}");
+        assert!(
+            warm_one.1 / warm_one.0 > 100.0,
+            "warm one-sided must diverge as beta falls: {warm_one:?}"
+        );
         // Measured 9.591e-2 / 1.036e-1 = 0.93 -- flat, and slightly improving.
-        assert!((0.8..1.2).contains(&(cold_one.1 / cold_one.0)), "cold one-sided must be flat: {cold_one:?}");
+        assert!(
+            (0.8..1.2).contains(&(cold_one.1 / cold_one.0)),
+            "cold one-sided must be flat: {cold_one:?}"
+        );
         // Measured 8.578e-2 / 8.896e-2 = 0.96 -- the residual cancels in the symmetric difference.
-        assert!((0.9..1.1).contains(&(warm_ctr.1 / warm_ctr.0)), "warm centered must be flat: {warm_ctr:?}");
+        assert!(
+            (0.9..1.1).contains(&(warm_ctr.1 / warm_ctr.0)),
+            "warm centered must be flat: {warm_ctr:?}"
+        );
         // and the partition is real: at the coldest beta the warm one-sided error is two orders of
         // magnitude above both of the others, which are within a factor of two of each other.
-        assert!(warm_one.1 > 50.0 * cold_one.1, "warm vs cold at beta {cold_beta}: {} vs {}", warm_one.1, cold_one.1);
-        assert!(warm_one.1 > 50.0 * warm_ctr.1, "one-sided vs centered at beta {cold_beta}: {} vs {}", warm_one.1, warm_ctr.1);
-        assert!(cold_one.1 / warm_ctr.1 < 2.0, "the two flat rows sit together: {} vs {}", cold_one.1, warm_ctr.1);
+        assert!(
+            warm_one.1 > 50.0 * cold_one.1,
+            "warm vs cold at beta {cold_beta}: {} vs {}",
+            warm_one.1,
+            cold_one.1
+        );
+        assert!(
+            warm_one.1 > 50.0 * warm_ctr.1,
+            "one-sided vs centered at beta {cold_beta}: {} vs {}",
+            warm_one.1,
+            warm_ctr.1
+        );
+        assert!(
+            cold_one.1 / warm_ctr.1 < 2.0,
+            "the two flat rows sit together: {} vs {}",
+            cold_one.1,
+            warm_ctr.1
+        );
 
         // THE INTERIOR MINIMUM: colder is not better once the budget is finite and the start warm.
         let mid = err(0.2, false, 1, Relaxation::Warm);
-        assert!(mid < warm_one.0, "beta 0.2 must beat beta 0.4: {mid} vs {}", warm_one.0);
-        assert!(mid < err(0.05, false, 1, Relaxation::Warm), "and beat beta 0.05: {mid}");
+        assert!(
+            mid < warm_one.0,
+            "beta 0.2 must beat beta 0.4: {mid} vs {}",
+            warm_one.0
+        );
+        assert!(
+            mid < err(0.05, false, 1, Relaxation::Warm),
+            "and beat beta 0.05: {mid}"
+        );
 
         // AND IT IS A FINITE-BUDGET EFFECT ONLY. Given enough sweeps both protocols reach the same
         // equilibrium and the two rows become identical, which is why this is about budgets and not
@@ -615,9 +762,15 @@ mod tests {
         for &beta in &[0.4f64, 0.05, 0.001] {
             let w = err(beta, false, 200, Relaxation::Warm);
             let c = err(beta, false, 200, Relaxation::Cold);
-            assert!((w - c).abs() < 1e-12, "at 200 sweeps the protocols must agree: {w} vs {c} at beta {beta}");
+            assert!(
+                (w - c).abs() < 1e-12,
+                "at 200 sweeps the protocols must agree: {w} vs {c} at beta {beta}"
+            );
             // and there the classical picture is back: colder really is better.
-            assert!(w < err(0.4, false, 200, Relaxation::Warm) || (beta - 0.4).abs() < 1e-12, "monotone at 200 sweeps");
+            assert!(
+                w < err(0.4, false, 200, Relaxation::Warm) || (beta - 0.4).abs() < 1e-12,
+                "monotone at 200 sweeps"
+            );
         }
     }
 
@@ -627,17 +780,35 @@ mod tests {
         let (g, task) = small_machine(1);
         let (x, t) = ([1i8, -1], [1i8]);
         let truth = exact_gradient(&g, &task, &x, &t);
-        let e1 = max_err(&eqprop_gradient_exact(&g, &task, &x, &t, 0.2, false), &truth);
-        let e2 = max_err(&eqprop_gradient_exact(&g, &task, &x, &t, 0.1, false), &truth);
+        let e1 = max_err(
+            &eqprop_gradient_exact(&g, &task, &x, &t, 0.2, false),
+            &truth,
+        );
+        let e2 = max_err(
+            &eqprop_gradient_exact(&g, &task, &x, &t, 0.1, false),
+            &truth,
+        );
         let c1 = max_err(&eqprop_gradient_exact(&g, &task, &x, &t, 0.2, true), &truth);
         let c2 = max_err(&eqprop_gradient_exact(&g, &task, &x, &t, 0.1, true), &truth);
-        assert!(e1 > 1e-4 && c1 > 1e-6, "the errors must be visible to have rates: {e1}, {c1}");
+        assert!(
+            e1 > 1e-4 && c1 > 1e-6,
+            "the errors must be visible to have rates: {e1}, {c1}"
+        );
         let (r1, r2) = (e1 / e2, c1 / c2);
-        assert!((1.7..2.3).contains(&r1), "one-sided error ratio {r1}, expected about 2");
-        assert!((3.4..4.6).contains(&r2), "centered error ratio {r2}, expected about 4");
+        assert!(
+            (1.7..2.3).contains(&r1),
+            "one-sided error ratio {r1}, expected about 2"
+        );
+        assert!(
+            (3.4..4.6).contains(&r2),
+            "centered error ratio {r2}, expected about 4"
+        );
         assert!(c2 < e2, "centered is more accurate at the same beta");
         // and at small beta the quotient is the gradient to high precision
-        let tiny = max_err(&eqprop_gradient_exact(&g, &task, &x, &t, 1e-3, true), &truth);
+        let tiny = max_err(
+            &eqprop_gradient_exact(&g, &task, &x, &t, 1e-3, true),
+            &truth,
+        );
         assert!(tiny < 1e-6, "centered at beta 1e-3: error {tiny}");
     }
 
@@ -648,12 +819,18 @@ mod tests {
         let (x, t) = ([-1i8, 1], [-1i8]);
         let truth = exact_gradient(&g, &task, &x, &t);
         let beta = 0.2;
-        let bias = max_err(&eqprop_gradient_exact(&g, &task, &x, &t, beta, true), &truth);
+        let bias = max_err(
+            &eqprop_gradient_exact(&g, &task, &x, &t, beta, true),
+            &truth,
+        );
         let sampled = eqprop_gradient(&g, &task, &x, &t, beta, true, 500, 40_000, 3);
         let err = max_err(&sampled, &truth);
         // each moment's standard error is ~1/sqrt(draws) ≈ 0.005, divided by 2β = 0.4 → ~0.0125;
         // allow four of those plus the finite-β bias
-        assert!(err < 0.05 + bias, "sampled gradient error {err} (finite-beta bias {bias})");
+        assert!(
+            err < 0.05 + bias,
+            "sampled gradient error {err} (finite-beta bias {bias})"
+        );
     }
 
     /// Learning: a dozen exact-EqProp steps reduce the expected loss on a fixed pattern.

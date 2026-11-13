@@ -101,7 +101,12 @@ impl Default for Params {
     fn default() -> Self {
         // Tenure scaled to the instance is the usual advice; a fixed tenure is either too sticky on
         // small graphs or too loose on large ones. Set at call time by `search` when this is used.
-        Params { iterations: 50_000, tenure: 0, restart_after: Some(5_000), start: None }
+        Params {
+            iterations: 50_000,
+            tenure: 0,
+            restart_after: Some(5_000),
+            start: None,
+        }
     }
 }
 
@@ -141,10 +146,21 @@ pub fn search(g: &Graph, p: &Params, seed: u64) -> Outcome {
 /// iteration — the same quantity a Gibbs sweep charges. Charging one per *flip* would make tabu
 /// look `n` times cheaper than a sweep doing comparable work.
 #[must_use]
-pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut Ledger>) -> Outcome {
+pub fn search_metered(
+    g: &Graph,
+    p: &Params,
+    seed: u64,
+    mut ledger: Option<&mut Ledger>,
+) -> Outcome {
     let n = g.n;
     if n == 0 {
-        return Outcome { state: Vec::new(), energy: 0.0, found_at: 0, restarts: 0, iterations_run: 0 };
+        return Outcome {
+            state: Vec::new(),
+            energy: 0.0,
+            found_at: 0,
+            restarts: 0,
+            iterations_run: 0,
+        };
     }
     // CAPPED AT n-1, which is what makes the deadlock below impossible rather than merely rare.
     //
@@ -154,7 +170,11 @@ pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut 
     // iterations and missed the brute-force optimum on 7 of 30 seeds, while n=10 ran the full
     // budget and missed none. Leaving at least one spin admissible is a property of the tenure, not
     // something to detect afterwards.
-    let tenure = if p.tenure == 0 { (n / 10).max(10) } else { p.tenure };
+    let tenure = if p.tenure == 0 {
+        (n / 10).max(10)
+    } else {
+        p.tenure
+    };
     let tenure = tenure.min(n.saturating_sub(1)).max(1);
     let mut rng = Pcg::new(seed, 0x7AB0);
 
@@ -224,20 +244,27 @@ pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut 
         }
 
         if let Some(after) = p.restart_after
-            && since_improve >= after {
-                s = (0..n).map(|_| rng.spin(0.5)).collect();
-                delta = gains(g, &s);
-                energy = g.energy(&s);
-                last_used.iter_mut().for_each(|v| *v = usize::MAX);
-                since_improve = 0;
-                restarts += 1;
-            }
+            && since_improve >= after
+        {
+            s = (0..n).map(|_| rng.spin(0.5)).collect();
+            delta = gains(g, &s);
+            energy = g.energy(&s);
+            last_used.iter_mut().for_each(|v| *v = usize::MAX);
+            since_improve = 0;
+            restarts += 1;
+        }
     }
 
     // Recomputed, not carried. `energy` is accumulated from deltas across thousands of flips and
     // drifts; the number reported has to be the one the returned STATE actually has.
     let energy = g.energy(&best);
-    Outcome { state: best, energy, found_at, restarts, iterations_run: ran }
+    Outcome {
+        state: best,
+        energy,
+        found_at,
+        restarts,
+        iterations_run: ran,
+    }
 }
 
 /// `Δ_i` for every node: the energy change from flipping `i`.
@@ -291,12 +318,22 @@ mod tests {
             start: Some(optimum.clone()),
         };
         let r = search(&g, &p, 5);
-        assert!(r.energy <= e_opt + 1e-9, "handed the optimum, returned {} vs {e_opt}", r.energy);
-        assert_eq!(r.found_at, 0, "the handed state IS the best, found before any flip");
+        assert!(
+            r.energy <= e_opt + 1e-9,
+            "handed the optimum, returned {} vs {e_opt}",
+            r.energy
+        );
+        assert_eq!(
+            r.found_at, 0,
+            "the handed state IS the best, found before any flip"
+        );
 
         // And a wrong length is ignored rather than panicking or truncating: the search runs from
         // noise, which is what it did before `start` existed.
-        let bad = Params { start: Some(vec![1i8; g.n + 3]), ..p.clone() };
+        let bad = Params {
+            start: Some(vec![1i8; g.n + 3]),
+            ..p.clone()
+        };
         let r2 = search(&g, &bad, 5);
         assert!(r2.energy.is_finite());
         assert_eq!(r2.state.len(), g.n);
@@ -313,9 +350,21 @@ mod tests {
         }
         let g = b.build();
         let warm: Vec<i8> = (0..g.n).map(|i| if i % 3 == 0 { 1 } else { -1 }).collect();
-        let p = Params { iterations: 300, tenure: 4, restart_after: None, start: None };
+        let p = Params {
+            iterations: 300,
+            tenure: 4,
+            restart_after: None,
+            start: None,
+        };
         let cold = search(&g, &p, 9);
-        let hot = search(&g, &Params { start: Some(warm), ..p.clone() }, 9);
+        let hot = search(
+            &g,
+            &Params {
+                start: Some(warm),
+                ..p.clone()
+            },
+            9,
+        );
         assert!(
             cold.state != hot.state || (cold.energy - hot.energy).abs() > 1e-12,
             "same seed and a different start must be a different run, or `start` does nothing"
@@ -343,7 +392,9 @@ mod tests {
     fn brute_min(g: &Graph) -> f64 {
         (0..(1u32 << g.n))
             .map(|m| {
-                let s: Vec<i8> = (0..g.n).map(|i| if m >> i & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|i| if m >> i & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 g.energy(&s)
             })
             .fold(f64::INFINITY, f64::min)
@@ -385,7 +436,11 @@ mod tests {
             let predicted = delta[i];
             flip(&g, &mut s, &mut delta, i);
             let after = g.energy(&s);
-            assert!((after - before - predicted).abs() < 1e-9, "predicted {predicted}, got {}", after - before);
+            assert!(
+                (after - before - predicted).abs() < 1e-9,
+                "predicted {predicted}, got {}",
+                after - before
+            );
         }
     }
 
@@ -397,7 +452,12 @@ mod tests {
             let g = random_graph(14, 0.35, seed);
             let r = search(
                 &g,
-                &Params { iterations: 3_000, tenure: 0, restart_after: Some(400), start: None },
+                &Params {
+                    iterations: 3_000,
+                    tenure: 0,
+                    restart_after: Some(400),
+                    start: None,
+                },
                 seed,
             );
             assert!((r.energy - g.energy(&r.state)).abs() < 1e-9, "seed {seed}");
@@ -441,16 +501,31 @@ mod tests {
         for seed in 0..30u64 {
             let g = random_graph(16, 0.4, seed + 100);
             let descent = steepest_descent(&g, seed);
-            let tabu = search(&g, &Params { iterations: 2_000, tenure: 0, restart_after: None, start: None }, seed);
+            let tabu = search(
+                &g,
+                &Params {
+                    iterations: 2_000,
+                    tenure: 0,
+                    restart_after: None,
+                    start: None,
+                },
+                seed,
+            );
             if tabu.energy < descent - 1e-9 {
                 wins += 1;
             } else if tabu.energy > descent + 1e-9 {
                 losses += 1;
             }
         }
-        assert!(wins >= 20, "tabu improved on descent in only {wins}/30 instances");
-        assert_eq!(losses, 0, "tabu was WORSE than plain descent on {losses}/30, which it cannot be \
-                               if it is tracking the best state it ever saw");
+        assert!(
+            wins >= 20,
+            "tabu improved on descent in only {wins}/30 instances"
+        );
+        assert_eq!(
+            losses, 0,
+            "tabu was WORSE than plain descent on {losses}/30, which it cannot be \
+                               if it is tracking the best state it ever saw"
+        );
     }
 
     #[test]
@@ -467,7 +542,12 @@ mod tests {
         for n in [3usize, 4, 6, 8, 9, 10, 11, 40] {
             let g = random_graph(n, 0.5, n as u64);
             for tenure in [50usize, 0, 1] {
-                let p = Params { iterations: 3_000, tenure, restart_after: None, start: None };
+                let p = Params {
+                    iterations: 3_000,
+                    tenure,
+                    restart_after: None,
+                    start: None,
+                };
                 let r = search(&g, &p, 1);
                 assert_eq!(
                     r.iterations_run, p.iterations,
@@ -485,11 +565,21 @@ mod tests {
         for n in [4usize, 6, 8, 9, 10] {
             let g = random_graph(n, 0.5, n as u64 + 7);
             let truth = brute_min(&g);
-            let r = search(&g, &Params { iterations: 20_000, tenure: 0, restart_after: Some(200), start: None }, 3);
+            let r = search(
+                &g,
+                &Params {
+                    iterations: 20_000,
+                    tenure: 0,
+                    restart_after: Some(200),
+                    start: None,
+                },
+                3,
+            );
             assert!(
                 r.energy <= truth + 1e-9,
                 "n={n}: got {} against a true minimum of {truth} after {} iterations",
-                r.energy, r.iterations_run
+                r.energy,
+                r.iterations_run
             );
         }
     }
@@ -499,7 +589,16 @@ mod tests {
         for seed in 0..25u64 {
             let g = random_graph(12, 0.45, seed + 500);
             let truth = brute_min(&g);
-            let r = search(&g, &Params { iterations: 20_000, tenure: 0, restart_after: Some(500), start: None }, seed);
+            let r = search(
+                &g,
+                &Params {
+                    iterations: 20_000,
+                    tenure: 0,
+                    restart_after: Some(500),
+                    start: None,
+                },
+                seed,
+            );
             assert!(
                 r.energy <= truth + 1e-9,
                 "seed {seed}: found {} against a true minimum of {truth}",
@@ -511,7 +610,16 @@ mod tests {
     #[test]
     fn the_ferromagnet_reaches_its_ground_state() {
         let g = lattice2d(8, 1.0);
-        let r = search(&g, &Params { iterations: 20_000, tenure: 0, restart_after: Some(2_000), start: None }, 7);
+        let r = search(
+            &g,
+            &Params {
+                iterations: 20_000,
+                tenure: 0,
+                restart_after: Some(2_000),
+                start: None,
+            },
+            7,
+        );
         // 64 nodes, 2 bonds each on a periodic lattice: -128 with every bond satisfied.
         assert!((r.energy - (-128.0)).abs() < 1e-9, "got {}", r.energy);
     }
@@ -526,7 +634,17 @@ mod tests {
         // The subject here is the LEDGER, not the answer: the solver runs only to accumulate
         // operation counts, and the assertion below is about those. `let _` says so explicitly,
         // which is what `must_use` is for -- it made these three sites declare their intent.
-        let _ = search_metered(&g, &Params { iterations: iters, tenure: 4, restart_after: None, start: None }, 1, Some(&mut led));
+        let _ = search_metered(
+            &g,
+            &Params {
+                iterations: iters,
+                tenure: 4,
+                restart_after: None,
+                start: None,
+            },
+            1,
+            Some(&mut led),
+        );
         assert_eq!(led.samples, (g.n * iters) as u64);
     }
 

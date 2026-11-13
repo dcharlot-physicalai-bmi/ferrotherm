@@ -67,7 +67,10 @@ impl std::fmt::Display for EccError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             EccError::ShortFrame { words, needed } => {
-                write!(f, "frame has {words} words, the ECC field needs word {needed}")
+                write!(
+                    f,
+                    "frame has {words} words, the ECC field needs word {needed}"
+                )
             }
             EccError::BitOutOfRange { bit } => write!(f, "bit {bit} is outside a 32-bit word"),
         }
@@ -107,7 +110,10 @@ pub fn set_parity(frame: &mut [u32], word: usize, bit: u32) -> Result<bool, EccE
         return Err(EccError::BitOutOfRange { bit });
     }
     if frame.len() <= word {
-        return Err(EccError::ShortFrame { words: frame.len(), needed: word });
+        return Err(EccError::ShortFrame {
+            words: frame.len(),
+            needed: word,
+        });
     }
     let mask = 1u32 << bit;
     frame[word] &= !mask;
@@ -160,7 +166,12 @@ impl Survey {
 #[must_use]
 pub fn survey(stream: &[u32], words_per_frame: usize) -> Survey {
     if words_per_frame == 0 {
-        return Survey { frames: 0, occupied: 0, odd: 0, remainder: stream.len() };
+        return Survey {
+            frames: 0,
+            occupied: 0,
+            odd: 0,
+            remainder: stream.len(),
+        };
     }
     let mut s = Survey {
         frames: stream.len() / words_per_frame,
@@ -189,7 +200,10 @@ mod tests {
     #[test]
     fn the_reserved_field_is_where_we_write() {
         let (parity, field) = (X7_PARITY_BIT, X7_ECC_BITS);
-        assert!(parity < field, "the parity bit lives inside the reserved field");
+        assert!(
+            parity < field,
+            "the parity bit lives inside the reserved field"
+        );
         assert_eq!(X7_ECC_WORD, 50);
     }
 
@@ -198,13 +212,19 @@ mod tests {
     fn parity_is_set_only_when_the_count_is_odd() {
         let mut odd = vec![0u32; WORDS_PER_FRAME];
         odd[3] = 0b1;
-        assert!(set_x7_parity(&mut odd).unwrap(), "one set bit is odd, so parity is written");
+        assert!(
+            set_x7_parity(&mut odd).unwrap(),
+            "one set bit is odd, so parity is written"
+        );
         assert!(is_even(&odd));
         assert_eq!(odd[X7_ECC_WORD], 1 << X7_PARITY_BIT);
 
         let mut even = vec![0u32; WORDS_PER_FRAME];
         even[3] = 0b11;
-        assert!(!set_x7_parity(&mut even).unwrap(), "two set bits are already even");
+        assert!(
+            !set_x7_parity(&mut even).unwrap(),
+            "two set bits are already even"
+        );
         assert!(is_even(&even));
         assert_eq!(even[X7_ECC_WORD], 0);
     }
@@ -220,7 +240,10 @@ mod tests {
     fn setting_parity_is_idempotent() {
         let mut f = vec![0u32; WORDS_PER_FRAME];
         f[7] = 0b111;
-        assert!(!is_even(&f), "the fixture must be odd or nothing gets written");
+        assert!(
+            !is_even(&f),
+            "the fixture must be odd or nothing gets written"
+        );
         let first = set_x7_parity(&mut f).unwrap();
         assert!(first, "an odd frame gets the bit");
         let snapshot = f.clone();
@@ -245,9 +268,15 @@ mod tests {
         let mut f = vec![0u32; 8];
         assert_eq!(
             set_x7_parity(&mut f),
-            Err(EccError::ShortFrame { words: 8, needed: X7_ECC_WORD })
+            Err(EccError::ShortFrame {
+                words: 8,
+                needed: X7_ECC_WORD
+            })
         );
-        assert_eq!(set_parity(&mut f, 0, 32), Err(EccError::BitOutOfRange { bit: 32 }));
+        assert_eq!(
+            set_parity(&mut f, 0, 32),
+            Err(EccError::BitOutOfRange { bit: 32 })
+        );
     }
 
     /// A survey of nothing must not read as agreement.
@@ -255,7 +284,10 @@ mod tests {
     fn an_empty_survey_is_not_vendor_shaped() {
         let s = survey(&[], WORDS_PER_FRAME);
         assert_eq!(s.frames, 0);
-        assert!(!s.vendor_shaped(), "a check that compared nothing claimed a pass");
+        assert!(
+            !s.vendor_shaped(),
+            "a check that compared nothing claimed a pass"
+        );
     }
 
     /// The survey separates the two failures: wrong parity, and the wrong device family.
@@ -273,7 +305,10 @@ mod tests {
 
         // the same words read as UltraScale+ frames: the geometry does not divide
         let wrong = survey(&stream, crate::usplus::WORDS_PER_FRAME);
-        assert_ne!(wrong.remainder, 0, "101-word frames read as 93-word ones must not divide");
+        assert_ne!(
+            wrong.remainder, 0,
+            "101-word frames read as 93-word ones must not divide"
+        );
         assert!(!wrong.vendor_shaped());
     }
 

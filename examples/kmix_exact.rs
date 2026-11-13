@@ -26,8 +26,8 @@
 //
 // run: cargo run --release --example kmix_exact
 
-use ferrotherm::autocorr::{apply_distribution, boltzmann, tau_int_exact, total_variation, Kernel};
-use ferrotherm::dtm::{forward_step, gamma_coupling, Dtm};
+use ferrotherm::autocorr::{Kernel, apply_distribution, boltzmann, tau_int_exact, total_variation};
+use ferrotherm::dtm::{Dtm, forward_step, gamma_coupling};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -60,7 +60,11 @@ impl Data {
         let n = w * h;
         let mut b = GraphBuilder::new(n);
         for &(a, c) in &grid_edges(w, h) {
-            b.couple(a as usize, c as usize, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+            b.couple(
+                a as usize,
+                c as usize,
+                if rng.f64() < 0.5 { -1.0 } else { 1.0 },
+            );
         }
         let g = b.build();
         let pi = boltzmann(&g, beta).expect("small");
@@ -75,7 +79,9 @@ impl Data {
     fn draw(&self, rng: &mut Pcg) -> Vec<i8> {
         let u = rng.f64();
         let x = self.cdf.partition_point(|&c| c < u).min(self.cdf.len() - 1);
-        (0..self.n).map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 }).collect()
+        (0..self.n)
+            .map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 })
+            .collect()
     }
 }
 
@@ -90,7 +96,11 @@ fn conditional(dtm: &Dtm, t: usize, x_next: &[i8]) -> Graph {
         b.couple(a as usize, c as usize, ebm.j[k]);
     }
     for i in 0..ebm.n {
-        let extra = if i < dtm.nv { 0.5 * g * f64::from(x_next[i]) } else { 0.0 };
+        let extra = if i < dtm.nv {
+            0.5 * g * f64::from(x_next[i])
+        } else {
+            0.0
+        };
         b.bias(i, ebm.h[i] + extra);
     }
     b.build()
@@ -123,14 +133,30 @@ fn main() {
     let times = vec![0.0, 0.15, 0.35, 0.7, 1.4];
     let (train_iters, batch, k_sweeps, lr) = (400usize, 64usize, 10usize, 0.05);
     let contexts = 8u64;
-    println!("K_mix, EXACTLY: sweeps a denoising step needs from a uniform start, on enumerable DTMs\n");
-    println!("  chain     T = {t_steps} steps, gamma = {gamma}, times {times:?}; visible = all sites, no latents");
-    println!("  training  {train_iters} contrastive steps per stage, batch {batch}, {k_sweeps} sweeps per phase, lr {lr}");
+    println!(
+        "K_mix, EXACTLY: sweeps a denoising step needs from a uniform start, on enumerable DTMs\n"
+    );
+    println!(
+        "  chain     T = {t_steps} steps, gamma = {gamma}, times {times:?}; visible = all sites, no latents"
+    );
+    println!(
+        "  training  {train_iters} contrastive steps per stage, batch {batch}, {k_sweeps} sweeps per phase, lr {lr}"
+    );
     println!("  data      a frustrated +-J grid at beta 0.8, drawn exactly by enumeration");
-    println!("  kernel    sequential single-site Gibbs, the sweep Dtm::sample runs; start uniform, as it does\n");
+    println!(
+        "  kernel    sequential single-site Gibbs, the sweep Dtm::sample runs; start uniform, as it does\n"
+    );
     println!(
         "  {:>5} {:>4}   {:>9} {:>9}   {:>7} {:>7}   {:>8} {:>8}   {:>12}",
-        "grid", "step", "tau mean", "tau max", "K1% avg", "K1% max", "K.1% avg", "K.1% max", "250 covers?"
+        "grid",
+        "step",
+        "tau mean",
+        "tau max",
+        "K1% avg",
+        "K1% max",
+        "K.1% avg",
+        "K.1% max",
+        "250 covers?"
     );
     for &(w, h) in &[(3usize, 3usize), (4, 3)] {
         let n = w * h;
@@ -215,8 +241,15 @@ fn main() {
                     forward_step(&mut x, gamma, times[u + 1] - times[u], &mut crng);
                 }
                 let g = conditional(&dtm, t, &x);
-                let a = tau_int_exact(&g, 1.0, Kernel::SequentialGibbs, |s| g.energy(s), 1e-12, 500_000)
-                    .expect("small model, varying energy");
+                let a = tau_int_exact(
+                    &g,
+                    1.0,
+                    Kernel::SequentialGibbs,
+                    |s| g.energy(s),
+                    1e-12,
+                    500_000,
+                )
+                .expect("small model, varying energy");
                 let ks = sweeps_to(&g, &[0.01, 0.001], 5_000);
                 taus.push(a.tau_int);
                 k1s.push(ks[0]);
@@ -236,13 +269,27 @@ fn main() {
                 if k1max <= 250 { "yes" } else { "NO" }
             );
         }
-        println!("  {w}x{h}: the largest K(1%) over every step and context is {worst_k1} sweeps against the paper's 250.\n");
+        println!(
+            "  {w}x{h}: the largest K(1%) over every step and context is {worst_k1} sweeps against the paper's 250.\n"
+        );
     }
     println!("  WHAT THE TABLE SAYS.\n");
-    println!("  K(1%) is the number of sequential Gibbs sweeps, from the uniform start Dtm::sample uses, after");
-    println!("  which the step's sampled distribution is within 1% total variation of its exact conditional.");
-    println!("  It is computed by pushing the uniform distribution through the exact kernel; there is no");
-    println!("  sampling in it and no window. If 250 covers every row with room, the paper's constant is");
-    println!("  generous at these sizes and the trend between 3x3 and 4x3 says which way it moves; if any");
-    println!("  row exceeds it, samples from that step are biased by at least the TV at 250 sweeps.");
+    println!(
+        "  K(1%) is the number of sequential Gibbs sweeps, from the uniform start Dtm::sample uses, after"
+    );
+    println!(
+        "  which the step's sampled distribution is within 1% total variation of its exact conditional."
+    );
+    println!(
+        "  It is computed by pushing the uniform distribution through the exact kernel; there is no"
+    );
+    println!(
+        "  sampling in it and no window. If 250 covers every row with room, the paper's constant is"
+    );
+    println!(
+        "  generous at these sizes and the trend between 3x3 and 4x3 says which way it moves; if any"
+    );
+    println!(
+        "  row exceeds it, samples from that step are biased by at least the TV at 250 sweeps."
+    );
 }

@@ -115,7 +115,9 @@ pub enum CertError {
 impl core::fmt::Display for CertError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            CertError::Shape { got, want } => write!(f, "y has {got} entries and this graph needs {want}"),
+            CertError::Shape { got, want } => {
+                write!(f, "y has {got} entries and this graph needs {want}")
+            }
             CertError::NotPsd => write!(
                 f,
                 "C - Diag(y) did not verify as positive definite, so this y is not dual feasible \
@@ -192,7 +194,14 @@ impl Cost {
             }
             nz_off.push(nz_col.len());
         }
-        Cost { n, dense, nz_off, nz_col, nz_val, homogenised: homog }
+        Cost {
+            n,
+            dense,
+            nz_off,
+            nz_col,
+            nz_val,
+            homogenised: homog,
+        }
     }
 
     #[inline]
@@ -248,7 +257,11 @@ fn verify_psd(cost: &Cost, y: &[f64], c: f64) -> bool {
         // S = C - Diag(y), then the verification shift, then one ULP down for the rounding of the
         // subtraction itself.
         let d = -y[i] - c;
-        a[i * n + i] = if d.is_finite() { next_down(d) } else { return false };
+        a[i * n + i] = if d.is_finite() {
+            next_down(d)
+        } else {
+            return false;
+        };
     }
     // Plain right-looking Cholesky. NO `mul_add`: fusion changes the error model Rump's lemma
     // assumes, and a "harmless" optimisation here would silently void the proof.
@@ -308,8 +321,9 @@ fn next_down(x: f64) -> f64 {
 /// argument. Termination is not in doubt — a large enough diagonal makes any symmetric matrix
 /// strictly dominant — and the loop reports how far it had to go.
 fn gershgorin_verified(cost: &Cost) -> Option<(Vec<f64>, f64)> {
-    let rows: Vec<f64> =
-        (0..cost.n).map(|a| cost.row(a).iter().map(|v| v.abs()).sum::<f64>()).collect();
+    let rows: Vec<f64> = (0..cost.n)
+        .map(|a| cost.row(a).iter().map(|v| v.abs()).sum::<f64>())
+        .collect();
     // A scale for the ADDITIVE part, so an edgeless row is nudged by something meaningful rather
     // than by the smallest positive f64.
     let scale = rows.iter().copied().fold(0.0f64, f64::max).max(1.0);
@@ -344,7 +358,11 @@ fn mixing(cost: &Cost, rank: usize, sweeps: usize, seed: u64) -> (Vec<f64>, Vec<
                 let u2 = rng.f64();
                 v[a * k + t] = (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos();
             }
-            let nrm = v[a * k..a * k + k].iter().map(|x| x * x).sum::<f64>().sqrt();
+            let nrm = v[a * k..a * k + k]
+                .iter()
+                .map(|x| x * x)
+                .sum::<f64>()
+                .sqrt();
             if nrm > 0.0 && nrm.is_finite() {
                 for t in 0..k {
                     v[a * k + t] /= nrm;
@@ -505,14 +523,22 @@ pub struct Rounding {
 pub fn goemans_williamson(g: &Graph, p: &Params, seed: u64, hyperplanes: usize) -> Rounding {
     let n = g.n;
     if n == 0 {
-        return Rounding { state: Vec::new(), cut: 0.0, energy: 0.0, hyperplanes: 0, guaranteed: true };
+        return Rounding {
+            state: Vec::new(),
+            cut: 0.0,
+            energy: 0.0,
+            hyperplanes: 0,
+            guaranteed: true,
+        };
     }
     // The guarantee is stated for non-negative max-cut weights, and this crate's max-cut weight is
     // `−J`. So it applies exactly when every coupling is non-positive: an antiferromagnet.
     let guaranteed = g.w.iter().all(|&w| w <= 0.0) && g.h.iter().all(|&h| h == 0.0);
 
     let cost = Cost::build(g);
-    let rank = p.rank.unwrap_or_else(|| ((2.0 * cost.n as f64).sqrt().ceil() as usize + 1).min(cost.n));
+    let rank = p
+        .rank
+        .unwrap_or_else(|| ((2.0 * cost.n as f64).sqrt().ceil() as usize + 1).min(cost.n));
     let (_y, v, k) = mixing(&cost, rank, p.sweeps, seed);
 
     let mut rng = Pcg::new(seed, 0x060E_3A15);
@@ -555,7 +581,13 @@ pub fn goemans_williamson(g: &Graph, p: &Params, seed: u64, hyperplanes: usize) 
         }
     }
     let energy = g.energy(&best);
-    Rounding { state: best, cut, energy, hyperplanes: draws, guaranteed }
+    Rounding {
+        state: best,
+        cut,
+        energy,
+        hyperplanes: draws,
+        guaranteed,
+    }
 }
 
 /// How hard to try.
@@ -572,7 +604,11 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { sweeps: 200, rank: None, lanczos: 64 }
+        Params {
+            sweeps: 200,
+            rank: None,
+            lanczos: 64,
+        }
     }
 }
 
@@ -584,20 +620,46 @@ pub fn certified(g: &Graph, p: &Params, seed: u64) -> (Bound, Certificate) {
     let cost = Cost::build(g);
     let n = cost.n;
     if n == 0 {
-        let b = Bound { value: 0.0, parts: 0, method: "sdp: empty graph", rounds: 0, best_round: 0 };
+        let b = Bound {
+            value: 0.0,
+            parts: 0,
+            method: "sdp: empty graph",
+            rounds: 0,
+            best_round: 0,
+        };
         let c = Certificate {
-            y: Vec::new(), value: 0.0, homogenised: false, rump_c: 0.0, sweeps: 0, rank: 0,
+            y: Vec::new(),
+            value: 0.0,
+            homogenised: false,
+            rump_c: 0.0,
+            sweeps: 0,
+            rank: 0,
         };
         return (b, c);
     }
-    let rank = p.rank.unwrap_or_else(|| ((2.0 * n as f64).sqrt().ceil() as usize + 1).min(n));
+    let rank = p
+        .rank
+        .unwrap_or_else(|| ((2.0 * n as f64).sqrt().ceil() as usize + 1).min(n));
 
     // The floor, grown until it verifies. `None` would mean even a hugely dominant diagonal failed
     // the Cholesky, which cannot happen for a finite matrix -- but it is returned rather than
     // unwrapped, because a panic here would be a panic inside a soundness check.
     let Some((mut best_y, mut rc)) = gershgorin_verified(&cost) else {
-        let b = Bound { value: f64::NEG_INFINITY, parts: 0, method: "sdp: no dual point verified", rounds: 0, best_round: 0 };
-        let c = Certificate { y: Vec::new(), value: f64::NEG_INFINITY, homogenised: cost.homogenised, rump_c: 0.0, sweeps: 0, rank };
+        let b = Bound {
+            value: f64::NEG_INFINITY,
+            parts: 0,
+            method: "sdp: no dual point verified",
+            rounds: 0,
+            best_round: 0,
+        };
+        let c = Certificate {
+            y: Vec::new(),
+            value: f64::NEG_INFINITY,
+            homogenised: cost.homogenised,
+            rump_c: 0.0,
+            sweeps: 0,
+            rank,
+        };
         return (b, c);
     };
     let mut best_val: f64 = best_y.iter().sum();
@@ -640,12 +702,13 @@ pub fn certified(g: &Graph, p: &Params, seed: u64) -> (Bound, Certificate) {
 
     let mut sweeps_used = 0usize;
     if let Some((ys, v, c)) = accepted
-        && v > best_val {
-            best_val = v;
-            best_y = ys;
-            rc = c;
-            sweeps_used = p.sweeps;
-        }
+        && v > best_val
+    {
+        best_val = v;
+        best_y = ys;
+        rc = c;
+        sweeps_used = p.sweeps;
+    }
 
     let cert = Certificate {
         y: best_y,
@@ -679,7 +742,10 @@ impl Certificate {
     pub fn verify(&self, g: &Graph) -> Result<f64, CertError> {
         let cost = Cost::build(g);
         if self.y.len() != cost.n {
-            return Err(CertError::Shape { got: self.y.len(), want: cost.n });
+            return Err(CertError::Shape {
+                got: self.y.len(),
+                want: cost.n,
+            });
         }
         if self.y.iter().any(|v| !v.is_finite()) || !self.value.is_finite() {
             return Err(CertError::NotFinite);
@@ -719,7 +785,9 @@ mod tests {
     fn brute_min(g: &Graph) -> f64 {
         (0..(1u32 << g.n))
             .map(|m| {
-                let s: Vec<i8> = (0..g.n).map(|i| if m >> i & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|i| if m >> i & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 g.energy(&s)
             })
             .fold(f64::INFINITY, f64::min)
@@ -729,7 +797,11 @@ mod tests {
     fn the_bound_never_exceeds_the_true_minimum() {
         // SOUNDNESS, which is the only property that matters. Checked with AND without fields, so
         // the homogenisation path is exercised rather than assumed.
-        let p = Params { sweeps: 60, rank: None, lanczos: 24 };
+        let p = Params {
+            sweeps: 60,
+            rank: None,
+            lanczos: 24,
+        };
         for seed in 0..60u64 {
             for fields in [false, true] {
                 let g = random_graph(9, 0.45, seed, fields);
@@ -751,7 +823,11 @@ mod tests {
         let g = random_graph(12, 0.4, 5, true);
         let (b, cert) = certified(&g, &Params::default(), 5);
         let v = cert.verify(&g).expect("its own certificate must re-verify");
-        assert!((v - b.value).abs() < 1e-12, "verify gave {v}, bound said {}", b.value);
+        assert!(
+            (v - b.value).abs() < 1e-12,
+            "verify gave {v}, bound said {}",
+            b.value
+        );
         assert!(v <= brute_min(&g) + 1e-9);
     }
 
@@ -766,7 +842,11 @@ mod tests {
         for a in 0..cert.y.len() {
             cert.y[a] += 1.0;
         }
-        assert_eq!(cert.verify(&g), Err(CertError::NotPsd), "an inflated y must not verify");
+        assert_eq!(
+            cert.verify(&g),
+            Err(CertError::NotPsd),
+            "an inflated y must not verify"
+        );
         // And the shape check is real too.
         cert.y.push(0.0);
         assert!(matches!(cert.verify(&g), Err(CertError::Shape { .. })));
@@ -779,7 +859,15 @@ mod tests {
         // floor. Without that, an unlucky mixing run could report worse than the one-pass bound.
         for seed in 0..25u64 {
             let g = random_graph(11, 0.5, seed + 40, seed % 2 == 0);
-            let (b, _) = certified(&g, &Params { sweeps: 5, rank: Some(2), lanczos: 8 }, seed);
+            let (b, _) = certified(
+                &g,
+                &Params {
+                    sweeps: 5,
+                    rank: Some(2),
+                    lanczos: 8,
+                },
+                seed,
+            );
             let dec = crate::bound::decoupled(&g);
             assert!(
                 b.value >= dec.value - 1e-9,
@@ -794,13 +882,24 @@ mod tests {
     fn a_bad_search_loosens_the_bound_without_invalidating_it() {
         // The claim the module doc rests on: everything upstream of the psd check is a heuristic.
         // One sweep at rank 1 is a deliberately terrible choice of y, and it must still be SOUND.
-        let p = Params { sweeps: 1, rank: Some(1), lanczos: 4 };
+        let p = Params {
+            sweeps: 1,
+            rank: Some(1),
+            lanczos: 4,
+        };
         for seed in 0..30u64 {
             let g = random_graph(10, 0.45, seed + 90, false);
             let truth = brute_min(&g);
             let (b, cert) = certified(&g, &p, seed);
-            assert!(b.value <= truth + 1e-9, "seed {seed}: {} > {truth}", b.value);
-            assert!(cert.verify(&g).is_ok(), "seed {seed}: certificate must still verify");
+            assert!(
+                b.value <= truth + 1e-9,
+                "seed {seed}: {} > {truth}",
+                b.value
+            );
+            assert!(
+                cert.verify(&g).is_ok(),
+                "seed {seed}: certificate must still verify"
+            );
         }
     }
 
@@ -812,7 +911,10 @@ mod tests {
         let cost = Cost::build(&g);
         let zero = vec![0.0; cost.n];
         let c = rump_c(&cost, &zero);
-        assert!(!verify_psd(&cost, &zero, c), "a zero-diagonal C with edges cannot be PSD");
+        assert!(
+            !verify_psd(&cost, &zero, c),
+            "a zero-diagonal C with edges cannot be PSD"
+        );
         // And the Gershgorin floor, which is grown until it does. The textbook point is only
         // SEMI-definite (row sums exactly balanced), so this is the nudged one.
         let (yg, cg) = gershgorin_verified(&cost).expect("a dominant diagonal must verify");
@@ -820,17 +922,39 @@ mod tests {
         // Nudging can only lower y, so the floor never claims more than `decoupled`.
         let dec = crate::bound::decoupled(&g).value;
         let got: f64 = yg.iter().sum();
-        assert!(got <= dec + 1e-9, "the floor {got} must not exceed decoupled {dec}");
+        assert!(
+            got <= dec + 1e-9,
+            "the floor {got} must not exceed decoupled {dec}"
+        );
     }
 
     #[test]
     fn homogenisation_is_used_exactly_when_there_are_fields() {
         let no_h = random_graph(8, 0.5, 1, false);
         let with_h = random_graph(8, 0.5, 1, true);
-        let (_, c1) = certified(&no_h, &Params { sweeps: 10, rank: Some(4), lanczos: 8 }, 1);
-        let (_, c2) = certified(&with_h, &Params { sweeps: 10, rank: Some(4), lanczos: 8 }, 1);
+        let (_, c1) = certified(
+            &no_h,
+            &Params {
+                sweeps: 10,
+                rank: Some(4),
+                lanczos: 8,
+            },
+            1,
+        );
+        let (_, c2) = certified(
+            &with_h,
+            &Params {
+                sweeps: 10,
+                rank: Some(4),
+                lanczos: 8,
+            },
+            1,
+        );
         assert!(!c1.homogenised && c1.y.len() == no_h.n);
-        assert!(c2.homogenised && c2.y.len() == with_h.n + 1, "a gauge spin is prepended");
+        assert!(
+            c2.homogenised && c2.y.len() == with_h.n + 1,
+            "a gauge spin is prepended"
+        );
     }
 
     /// THE GUARANTEE, CHECKED AGAINST A PROVED OPTIMUM.
@@ -859,7 +983,10 @@ mod tests {
             }
             let g = gb.build();
             let r = goemans_williamson(&g, &Params::default(), seed, 64);
-            assert!(r.guaranteed, "seed {seed}: an antiferromagnet must be inside the hypothesis");
+            assert!(
+                r.guaranteed,
+                "seed {seed}: an antiferromagnet must be inside the hypothesis"
+            );
             assert_eq!(r.state.len(), n);
             assert!(r.state.iter().all(|&v| v == 1 || v == -1));
             assert!((r.energy - g.energy(&r.state)).abs() < 1e-9);
@@ -885,7 +1012,10 @@ mod tests {
         }
         // And the bound is not vacuous: if every instance rounded to the exact optimum the test
         // would pass without ever exercising the ratio.
-        assert!(worst < 1.0 - 1e-12 || worst.is_infinite(), "worst ratio was {worst}");
+        assert!(
+            worst < 1.0 - 1e-12 || worst.is_infinite(),
+            "worst ratio was {worst}"
+        );
     }
 
     /// The flag must be able to say NO, and must say no on the instances the field actually cares
@@ -894,7 +1024,10 @@ mod tests {
     fn the_guarantee_flag_refuses_a_mixed_sign_instance() {
         let g = random_graph(12, 0.5, 3, false); // couplings of both signs
         let r = goemans_williamson(&g, &Params::default(), 3, 32);
-        assert!(!r.guaranteed, "a mixed-sign instance is outside the theorem's hypothesis");
+        assert!(
+            !r.guaranteed,
+            "a mixed-sign instance is outside the theorem's hypothesis"
+        );
         // It is still a valid state and still an honest cut, just without the ratio.
         assert!((r.energy - g.energy(&r.state)).abs() < 1e-9);
         assert!(r.state.iter().all(|&v| v == 1 || v == -1));
@@ -1004,11 +1137,16 @@ mod tests {
                 dense[a * n + a] = -y[a]; // S = C - Diag(y), and C has a zero diagonal
             }
             let _ = crate::linalg::jacobi_eig(&mut dense, n);
-            let truth = (0..n).map(|i| dense[i * n + i]).fold(f64::INFINITY, f64::min);
+            let truth = (0..n)
+                .map(|i| dense[i * n + i])
+                .fold(f64::INFINITY, f64::min);
 
             let est = lanczos_min(&cost, &y, n, seed);
             // Rayleigh-Ritz: a Ritz value is never below the true minimum.
-            assert!(est >= truth - 1e-6, "seed {seed}: Ritz value {est} sits BELOW lambda_min {truth}");
+            assert!(
+                est >= truth - 1e-6,
+                "seed {seed}: Ritz value {est} sits BELOW lambda_min {truth}"
+            );
             // And a full-length Krylov space reaches it. The old bug returned a number near -1
             // against a true minimum several times that, so this is the assertion that catches it.
             assert!(
@@ -1028,7 +1166,10 @@ mod tests {
         for a in 0..cost.n {
             let (s, e) = (cost.nz_off[a], cost.nz_off[a + 1]);
             let cols = &cost.nz_col[s..e];
-            assert!(cols.windows(2).all(|w| w[0] < w[1]), "row {a} is not strictly ascending");
+            assert!(
+                cols.windows(2).all(|w| w[0] < w[1]),
+                "row {a} is not strictly ascending"
+            );
             for (&b, &val) in cols.iter().zip(&cost.nz_val[s..e]) {
                 assert_eq!(val.to_bits(), cost.row(a)[b as usize].to_bits());
                 assert!(val != 0.0);
@@ -1036,7 +1177,10 @@ mod tests {
             counted += e - s;
         }
         let dense_nz = cost.dense.iter().filter(|v| **v != 0.0).count();
-        assert_eq!(counted, dense_nz, "the index missed a non-zero or invented one");
+        assert_eq!(
+            counted, dense_nz,
+            "the index missed a non-zero or invented one"
+        );
     }
     /// The verified value is never above the true sum, on inputs where naive addition is.
     ///
@@ -1057,7 +1201,10 @@ mod tests {
             "the fixture must actually round up past the true sum, or it tests nothing: {naive:e}"
         );
         let got = sum_down(&tricky);
-        assert!(got <= below_truth, "the certified sum {got:e} is above the true sum");
+        assert!(
+            got <= below_truth,
+            "the certified sum {got:e} is above the true sum"
+        );
 
         // And it stays close: the guard costs order n*eps*|y|, not something a reader would notice.
         assert!(
@@ -1078,12 +1225,19 @@ mod tests {
             let (mut s, mut c) = (0.0f64, 0.0f64);
             for &x in &v {
                 let t = s + x;
-                c += if s.abs() >= x.abs() { (s - t) + x } else { (x - t) + s };
+                c += if s.abs() >= x.abs() {
+                    (s - t) + x
+                } else {
+                    (x - t) + s
+                };
                 s = t;
             }
             let reference = s + c;
             let got = sum_down(&v);
-            assert!(got <= reference, "trial {trial}: {got} exceeded the reference {reference}");
+            assert!(
+                got <= reference,
+                "trial {trial}: {got} exceeded the reference {reference}"
+            );
             let mag: f64 = v.iter().map(|x| x.abs()).sum();
             assert!(
                 reference - got < 1e-10 * mag.max(1.0),
@@ -1103,7 +1257,10 @@ mod tests {
     fn the_certified_sum_keeps_what_cancellation_would_lose() {
         let v = [1e16f64, 1.0, -1e16];
         let naive: f64 = v.iter().sum();
-        assert_eq!(naive, 0.0, "the fixture must actually lose the term, or it tests nothing");
+        assert_eq!(
+            naive, 0.0,
+            "the fixture must actually lose the term, or it tests nothing"
+        );
         let got = sum_down(&v);
         assert!(
             (got - 1.0).abs() < 1e-3,
@@ -1123,7 +1280,11 @@ mod tests {
             let (mut s, mut c) = (0.0f64, 0.0f64);
             for &x in v {
                 let t = s + x;
-                c += if s.abs() >= x.abs() { (s - t) + x } else { (x - t) + s };
+                c += if s.abs() >= x.abs() {
+                    (s - t) + x
+                } else {
+                    (x - t) + s
+                };
                 s = t;
             }
             s + c
@@ -1137,7 +1298,10 @@ mod tests {
         let short = vec![third; 4];
         let long = vec![third; 4096];
         let give_up = |v: &[f64]| compensated(v) - sum_down(v);
-        assert!(give_up(&short) > 0.0, "the fixture must actually round, or this measures nothing");
+        assert!(
+            give_up(&short) > 0.0,
+            "the fixture must actually round, or this measures nothing"
+        );
         // The first-order term follows the total, so a larger sum carries a larger guard.
         let big: Vec<f64> = vec![1e6 * third; 4];
         assert!(
@@ -1161,7 +1325,12 @@ mod tests {
             "at four thousand terms the second-order term should still be invisible: {a} vs {b}"
         );
         // Term count does widen the guard once the total grows with it, which is the ordinary case.
-        assert!(give_up(&long) > give_up(&short), "{} against {}", give_up(&long), give_up(&short));
+        assert!(
+            give_up(&long) > give_up(&short),
+            "{} against {}",
+            give_up(&long),
+            give_up(&short)
+        );
     }
 
     /// `verify` sums downward, not with `iter().sum()`.
@@ -1182,7 +1351,9 @@ mod tests {
         for v in &mut off_grid.y {
             *v -= 1e-9;
         }
-        let reported = off_grid.verify(&g).expect("a slightly smaller dual is still feasible");
+        let reported = off_grid
+            .verify(&g)
+            .expect("a slightly smaller dual is still feasible");
         let naive: f64 = off_grid.y.iter().sum();
         assert!(
             reported < naive,
@@ -1194,5 +1365,4 @@ mod tests {
             naive - reported
         );
     }
-
 }

@@ -11,8 +11,8 @@
 
 use ferrotherm::pdit::{stationary_of, tau_int_of};
 use ferrotherm::syndrome::{
-    bp_marginals, bsc, decisions, hard_marginals, relaxed_graph, relaxed_marginals,
-    relaxed_sweep_kernel, Code,
+    Code, bp_marginals, bsc, decisions, hard_marginals, relaxed_graph, relaxed_marginals,
+    relaxed_sweep_kernel,
 };
 
 fn errors(decoded: &[u8], noise: &[u8]) -> f64 {
@@ -98,5 +98,7 @@ fn main() {
         }
     }
     println!();
-    println!("tau_int is of the first noise spin, in sweeps (sw) and single-spin flips (fl), averaged over the patterns.");
+    println!(
+        "tau_int is of the first noise spin, in sweeps (sw) and single-spin flips (fl), averaged over the patterns."
+    );
 }

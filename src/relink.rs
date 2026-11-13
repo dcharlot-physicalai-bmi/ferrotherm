@@ -43,7 +43,11 @@ use crate::tabu::{flip, gains};
 /// If the two states have different lengths.
 #[must_use]
 pub fn hamming(a: &[i8], b: &[i8]) -> usize {
-    assert_eq!(a.len(), b.len(), "states of different lengths have no distance");
+    assert_eq!(
+        a.len(),
+        b.len(),
+        "states of different lengths have no distance"
+    );
     a.iter().zip(b).filter(|(x, y)| x != y).count()
 }
 
@@ -71,7 +75,11 @@ pub fn field_free(g: &Graph) -> bool {
 /// If `k` exceeds the number of flips, or a flip index is outside `from`.
 #[must_use]
 pub fn replay(from: &[i8], flips: &[usize], k: usize) -> Vec<i8> {
-    assert!(k <= flips.len(), "a path of {} flips has no step {k}", flips.len());
+    assert!(
+        k <= flips.len(),
+        "a path of {} flips has no step {k}",
+        flips.len()
+    );
     let mut s = from.to_vec();
     for &i in &flips[..k] {
         s[i] = -s[i];
@@ -114,7 +122,9 @@ impl Relink {
     /// Whether the best intermediate is strictly below both endpoints.
     #[must_use]
     pub fn improved(&self) -> bool {
-        self.best.as_ref().is_some_and(|b| b.energy < self.from_energy.min(self.to_energy) - 1e-12)
+        self.best
+            .as_ref()
+            .is_some_and(|b| b.energy < self.from_energy.min(self.to_energy) - 1e-12)
     }
 
     /// How far the best intermediate falls below the better endpoint; `0.0` when there is none.
@@ -191,7 +201,11 @@ fn walk(g: &Graph, from: &[i8], to: &[i8], gauged: bool) -> Relink {
         flips.push(i);
         // Strict intermediates only, and `<` keeps the earlier of two equal states.
         if !remaining.is_empty() && best.as_ref().is_none_or(|b| e < b.energy) {
-            best = Some(Step { state: s.clone(), energy: e, at: flips.len() });
+            best = Some(Step {
+                state: s.clone(),
+                energy: e,
+                at: flips.len(),
+            });
         }
     }
 
@@ -199,7 +213,14 @@ fn walk(g: &Graph, from: &[i8], to: &[i8], gauged: bool) -> Relink {
     if let Some(b) = best.as_mut() {
         b.energy = g.energy(&b.state);
     }
-    Relink { flips, best, from_energy, to_energy, gauged, proposals }
+    Relink {
+        flips,
+        best,
+        from_energy,
+        to_energy,
+        gauged,
+        proposals,
+    }
 }
 
 /// A solution held in the reference set.
@@ -249,7 +270,12 @@ impl RefSet {
     #[must_use]
     pub fn new(max: usize, min_distance: usize, gauge: bool) -> RefSet {
         assert!(max > 0, "a reference set of zero members is not a pool");
-        RefSet { max, min_distance, gauge, members: Vec::new() }
+        RefSet {
+            max,
+            min_distance,
+            gauge,
+            members: Vec::new(),
+        }
     }
 
     /// Members, best energy first.
@@ -283,7 +309,11 @@ impl RefSet {
     /// If the two states have different lengths.
     #[must_use]
     pub fn distance(&self, a: &[i8], b: &[i8]) -> usize {
-        if self.gauge { gauge_distance(a, b) } else { hamming(a, b) }
+        if self.gauge {
+            gauge_distance(a, b)
+        } else {
+            hamming(a, b)
+        }
     }
 
     /// Offer a solution, and say what became of it.
@@ -302,20 +332,29 @@ impl RefSet {
             && d < self.min_distance.max(1)
         {
             if energy < self.members[k].energy - 1e-12 {
-                self.members[k] = Member { state: s.to_vec(), energy };
+                self.members[k] = Member {
+                    state: s.to_vec(),
+                    energy,
+                };
                 self.sort();
                 return Admit::Replaced;
             }
             return Admit::TooClose;
         }
         if self.members.len() < self.max {
-            self.members.push(Member { state: s.to_vec(), energy });
+            self.members.push(Member {
+                state: s.to_vec(),
+                energy,
+            });
             self.sort();
             return Admit::Added;
         }
         let worst = self.members.len() - 1;
         if energy < self.members[worst].energy - 1e-12 {
-            self.members[worst] = Member { state: s.to_vec(), energy };
+            self.members[worst] = Member {
+                state: s.to_vec(),
+                energy,
+            };
             self.sort();
             return Admit::Added;
         }
@@ -417,8 +456,10 @@ pub fn search(g: &Graph, p: &Params, seed: u64) -> Outcome {
         set.insert(&s, e);
     }
     let up = vec![1i8; n];
-    let mut best =
-        set.best().cloned().unwrap_or(Member { energy: g.energy(&up), state: up });
+    let mut best = set.best().cloned().unwrap_or(Member {
+        energy: g.energy(&up),
+        state: up,
+    });
 
     let mut relinks = 0usize;
     let mut improving = 0usize;
@@ -435,13 +476,24 @@ pub fn search(g: &Graph, p: &Params, seed: u64) -> Outcome {
         if j >= i {
             j += 1;
         }
-        let (a, b) = (set.members()[i].state.clone(), set.members()[j].state.clone());
+        let (a, b) = (
+            set.members()[i].state.clone(),
+            set.members()[j].state.clone(),
+        );
         // A walk cut in half is not a path, so one is only started when its whole cost fits.
-        let d = if gauge { gauge_distance(&a, &b) } else { hamming(&a, &b) } as u64;
+        let d = if gauge {
+            gauge_distance(&a, &b)
+        } else {
+            hamming(&a, &b)
+        } as u64;
         if spent + d * (d + 1) / 2 > cap {
             break;
         }
-        let r = if p.gauge { path_gauged(g, &a, &b) } else { path(g, &a, &b) };
+        let r = if p.gauge {
+            path_gauged(g, &a, &b)
+        } else {
+            path(g, &a, &b)
+        };
         spent += r.proposals;
         relinks += 1;
         if r.improved() {
@@ -454,7 +506,10 @@ pub fn search(g: &Graph, p: &Params, seed: u64) -> Outcome {
             }
             let e = g.energy(&s);
             if e < best.energy {
-                best = Member { state: s.clone(), energy: e };
+                best = Member {
+                    state: s.clone(),
+                    energy: e,
+                };
             }
             set.insert(&s, e);
         }
@@ -511,10 +566,14 @@ impl Search for Scatter {
             ..Default::default()
         };
         let o = search(g, &p, seed);
-        Found { arm: "scatter", energy: g.energy(&o.state), spent: o.proposals, state: o.state }
+        Found {
+            arm: "scatter",
+            energy: g.energy(&o.state),
+            spent: o.proposals,
+            state: o.state,
+        }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -563,19 +622,46 @@ mod tests {
             once.dedup();
             assert_eq!(once.len(), d, "a spin was flipped twice");
             for &i in &r.flips {
-                assert_ne!(a[i], b[i], "spin {i} was flipped, but the endpoints agree on it");
+                assert_ne!(
+                    a[i], b[i],
+                    "spin {i} was flipped, but the endpoints agree on it"
+                );
             }
             for k in 0..=d {
                 let s = replay(&a, &r.flips, k);
-                assert_eq!(hamming(&a, &s), k, "step {k} is not {k} flips from the start");
-                assert_eq!(hamming(&s, &b), d - k, "step {k} is not {} from the target", d - k);
+                assert_eq!(
+                    hamming(&a, &s),
+                    k,
+                    "step {k} is not {k} flips from the start"
+                );
+                assert_eq!(
+                    hamming(&s, &b),
+                    d - k,
+                    "step {k} is not {} from the target",
+                    d - k
+                );
             }
-            assert_eq!(replay(&a, &r.flips, d), b, "the walk must end at the target");
-            assert_eq!(r.proposals, d as u64 * (d as u64 + 1) / 2, "a step scans what is left");
+            assert_eq!(
+                replay(&a, &r.flips, d),
+                b,
+                "the walk must end at the target"
+            );
+            assert_eq!(
+                r.proposals,
+                d as u64 * (d as u64 + 1) / 2,
+                "a step scans what is left"
+            );
 
             if let Some(step) = &r.best {
-                assert!(step.at > 0 && step.at < d, "an endpoint is not an intermediate");
-                assert_eq!(step.state, replay(&a, &r.flips, step.at), "best state is off the path");
+                assert!(
+                    step.at > 0 && step.at < d,
+                    "an endpoint is not an intermediate"
+                );
+                assert_eq!(
+                    step.state,
+                    replay(&a, &r.flips, step.at),
+                    "best state is off the path"
+                );
                 assert!(
                     (step.energy - g.energy(&step.state)).abs() < 1e-9,
                     "reported {} for a state worth {}",
@@ -641,9 +727,14 @@ mod tests {
                 b[j] = -b[j];
                 let r = path(g, &base, &b);
                 assert_eq!(r.flips.len(), 2);
-                let step = r.best.as_ref().expect("a two-step path has one intermediate");
+                let step = r
+                    .best
+                    .as_ref()
+                    .expect("a two-step path has one intermediate");
                 assert_eq!(step.at, 1);
-                let want = g.energy(&replay(&base, &[i], 1)).min(g.energy(&replay(&base, &[j], 1)));
+                let want = g
+                    .energy(&replay(&base, &[i], 1))
+                    .min(g.energy(&replay(&base, &[j], 1)));
                 assert!(
                     (step.energy - want).abs() < 1e-9,
                     "flipping {i} then {j}: landed on {} when {want} was there",
@@ -682,7 +773,10 @@ mod tests {
                 }
                 lo = lo.min(g.energy(&s));
             }
-            let step = r.best.as_ref().expect("three or more steps leaves an intermediate");
+            let step = r
+                .best
+                .as_ref()
+                .expect("three or more steps leaves an intermediate");
             assert!(
                 step.energy >= lo - 1e-9,
                 "the walk reported {}, below the interval minimum {lo}",
@@ -691,8 +785,14 @@ mod tests {
             cases += 1;
             matched += usize::from((step.energy - lo).abs() < 1e-9);
         }
-        assert!(cases >= 20, "only {cases} usable pairs, too few to conclude anything");
-        assert!(2 * matched >= cases, "greedy matched the interval optimum on {matched} of {cases}");
+        assert!(
+            cases >= 20,
+            "only {cases} usable pairs, too few to conclude anything"
+        );
+        assert!(
+            2 * matched >= cases,
+            "greedy matched the interval optimum on {matched} of {cases}"
+        );
     }
 
     /// Relinking two local optima beats both endpoints often enough to matter.
@@ -709,7 +809,10 @@ mod tests {
             let p = planted::frustrated_loops(l, loops, iseed);
             let g = &p.graph;
             let optima: Vec<Vec<i8>> = (0..12).map(|s| optimum(g, s)).collect();
-            let floor = optima.iter().map(|s| g.energy(s)).fold(f64::INFINITY, f64::min);
+            let floor = optima
+                .iter()
+                .map(|s| g.energy(s))
+                .fold(f64::INFINITY, f64::min);
             assert!(
                 floor > p.ground_energy + 1e-9,
                 "descent already solved l={l}: nothing is left for relinking to show"
@@ -745,7 +848,10 @@ mod tests {
             all_pairs += pairs;
             all_better += better;
         }
-        assert!(2 * all_better >= all_pairs, "{all_better} of {all_pairs} paths improved");
+        assert!(
+            2 * all_better >= all_pairs,
+            "{all_better} of {all_pairs} paths improved"
+        );
         assert!(
             solved_by_a_path >= 1,
             "no path reached a planted optimum that its endpoints had missed"
@@ -772,15 +878,34 @@ mod tests {
                     o.energy,
                     g.energy(&o.state)
                 );
-                let pool_best = o.pool.iter().map(|m| m.energy).fold(f64::INFINITY, f64::min);
-                assert!(o.energy <= pool_best + 1e-9, "kept {pool_best} but returned {}", o.energy);
-                assert_eq!(o.pool.len(), Params::default().pool, "the pool never filled");
+                let pool_best = o
+                    .pool
+                    .iter()
+                    .map(|m| m.energy)
+                    .fold(f64::INFINITY, f64::min);
+                assert!(
+                    o.energy <= pool_best + 1e-9,
+                    "kept {pool_best} but returned {}",
+                    o.energy
+                );
+                assert_eq!(
+                    o.pool.len(),
+                    Params::default().pool,
+                    "the pool never filled"
+                );
                 solved += usize::from(p.solved(&o.state));
                 worst = worst.max(p.excess(&o.state));
                 improving += o.improving;
             }
-            assert!(2 * solved >= 12, "l={l}: solved {solved} of 12 planted instances");
-            assert!(worst < 0.12, "l={l}: worst run landed {:.1}% above the optimum", worst * 100.0);
+            assert!(
+                2 * solved >= 12,
+                "l={l}: solved {solved} of 12 planted instances"
+            );
+            assert!(
+                worst < 0.12,
+                "l={l}: worst run landed {:.1}% above the optimum",
+                worst * 100.0
+            );
             assert!(improving > 0, "l={l}: no path anywhere beat its endpoints");
         }
     }
@@ -793,7 +918,11 @@ mod tests {
 
         let a = vec![1i8; 10];
         assert_eq!(set.insert(&a, -5.0), Admit::Added);
-        assert_eq!(set.insert(&a, -5.0), Admit::TooClose, "a pool holding one state twice is not a pool");
+        assert_eq!(
+            set.insert(&a, -5.0),
+            Admit::TooClose,
+            "a pool holding one state twice is not a pool"
+        );
 
         // Inside the diversity floor and better: it takes that member's slot rather than a new one.
         let mut b = a.clone();
@@ -825,7 +954,10 @@ mod tests {
         }
         assert_eq!(set.insert(&strong, -10.0), Admit::Added);
         assert_eq!(set.len(), 3);
-        assert!(!set.members().iter().any(|m| m.state == far2), "the worst member should be gone");
+        assert!(
+            !set.members().iter().any(|m| m.state == far2),
+            "the worst member should be gone"
+        );
 
         // Full, far from everything, and worse than the worst: refused.
         let mut weak = vec![1i8; 10];
@@ -835,7 +967,11 @@ mod tests {
         assert_eq!(set.insert(&weak, -1.0), Admit::TooWeak);
 
         let energies: Vec<f64> = set.members().iter().map(|m| m.energy).collect();
-        assert_eq!(energies, vec![-10.0, -6.0, -4.0], "members are ordered best first");
+        assert_eq!(
+            energies,
+            vec![-10.0, -6.0, -4.0],
+            "members are ordered best first"
+        );
         assert_eq!(set.best().expect("not empty").energy, -10.0);
 
         // With the gauge on, a state and its global flip are one solution.
@@ -854,7 +990,11 @@ mod tests {
         assert_eq!(loose.len(), 1);
         let mut nudged = a.clone();
         nudged[0] = -1;
-        assert_eq!(loose.insert(&nudged, -5.0), Admit::Added, "one spin clears a floor of zero");
+        assert_eq!(
+            loose.insert(&nudged, -5.0),
+            Admit::Added,
+            "one spin clears a floor of zero"
+        );
         assert_eq!(loose.len(), 2);
     }
 
@@ -874,7 +1014,10 @@ mod tests {
         assert_eq!(g.energy(&a), g.energy(&neg), "Z2 symmetry, term by term");
 
         let r = path_gauged(g, &a, &neg);
-        assert!(r.gauged && r.flips.is_empty(), "a state and its flip are one solution");
+        assert!(
+            r.gauged && r.flips.is_empty(),
+            "a state and its flip are one solution"
+        );
         assert!(r.best.is_none() && r.proposals == 0);
         assert_eq!(r.from_energy, r.to_energy);
 
@@ -896,7 +1039,10 @@ mod tests {
         let br = path_gauged(&biased, &x, &y);
         assert!(!br.gauged, "a biased model has no gauge to take");
         assert_eq!(br.flips.len(), 6);
-        assert!((br.to_energy - biased.energy(&y)).abs() < 1e-12, "it walked to the named target");
+        assert!(
+            (br.to_energy - biased.energy(&y)).abs() < 1e-12,
+            "it walked to the named target"
+        );
     }
 
     /// Endpoints that are equal or adjacent have nothing between them, and say so.
@@ -915,7 +1061,10 @@ mod tests {
         b[3] = -b[3];
         let adjacent = path(g, &a, &b);
         assert_eq!(adjacent.flips, vec![3]);
-        assert!(adjacent.best.is_none(), "adjacent endpoints have no state between them");
+        assert!(
+            adjacent.best.is_none(),
+            "adjacent endpoints have no state between them"
+        );
         assert!(!adjacent.improved() && adjacent.gain() == 0.0);
         assert_eq!(adjacent.proposals, 1);
 
@@ -944,7 +1093,11 @@ mod tests {
         for b in [200_000u64, 800_000] {
             let f = Scatter.solve(g, Budget::new(b), 4);
             assert_eq!(f.arm, "scatter");
-            assert!(f.spent <= b + g.n as u64, "spent {} against a budget of {b}", f.spent);
+            assert!(
+                f.spent <= b + g.n as u64,
+                "spent {} against a budget of {b}",
+                f.spent
+            );
             assert!(f.spent * 4 >= b, "spent only {} of {b}", f.spent);
             assert_eq!(f.state.len(), g.n);
             assert!(f.state.iter().all(|&v| v == 1 || v == -1));
@@ -959,8 +1112,14 @@ mod tests {
         let half = full / 2;
         let (mut cut_state, mut cut) = (start.clone(), 0u64);
         descend(g, &mut cut_state, &mut cut, half);
-        assert!(cut <= half + g.n as u64, "a capped descent spent {cut} of {half}");
-        assert!(cut_state != full_state, "a capped descent must stop short of the optimum");
+        assert!(
+            cut <= half + g.n as u64,
+            "a capped descent spent {cut} of {half}"
+        );
+        assert!(
+            cut_state != full_state,
+            "a capped descent must stop short of the optimum"
+        );
 
         // And it composes as an arm without the portfolio having to know about it.
         let arms: Vec<Box<dyn Search>> = vec![Box::new(Scatter), Box::new(crate::portfolio::Tabu)];

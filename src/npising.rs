@@ -219,7 +219,10 @@ impl core::fmt::Display for InstanceError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             InstanceError::VertexOutOfRange { vertex, n } => {
-                write!(f, "an edge names vertex {vertex} in a graph of {n} vertices")
+                write!(
+                    f,
+                    "an edge names vertex {vertex} in a graph of {n} vertices"
+                )
             }
             InstanceError::SelfLoop { vertex } => write!(
                 f,
@@ -241,7 +244,11 @@ impl core::fmt::Display for InstanceError {
                 "subset {subset} contains no elements, so it can never help a cover while still \
                  costing a variable the search has to get right"
             ),
-            InstanceError::ElementOutOfRange { subset, element, universe } => write!(
+            InstanceError::ElementOutOfRange {
+                subset,
+                element,
+                universe,
+            } => write!(
                 f,
                 "subset {subset} names element {element} in a universe of {universe} elements"
             ),
@@ -252,10 +259,16 @@ impl core::fmt::Display for InstanceError {
                  exactly like a solver that failed"
             ),
             InstanceError::BadWeight { what, got } => {
-                write!(f, "the {what} must be a positive finite number, and {got} is not")
+                write!(
+                    f,
+                    "the {what} must be a positive finite number, and {got} is not"
+                )
             }
             InstanceError::Matrix { got, want } => {
-                write!(f, "a weight matrix of {got} entries where {want} are needed")
+                write!(
+                    f,
+                    "a weight matrix of {got} entries where {want} are needed"
+                )
             }
             InstanceError::Asymmetric { u, v, uv, vu } => write!(
                 f,
@@ -398,7 +411,10 @@ impl core::fmt::Display for DecodeError {
                  a solution, and it is not a solution with a defect"
             ),
             DecodeError::NotAClique { u, v } => {
-                write!(f, "vertices {u} and {v} are both chosen and there is no edge between them")
+                write!(
+                    f,
+                    "vertices {u} and {v} are both chosen and there is no edge between them"
+                )
             }
             DecodeError::EdgeUncovered { u, v } => {
                 write!(f, "edge ({u},{v}) has neither endpoint in the chosen set")
@@ -406,7 +422,11 @@ impl core::fmt::Display for DecodeError {
             DecodeError::ElementUncovered { element } => {
                 write!(f, "no chosen subset contains element {element}")
             }
-            DecodeError::CountMismatch { element, encoded, covering } => write!(
+            DecodeError::CountMismatch {
+                element,
+                encoded,
+                covering,
+            } => write!(
                 f,
                 "the ancillas record element {element} as covered {encoded} times and {covering} \
                  chosen subsets contain it; the counting constraint is what makes the penalty \
@@ -416,7 +436,10 @@ impl core::fmt::Display for DecodeError {
                 write!(f, "adjacent vertices {u} and {v} both take colour {colour}")
             }
             DecodeError::StepNotAnEdge { from, to, step } => {
-                write!(f, "step {step} goes from {from} to {to} and the graph has no such edge")
+                write!(
+                    f,
+                    "step {step} goes from {from} to {to} and the graph has no such edge"
+                )
             }
         }
     }
@@ -443,7 +466,12 @@ struct Qubo {
 
 impl Qubo {
     fn new(n: usize) -> Qubo {
-        Qubo { n, lin: vec![0.0; n], quad: BTreeMap::new(), offset: 0.0 }
+        Qubo {
+            n,
+            lin: vec![0.0; n],
+            quad: BTreeMap::new(),
+            offset: 0.0,
+        }
     }
 
     fn constant(&mut self, c: f64) {
@@ -463,7 +491,11 @@ impl Qubo {
             self.lin[u] += q;
             return;
         }
-        let key = if u < v { (u as u32, v as u32) } else { (v as u32, u as u32) };
+        let key = if u < v {
+            (u as u32, v as u32)
+        } else {
+            (v as u32, u as u32)
+        };
         *self.quad.entry(key).or_insert(0.0) += q;
     }
 
@@ -482,7 +514,11 @@ impl Qubo {
         }
         for p in 0..terms.len() {
             for r in (p + 1)..terms.len() {
-                self.quadratic(terms[p].0, terms[r].0, scale * 2.0 * terms[p].1 * terms[r].1);
+                self.quadratic(
+                    terms[p].0,
+                    terms[r].0,
+                    scale * 2.0 * terms[p].1 * terms[r].1,
+                );
             }
         }
     }
@@ -645,7 +681,14 @@ impl MaxClique {
             }
         }
         let (graph, offset) = q.into_graph();
-        Ok(MaxClique { n, adj, reward, penalty, graph, offset })
+        Ok(MaxClique {
+            n,
+            adj,
+            reward,
+            penalty,
+            graph,
+            offset,
+        })
     }
 
     /// The spin model. Its ground state decodes to a maximum clique when
@@ -779,7 +822,14 @@ impl VertexCover {
             q.quadratic(u, v, penalty);
         }
         let (graph, offset) = q.into_graph();
-        Ok(VertexCover { n, edges: list, weight, penalty, graph, offset })
+        Ok(VertexCover {
+            n,
+            edges: list,
+            weight,
+            penalty,
+            graph,
+            offset,
+        })
     }
 
     /// The spin model.
@@ -908,7 +958,9 @@ impl SetCover {
             return Err(InstanceError::Empty { what: "universe" });
         }
         if subsets.is_empty() {
-            return Err(InstanceError::Empty { what: "collection of subsets" });
+            return Err(InstanceError::Empty {
+                what: "collection of subsets",
+            });
         }
         let mut clean: Vec<Vec<usize>> = Vec::with_capacity(subsets.len());
         let mut covering: Vec<Vec<usize>> = vec![Vec::new(); universe];
@@ -949,8 +1001,7 @@ impl SetCover {
             q.linear(i, weight);
         }
         for a in 0..universe {
-            let one_hot: Vec<(usize, f64)> =
-                (1..=max_count).map(|m| (anc(a, m), -1.0)).collect();
+            let one_hot: Vec<(usize, f64)> = (1..=max_count).map(|m| (anc(a, m), -1.0)).collect();
             q.square(1.0, &one_hot, penalty);
             let mut count: Vec<(usize, f64)> =
                 (1..=max_count).map(|m| (anc(a, m), m as f64)).collect();
@@ -960,7 +1011,15 @@ impl SetCover {
             q.square(0.0, &count, penalty);
         }
         let (graph, offset) = q.into_graph();
-        Ok(SetCover { universe, subsets: clean, max_count, weight, penalty, graph, offset })
+        Ok(SetCover {
+            universe,
+            subsets: clean,
+            max_count,
+            weight,
+            penalty,
+            graph,
+            offset,
+        })
     }
 
     /// The spin model.
@@ -1024,21 +1083,27 @@ impl SetCover {
         let chosen: Vec<usize> = (0..nsub).filter(|&i| x[i] == 1).collect();
         for a in 0..self.universe {
             let base = nsub + a * self.max_count;
-            let set: Vec<usize> =
-                (0..self.max_count).filter(|&m| x[base + m] == 1).collect();
+            let set: Vec<usize> = (0..self.max_count).filter(|&m| x[base + m] == 1).collect();
             if set.len() != 1 {
                 return Err(DecodeError::NotOneHot {
                     group: Group::Coverage(a),
                     set: set.len(),
                 });
             }
-            let covering = chosen.iter().filter(|&&i| self.subsets[i].contains(&a)).count();
+            let covering = chosen
+                .iter()
+                .filter(|&&i| self.subsets[i].contains(&a))
+                .count();
             if covering == 0 {
                 return Err(DecodeError::ElementUncovered { element: a });
             }
             let encoded = set[0] + 1;
             if encoded != covering {
-                return Err(DecodeError::CountMismatch { element: a, encoded, covering });
+                return Err(DecodeError::CountMismatch {
+                    element: a,
+                    encoded,
+                    covering,
+                });
             }
         }
         Ok(chosen)
@@ -1125,7 +1190,14 @@ impl Colouring {
             }
         }
         let (graph, offset) = q.into_graph();
-        Ok(Colouring { n, k, edges: list, penalty, graph, offset })
+        Ok(Colouring {
+            n,
+            k,
+            edges: list,
+            penalty,
+            graph,
+            offset,
+        })
     }
 
     /// The spin model. Ground energy zero exactly when the graph is `k`-colourable.
@@ -1185,7 +1257,11 @@ impl Colouring {
         }
         for &(u, v) in &self.edges {
             if colour[u] == colour[v] {
-                return Err(DecodeError::ColourConflict { u, v, colour: colour[u] });
+                return Err(DecodeError::ColourConflict {
+                    u,
+                    v,
+                    colour: colour[u],
+                });
             }
         }
         Ok(colour)
@@ -1234,7 +1310,10 @@ fn decode_cycle(x: &[u8], n: usize) -> Result<Vec<usize>, DecodeError> {
     for v in 0..n {
         let set: Vec<usize> = (0..n).filter(|&j| x[v * n + j] == 1).collect();
         if set.len() != 1 {
-            return Err(DecodeError::NotOneHot { group: Group::City(v), set: set.len() });
+            return Err(DecodeError::NotOneHot {
+                group: Group::City(v),
+                set: set.len(),
+            });
         }
         at[v] = set[0];
     }
@@ -1242,7 +1321,10 @@ fn decode_cycle(x: &[u8], n: usize) -> Result<Vec<usize>, DecodeError> {
     for j in 0..n {
         let set: Vec<usize> = (0..n).filter(|&v| x[v * n + j] == 1).collect();
         if set.len() != 1 {
-            return Err(DecodeError::NotOneHot { group: Group::Position(j), set: set.len() });
+            return Err(DecodeError::NotOneHot {
+                group: Group::Position(j),
+                set: set.len(),
+            });
         }
         order[j] = set[0];
     }
@@ -1302,7 +1384,13 @@ impl HamiltonianCycle {
         let mut q = Qubo::new(n * n);
         cycle_penalties(&mut q, n, &adj, penalty);
         let (graph, offset) = q.into_graph();
-        Ok(HamiltonianCycle { n, adj, penalty, graph, offset })
+        Ok(HamiltonianCycle {
+            n,
+            adj,
+            penalty,
+            graph,
+            offset,
+        })
     }
 
     /// The spin model. Ground energy zero exactly when a Hamiltonian cycle exists.
@@ -1471,7 +1559,15 @@ impl Tsp {
             }
         }
         let (graph, offset) = q.into_graph();
-        Ok(Tsp { n, w: weights.to_vec(), weight, penalty, tour_bound, graph, offset })
+        Ok(Tsp {
+            n,
+            w: weights.to_vec(),
+            weight,
+            penalty,
+            tour_bound,
+            graph,
+            offset,
+        })
     }
 
     /// Validate the matrix and return an upper bound on any tour's cost.
@@ -1484,7 +1580,10 @@ impl Tsp {
             return Err(InstanceError::TooSmall { n, min: 3 });
         }
         if weights.len() != n * n {
-            return Err(InstanceError::Matrix { got: weights.len(), want: n * n });
+            return Err(InstanceError::Matrix {
+                got: weights.len(),
+                want: n * n,
+            });
         }
         let mut finite: Vec<f64> = Vec::new();
         for u in 0..n {
@@ -1558,10 +1657,19 @@ impl Tsp {
     /// instance and has no cost to report.
     #[must_use]
     pub fn tour_cost(&self, tour: &[usize]) -> Option<f64> {
-        assert_eq!(tour.len(), self.n, "a tour of {} cities has {} entries", self.n, self.n);
+        assert_eq!(
+            tour.len(),
+            self.n,
+            "a tour of {} cities has {} entries",
+            self.n,
+            self.n
+        );
         let mut seen = vec![false; self.n];
         for &c in tour {
-            assert!(c < self.n && !seen[c], "city {c} repeats or is out of range");
+            assert!(
+                c < self.n && !seen[c],
+                "city {c} repeats or is out of range"
+            );
             seen[c] = true;
         }
         let mut total = 0.0;
@@ -1649,7 +1757,10 @@ mod tests {
                 opt = opt.min(obj(&x));
             }
         }
-        assert!(opt.is_finite(), "no feasible state, so there is nothing to be optimal against");
+        assert!(
+            opt.is_finite(),
+            "no feasible state, so there is nothing to be optimal against"
+        );
         let mut crit = f64::NEG_INFINITY;
         for mask in 0u32..(1u32 << n) {
             for i in 0..n {
@@ -1695,7 +1806,10 @@ mod tests {
         let mut best = n;
         for mask in 0u32..(1u32 << n) {
             let vs = subsets_of(n, mask);
-            if edges.iter().all(|&(u, v)| vs.contains(&u) || vs.contains(&v)) {
+            if edges
+                .iter()
+                .all(|&(u, v)| vs.contains(&u) || vs.contains(&v))
+            {
                 best = best.min(vs.len());
             }
         }
@@ -1760,7 +1874,9 @@ mod tests {
 
     /// Whether a Hamiltonian cycle exists, by looking at every cyclic order.
     fn brute_hamiltonian(n: usize, adj: &[bool]) -> bool {
-        cyclic_orders(n).iter().any(|t| (0..n).all(|j| adj[t[j] * n + t[(j + 1) % n]]))
+        cyclic_orders(n)
+            .iter()
+            .any(|t| (0..n).all(|j| adj[t[j] * n + t[(j + 1) % n]]))
     }
 
     /// Cheapest tour, by looking at every cyclic order. `None` when every order uses an absent
@@ -1918,7 +2034,10 @@ mod tests {
             );
             for s in &states {
                 let clique = mc.decode(s).expect("a ground state must decode");
-                assert!(is_clique(&clique, n, &adj), "seed {seed}: {clique:?} is not a clique");
+                assert!(
+                    is_clique(&clique, n, &adj),
+                    "seed {seed}: {clique:?} is not a clique"
+                );
                 assert_eq!(clique.len(), want, "seed {seed}: {clique:?} is not MAXIMUM");
             }
         }
@@ -1953,7 +2072,10 @@ mod tests {
             },
             |x| -f64::from(x.iter().map(|&b| u32::from(b)).sum::<u32>()),
         );
-        assert_eq!(crit, 1.0, "the critical penalty is exactly the reward, and it is attained");
+        assert_eq!(
+            crit, 1.0,
+            "the critical penalty is exactly the reward, and it is attained"
+        );
 
         // Below: the whole vertex set, two non-edges and two vertices to the good, wins.
         let soft = MaxClique::with_weights(n, &edges, 1.0, 0.99).unwrap();
@@ -1975,7 +2097,9 @@ mod tests {
             "at the threshold an infeasible state must TIE the optimum"
         );
         assert!(
-            states.iter().any(|s| tied.decode(s).is_ok_and(|c| c.len() == 2)),
+            states
+                .iter()
+                .any(|s| tied.decode(s).is_ok_and(|c| c.len() == 2)),
             "and a maximum clique must still be among the ground states"
         );
 
@@ -2010,7 +2134,9 @@ mod tests {
             for s in &states {
                 let cover = vc.decode(s).expect("a ground state must decode");
                 assert!(
-                    edges.iter().all(|&(u, v)| cover.contains(&u) || cover.contains(&v)),
+                    edges
+                        .iter()
+                        .all(|&(u, v)| cover.contains(&u) || cover.contains(&v)),
                     "seed {seed}: {cover:?} is not a cover"
                 );
                 assert_eq!(cover.len(), want, "seed {seed}: {cover:?} is not MINIMUM");
@@ -2028,10 +2154,18 @@ mod tests {
 
         let crit = critical_penalty(
             n,
-            |x| edges.iter().filter(|&&(u, v)| x[u] == 0 && x[v] == 0).count() as f64,
+            |x| {
+                edges
+                    .iter()
+                    .filter(|&&(u, v)| x[u] == 0 && x[v] == 0)
+                    .count() as f64
+            },
             |x| f64::from(x.iter().map(|&b| u32::from(b)).sum::<u32>()),
         );
-        assert_eq!(crit, 1.0, "the critical penalty is exactly the vertex weight");
+        assert_eq!(
+            crit, 1.0,
+            "the critical penalty is exactly the vertex weight"
+        );
 
         let soft = VertexCover::with_weights(n, &edges, 1.0, 0.99).unwrap();
         assert!(!soft.guarantees_feasible());
@@ -2045,7 +2179,10 @@ mod tests {
 
         let tied = VertexCover::with_weights(n, &edges, 1.0, 1.0).unwrap();
         let (_, states) = all_ground_states(tied.graph());
-        assert!(states.iter().any(|s| tied.decode(s).is_err()), "at the threshold, a tie");
+        assert!(
+            states.iter().any(|s| tied.decode(s).is_err()),
+            "at the threshold, a tie"
+        );
 
         let hard = VertexCover::with_weights(n, &edges, 1.0, 1.01).unwrap();
         let (_, states) = all_ground_states(hard.graph());
@@ -2082,7 +2219,9 @@ mod tests {
                  every penalty term at zero"
             );
             for s in &states {
-                let picked = sc.decode(s).expect("a ground state must decode, ancillas included");
+                let picked = sc
+                    .decode(s)
+                    .expect("a ground state must decode, ancillas included");
                 for a in 0..*universe {
                     assert!(
                         picked.iter().any(|&i| subsets[i].contains(&a)),
@@ -2103,7 +2242,12 @@ mod tests {
     #[test]
     fn set_cover_penalty_threshold_measured_by_enumeration_is_exactly_the_subset_weight() {
         let universe = 3;
-        let subsets = vec![vec![0usize], vec![1usize], vec![2usize], vec![0usize, 1usize]];
+        let subsets = vec![
+            vec![0usize],
+            vec![1usize],
+            vec![2usize],
+            vec![0usize, 1usize],
+        ];
         assert_eq!(brute_min_set_cover(universe, &subsets), 2);
         let nsub = subsets.len();
         let max_count = (0..universe)
@@ -2119,8 +2263,9 @@ mod tests {
                 let mut viol = 0.0;
                 for a in 0..universe {
                     let ones: i32 = (1..=max_count).map(|m| i32::from(x[anc(a, m)])).sum();
-                    let count: i32 =
-                        (1..=max_count).map(|m| m as i32 * i32::from(x[anc(a, m)])).sum();
+                    let count: i32 = (1..=max_count)
+                        .map(|m| m as i32 * i32::from(x[anc(a, m)]))
+                        .sum();
                     let covering: i32 = (0..nsub)
                         .filter(|&i| subsets[i].contains(&a))
                         .map(|i| i32::from(x[i]))
@@ -2132,13 +2277,19 @@ mod tests {
             },
             |x| f64::from((0..nsub).map(|i| u32::from(x[i])).sum::<u32>()),
         );
-        assert_eq!(crit, 1.0, "the critical penalty is exactly the subset weight");
+        assert_eq!(
+            crit, 1.0,
+            "the critical penalty is exactly the subset weight"
+        );
 
         let soft = SetCover::with_weights(universe, &subsets, 1.0, 0.99).unwrap();
         assert!(!soft.guarantees_feasible());
         let (_, states) = all_ground_states(soft.graph());
         for s in &states {
-            assert!(soft.decode(s).is_err(), "below the threshold the ground state is not a cover");
+            assert!(
+                soft.decode(s).is_err(),
+                "below the threshold the ground state is not a cover"
+            );
         }
 
         let hard = SetCover::with_weights(universe, &subsets, 1.0, 1.01).unwrap();
@@ -2170,9 +2321,14 @@ mod tests {
             let ground = e + col.offset();
             let want = brute_colourable(n, edges, k);
             if want {
-                assert_eq!(ground, 0.0, "n={n} k={k}: colourable, so the ground energy is zero");
+                assert_eq!(
+                    ground, 0.0,
+                    "n={n} k={k}: colourable, so the ground energy is zero"
+                );
                 for s in &states {
-                    let colours = col.decode(s).expect("a zero-energy state is a proper colouring");
+                    let colours = col
+                        .decode(s)
+                        .expect("a zero-energy state is a proper colouring");
                     assert!(edges.iter().all(|&(u, v)| colours[u] != colours[v]));
                     assert!(colours.iter().all(|&c| c < k));
                 }
@@ -2182,7 +2338,10 @@ mod tests {
                     "n={n} k={k}: NOT colourable, and the ground energy is {ground}"
                 );
                 for s in &states {
-                    assert!(col.decode(s).is_err(), "no ground state can be a proper colouring");
+                    assert!(
+                        col.decode(s).is_err(),
+                        "no ground state can be a proper colouring"
+                    );
                 }
             }
         }
@@ -2194,8 +2353,16 @@ mod tests {
         // ground energy for a conflict count would be off by a factor of two here.
         let one = Colouring::new(4, &k4, 1).expect("one colour is a colouring");
         let (e, _) = all_ground_states(one.graph());
-        assert_eq!(e + one.offset(), 3.0, "abandoning three vertices beats colouring all four");
-        assert_eq!(k4.len(), 6, "and every full 1-colouring of K4 has six monochromatic edges");
+        assert_eq!(
+            e + one.offset(),
+            3.0,
+            "abandoning three vertices beats colouring all four"
+        );
+        assert_eq!(
+            k4.len(),
+            6,
+            "and every full 1-colouring of K4 has six monochromatic edges"
+        );
     }
 
     // -----------------------------------------------------------------------------------------
@@ -2210,11 +2377,11 @@ mod tests {
     #[test]
     fn hamiltonian_cycle_ground_energy_is_zero_exactly_when_permutation_enumeration_finds_one() {
         let cases: [(usize, Vec<(usize, usize)>); 5] = [
-            (3, vec![(0, 1), (1, 2), (2, 0)]),                         // triangle: yes
-            (4, vec![(0, 1), (1, 2), (2, 3), (3, 0)]),                 // 4-cycle: yes
+            (3, vec![(0, 1), (1, 2), (2, 0)]),         // triangle: yes
+            (4, vec![(0, 1), (1, 2), (2, 3), (3, 0)]), // 4-cycle: yes
             (4, vec![(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]), // K4: yes
-            (4, vec![(0, 1), (1, 2), (2, 3)]),                         // path: no
-            (4, vec![(0, 1), (0, 2), (0, 3)]),                         // star: no
+            (4, vec![(0, 1), (1, 2), (2, 3)]),         // path: no
+            (4, vec![(0, 1), (0, 2), (0, 3)]),         // star: no
         ];
         for (n, edges) in &cases {
             let adj = adjacency(*n, edges).unwrap();
@@ -2234,7 +2401,10 @@ mod tests {
                     assert!((0..*n).all(|j| adj[tour[j] * n + tour[(j + 1) % n]]));
                 }
             } else {
-                assert!(ground > 0.0, "n={n} {edges:?}: no cycle, ground energy {ground}");
+                assert!(
+                    ground > 0.0,
+                    "n={n} {edges:?}: no cycle, ground energy {ground}"
+                );
                 for s in &states {
                     assert!(hc.decode(s).is_err());
                 }
@@ -2402,7 +2572,10 @@ mod tests {
             );
             assert!(default.guarantees_feasible());
         }
-        assert_eq!(worst, 1.0, "the uniform-shaped instances attain Lucas's bound");
+        assert_eq!(
+            worst, 1.0,
+            "the uniform-shaped instances attain Lucas's bound"
+        );
 
         // Lucas's bound is SLACK on a graph with a spread of weights, and by how much is the number
         // the module doc quotes -- pinned here so the doc cannot drift away from the measurement.
@@ -2413,7 +2586,11 @@ mod tests {
             1.0, 4.0, 6.0, 0.0,
         ];
         assert_eq!(tsp_critical(n, &spread), 4.5);
-        assert_eq!(tsp_max_weight(n, &spread), 6.0, "Lucas asks for 6 where 4.5 would do");
+        assert_eq!(
+            tsp_max_weight(n, &spread),
+            6.0,
+            "Lucas asks for 6 where 4.5 would do"
+        );
         // AND THAT SLACK IS OBSERVABLE, which is what makes it a fact rather than an arithmetic
         // remark: dropping the penalty just below Lucas's STATED threshold does not break the
         // model at all. A tightness check written against the stated threshold instead of the
@@ -2423,7 +2600,10 @@ mod tests {
         let best = brute_tsp(n, &spread).expect("a complete graph has tours");
         assert!((e + below_lucas.offset() - best).abs() < 1e-9);
         for s in &states {
-            assert_eq!(below_lucas.tour_cost(&below_lucas.decode(s).expect("a tour")), Some(best));
+            assert_eq!(
+                below_lucas.tour_cost(&below_lucas.decode(s).expect("a tour")),
+                Some(best)
+            );
         }
 
         // The measured critical penalty is a threshold, not a guideline: just above it the ground
@@ -2439,7 +2619,10 @@ mod tests {
             ],
         ] {
             let crit = tsp_critical(n, &w);
-            assert!(crit <= tsp_max_weight(n, &w), "Lucas's bound must stay sufficient");
+            assert!(
+                crit <= tsp_max_weight(n, &w),
+                "Lucas's bound must stay sufficient"
+            );
             let want = brute_tsp(n, &w).expect("a complete graph has tours");
 
             let tight = Tsp::with_weights(n, &w, 1.0, crit * 1.0001).expect("a positive penalty");
@@ -2450,7 +2633,10 @@ mod tests {
                 e + tight.offset()
             );
             for s in &states {
-                assert_eq!(tight.tour_cost(&tight.decode(s).expect("a tour")), Some(want));
+                assert_eq!(
+                    tight.tour_cost(&tight.decode(s).expect("a tour")),
+                    Some(want)
+                );
             }
 
             let loose = Tsp::with_weights(n, &w, 1.0, crit * 0.9999).expect("a positive penalty");
@@ -2474,13 +2660,25 @@ mod tests {
         let path = [(0usize, 1usize), (1, 2), (2, 3)];
 
         let mc = MaxClique::new(4, &path).unwrap();
-        assert_eq!(mc.decode(&[1, 1, 1]), Err(DecodeError::WrongLength { got: 3, want: 4 }));
-        assert_eq!(mc.decode(&[1, 0, -1, -1]), Err(DecodeError::NotASpin { index: 1, got: 0 }));
-        assert_eq!(mc.decode(&[1, -1, 1, -1]), Err(DecodeError::NotAClique { u: 0, v: 2 }));
+        assert_eq!(
+            mc.decode(&[1, 1, 1]),
+            Err(DecodeError::WrongLength { got: 3, want: 4 })
+        );
+        assert_eq!(
+            mc.decode(&[1, 0, -1, -1]),
+            Err(DecodeError::NotASpin { index: 1, got: 0 })
+        );
+        assert_eq!(
+            mc.decode(&[1, -1, 1, -1]),
+            Err(DecodeError::NotAClique { u: 0, v: 2 })
+        );
         assert_eq!(mc.decode(&[1, 1, -1, -1]).unwrap(), vec![0, 1]);
 
         let vc = VertexCover::new(4, &path).unwrap();
-        assert_eq!(vc.decode(&[-1, -1, -1, -1]), Err(DecodeError::EdgeUncovered { u: 0, v: 1 }));
+        assert_eq!(
+            vc.decode(&[-1, -1, -1, -1]),
+            Err(DecodeError::EdgeUncovered { u: 0, v: 1 })
+        );
         assert_eq!(vc.decode(&[-1, 1, 1, -1]).unwrap(), vec![1, 2]);
 
         let sc = SetCover::new(2, &[vec![0], vec![1]]).unwrap();
@@ -2488,9 +2686,15 @@ mod tests {
         // subsets 0 and 1, then one coverage ancilla per element.
         assert_eq!(
             sc.decode(&[1, 1, -1, 1]),
-            Err(DecodeError::NotOneHot { group: Group::Coverage(0), set: 0 })
+            Err(DecodeError::NotOneHot {
+                group: Group::Coverage(0),
+                set: 0
+            })
         );
-        assert_eq!(sc.decode(&[-1, 1, 1, 1]), Err(DecodeError::ElementUncovered { element: 0 }));
+        assert_eq!(
+            sc.decode(&[-1, 1, 1, 1]),
+            Err(DecodeError::ElementUncovered { element: 0 })
+        );
         assert_eq!(sc.decode(&[1, 1, 1, 1]).unwrap(), vec![0, 1]);
 
         let two = SetCover::new(1, &[vec![0], vec![0]]).unwrap();
@@ -2498,17 +2702,28 @@ mod tests {
         // Both subsets chosen, ancilla saying "covered once": a cover with a lying counter.
         assert_eq!(
             two.decode(&[1, 1, 1, -1]),
-            Err(DecodeError::CountMismatch { element: 0, encoded: 1, covering: 2 })
+            Err(DecodeError::CountMismatch {
+                element: 0,
+                encoded: 1,
+                covering: 2
+            })
         );
 
         let col = Colouring::new(2, &[(0, 1)], 2).unwrap();
         assert_eq!(
             col.decode(&[1, 1, 1, -1]),
-            Err(DecodeError::NotOneHot { group: Group::VertexColour(0), set: 2 })
+            Err(DecodeError::NotOneHot {
+                group: Group::VertexColour(0),
+                set: 2
+            })
         );
         assert_eq!(
             col.decode(&[1, -1, 1, -1]),
-            Err(DecodeError::ColourConflict { u: 0, v: 1, colour: 0 })
+            Err(DecodeError::ColourConflict {
+                u: 0,
+                v: 1,
+                colour: 0
+            })
         );
         assert_eq!(col.decode(&[1, -1, -1, 1]).unwrap(), vec![0, 1]);
 
@@ -2518,7 +2733,14 @@ mod tests {
         for (j, v) in [0usize, 2, 1, 3].iter().enumerate() {
             s[v * 4 + j] = 1;
         }
-        assert_eq!(hc.decode(&s), Err(DecodeError::StepNotAnEdge { from: 0, to: 2, step: 0 }));
+        assert_eq!(
+            hc.decode(&s),
+            Err(DecodeError::StepNotAnEdge {
+                from: 0,
+                to: 2,
+                step: 0
+            })
+        );
         let mut good = vec![-1i8; 16];
         for (j, v) in [0usize, 1, 2, 3].iter().enumerate() {
             good[v * 4 + j] = 1;
@@ -2530,7 +2752,10 @@ mod tests {
         clash[2 * 4] = 1;
         assert_eq!(
             hc.decode(&clash),
-            Err(DecodeError::NotOneHot { group: Group::Position(0), set: 2 }),
+            Err(DecodeError::NotOneHot {
+                group: Group::Position(0),
+                set: 2
+            }),
             "city 2 is still one-hot -- it moved -- so the group that broke is the POSITION, and \
              a decoder checking only the city rows would have accepted this state"
         );
@@ -2543,10 +2768,21 @@ mod tests {
             1.0, 8.0, 1.0, 0.0,
         ];
         let tsp = Tsp::new(4, &w).unwrap();
-        assert_eq!(tsp.decode(&s), Err(DecodeError::StepNotAnEdge { from: 0, to: 2, step: 0 }));
+        assert_eq!(
+            tsp.decode(&s),
+            Err(DecodeError::StepNotAnEdge {
+                from: 0,
+                to: 2,
+                step: 0
+            })
+        );
         assert_eq!(tsp.decode(&good).unwrap(), vec![0, 1, 2, 3]);
         assert_eq!(tsp.tour_cost(&[0, 1, 2, 3]), Some(4.0));
-        assert_eq!(tsp.tour_cost(&[0, 2, 1, 3]), None, "a tour across an absent edge has no cost");
+        assert_eq!(
+            tsp.tour_cost(&[0, 2, 1, 3]),
+            None,
+            "a tour across an absent edge has no cost"
+        );
     }
 
     /// Every way an instance can be malformed is an error naming what was seen, not a default.
@@ -2566,7 +2802,10 @@ mod tests {
         );
         assert_eq!(
             MaxClique::with_weights(3, &[], 0.0, 1.0).err(),
-            Some(InstanceError::BadWeight { what: "clique reward", got: 0.0 })
+            Some(InstanceError::BadWeight {
+                what: "clique reward",
+                got: 0.0
+            })
         );
         assert!(MaxClique::with_weights(3, &[], 1.0, f64::NAN).is_err());
 
@@ -2581,7 +2820,9 @@ mod tests {
         );
         assert_eq!(
             SetCover::new(2, &[]).err(),
-            Some(InstanceError::Empty { what: "collection of subsets" })
+            Some(InstanceError::Empty {
+                what: "collection of subsets"
+            })
         );
         assert_eq!(
             SetCover::new(2, &[vec![0], vec![]]).err(),
@@ -2589,7 +2830,11 @@ mod tests {
         );
         assert_eq!(
             SetCover::new(2, &[vec![0, 4]]).err(),
-            Some(InstanceError::ElementOutOfRange { subset: 0, element: 4, universe: 2 })
+            Some(InstanceError::ElementOutOfRange {
+                subset: 0,
+                element: 4,
+                universe: 2
+            })
         );
         assert_eq!(
             SetCover::new(3, &[vec![0], vec![1]]).err(),
@@ -2600,7 +2845,10 @@ mod tests {
         let dup = SetCover::new(2, &[vec![0, 0, 1]]).expect("a set, written twice");
         assert_eq!(dup.max_count(), 1);
 
-        assert_eq!(Colouring::new(2, &[(0, 1)], 0).err(), Some(InstanceError::NoColours));
+        assert_eq!(
+            Colouring::new(2, &[(0, 1)], 0).err(),
+            Some(InstanceError::NoColours)
+        );
 
         assert_eq!(
             HamiltonianCycle::new(2, &[(0, 1)]).err(),
@@ -2611,14 +2859,26 @@ mod tests {
             Tsp::new(2, &[0.0, 1.0, 1.0, 0.0]).err(),
             Some(InstanceError::TooSmall { n: 2, min: 3 })
         );
-        assert_eq!(Tsp::new(3, &[0.0]).err(), Some(InstanceError::Matrix { got: 1, want: 9 }));
+        assert_eq!(
+            Tsp::new(3, &[0.0]).err(),
+            Some(InstanceError::Matrix { got: 1, want: 9 })
+        );
         assert_eq!(
             Tsp::new(3, &[0.0, 1.0, 1.0, 2.0, 0.0, 1.0, 1.0, 1.0, 0.0]).err(),
-            Some(InstanceError::Asymmetric { u: 0, v: 1, uv: 1.0, vu: 2.0 })
+            Some(InstanceError::Asymmetric {
+                u: 0,
+                v: 1,
+                uv: 1.0,
+                vu: 2.0
+            })
         );
         assert_eq!(
             Tsp::new(3, &[0.0, -1.0, 1.0, -1.0, 0.0, 1.0, 1.0, 1.0, 0.0]).err(),
-            Some(InstanceError::EdgeWeight { u: 0, v: 1, got: -1.0 }),
+            Some(InstanceError::EdgeWeight {
+                u: 0,
+                v: 1,
+                got: -1.0
+            }),
             "a negative edge lets an infeasible state buy its own penalty back"
         );
         assert!(
@@ -2630,9 +2890,14 @@ mod tests {
         );
 
         // Display is not empty and names the thing.
-        let e = SetCover::new(3, &[vec![0], vec![1]]).err().expect("no cover exists");
+        let e = SetCover::new(3, &[vec![0], vec![1]])
+            .err()
+            .expect("no cover exists");
         assert!(e.to_string().contains("element 2"), "{e}");
-        let d = DecodeError::NotOneHot { group: Group::City(2), set: 3 };
+        let d = DecodeError::NotOneHot {
+            group: Group::City(2),
+            set: 3,
+        };
         assert!(d.to_string().contains("city 2"), "{d}");
     }
 }

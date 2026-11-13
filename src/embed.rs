@@ -132,7 +132,11 @@ impl Embedding {
     /// to compare two embeddings by.
     #[must_use]
     pub fn longest_chain(&self) -> usize {
-        self.chains.iter().map(std::vec::Vec::len).max().unwrap_or(0)
+        self.chains
+            .iter()
+            .map(std::vec::Vec::len)
+            .max()
+            .unwrap_or(0)
     }
 
     /// Total sites used.
@@ -161,7 +165,10 @@ impl Embedding {
             }
             for &s in chain {
                 if s >= hardware.n {
-                    return Err(format!("variable {v} uses site {s}, past the {} the machine has", hardware.n));
+                    return Err(format!(
+                        "variable {v} uses site {s}, past the {} the machine has",
+                        hardware.n
+                    ));
                 }
                 if seen[s] != usize::MAX {
                     return Err(format!("site {s} is used by both {} and {v}", seen[s]));
@@ -169,7 +176,9 @@ impl Embedding {
                 seen[s] = v;
             }
             if !connected(chain, hardware) {
-                return Err(format!("variable {v}'s chain {chain:?} is not connected in the hardware"));
+                return Err(format!(
+                    "variable {v}'s chain {chain:?} is not connected in the hardware"
+                ));
             }
         }
         for i in 0..logical.n {
@@ -211,9 +220,8 @@ fn connected(chain: &[usize], h: &Graph) -> bool {
 
 fn touching(a: &[usize], b: &[usize], h: &Graph) -> bool {
     let bs: BTreeSet<usize> = b.iter().copied().collect();
-    a.iter().any(|&u| {
-        (h.offset[u]..h.offset[u + 1]).any(|k| bs.contains(&(h.nbr[k] as usize)))
-    })
+    a.iter()
+        .any(|&u| (h.offset[u]..h.offset[u + 1]).any(|k| bs.contains(&(h.nbr[k] as usize))))
 }
 
 /// Find an embedding of `logical` into `hardware`, or `None` if this heuristic could not.
@@ -257,11 +265,7 @@ pub fn site_lower_bound(logical: &Graph, hardware: &Graph) -> usize {
     (0..logical.n)
         .map(|v| {
             let k = degree(logical, v);
-            if k <= d {
-                1
-            } else {
-                (k - 2).div_ceil(d - 2)
-            }
+            if k <= d { 1 } else { (k - 2).div_ceil(d - 2) }
         })
         .sum()
 }
@@ -315,11 +319,18 @@ pub fn chimera_clique(m: usize, t: usize) -> Option<Embedding> {
             for j in b..m {
                 chain.push(idx(b, j, 1, k)); // across row b
             }
-            debug_assert_eq!(chain.len(), m + 1, "the construction promises uniform chains");
+            debug_assert_eq!(
+                chain.len(),
+                m + 1,
+                "the construction promises uniform chains"
+            );
             chains.push(chain);
         }
     }
-    Some(Embedding { chains, sites: 2 * t * m * m })
+    Some(Embedding {
+        chains,
+        sites: 2 * t * m * m,
+    })
 }
 
 /// # Against the counting bound
@@ -395,7 +406,10 @@ pub fn zephyr_clique(m: usize, t: usize) -> Option<Embedding> {
             }
         }
     }
-    Some(Embedding { chains, sites: topo.graph.n })
+    Some(Embedding {
+        chains,
+        sites: topo.graph.n,
+    })
 }
 
 /// A native clique on **Pegasus** — the Advantage fabric — written down, not searched for.
@@ -515,7 +529,8 @@ pub fn pegasus_clique(m: usize) -> Option<Embedding> {
         return None;
     }
     let topo = crate::device::pegasus(m, 1.0);
-    let lin = |u: usize, w: usize, k: usize, z: usize| (((u * m + w) * 12 + k) * (m - 1) + z) as u32;
+    let lin =
+        |u: usize, w: usize, k: usize, z: usize| (((u * m + w) * 12 + k) * (m - 1) + z) as u32;
     let mut chains = Vec::with_capacity(12 * (m - 2) + 4);
     for w in 1..=(m - 2) {
         for k in 0..12 {
@@ -535,14 +550,22 @@ pub fn pegasus_clique(m: usize) -> Option<Embedding> {
     // (1, 0, {10,11}) cross every ell's column, each pair holds together on its odd coupler, and
     // the two pairs cross each other. Four is not a choice -- it is the count of wires the offsets
     // make universal, which is why this family stops at K_{12(m-2)+4}.
-    for (u, w, k) in [(0usize, m - 1, 0usize), (0, m - 1, 1), (1, 0, 10), (1, 0, 11)] {
+    for (u, w, k) in [
+        (0usize, m - 1, 0usize),
+        (0, m - 1, 1),
+        (1, 0, 10),
+        (1, 0, 11),
+    ] {
         let mut chain = Vec::with_capacity(m - 1);
         for z in 0..(m - 1) {
             chain.push(topo.node(lin(u, w, k, z))?);
         }
         chains.push(chain);
     }
-    Some(Embedding { chains, sites: topo.graph.n })
+    Some(Embedding {
+        chains,
+        sites: topo.graph.n,
+    })
 }
 
 /// Pegasus's vertical wire offsets, in FRAGMENT units — `PEGASUS_OFF[0]` halved, one per odd pair.
@@ -651,7 +674,10 @@ pub fn pegasus_clique_fragment(m: usize) -> Option<Embedding> {
     // This row/column pair was found by the same search that produced the general form and is
     // verified the same way; it is not busclique's answer, whose columns differ from these.
     let (rows, cols): (Vec<usize>, Vec<usize>) = if m == 3 {
-        ((3..=14).collect(), vec![10, 11, 7, 4, 3, 5, 6, 12, 14, 13, 8, 9])
+        (
+            (3..=14).collect(),
+            vec![10, 11, 7, 4, 3, 5, 6, 12, 14, 13, 8, 9],
+        )
     } else {
         let mut c = vec![12, 13, 11, 10, 9, 8, 7, 6, 5];
         c.extend(14..(l - 2)); // the interior: a plain ascending run
@@ -676,8 +702,10 @@ pub fn pegasus_clique_fragment(m: usize) -> Option<Embedding> {
     let (mut p, mut q) = (cols.clone(), cols.clone()); // horizontal arm, in fragment columns
     for i in 0..n {
         for j in (i + 1)..n {
-            let held_a = full(rows[j], cols[i]) && rows[j] <= b[i] && p[j] <= cols[i] && cols[i] <= q[j];
-            let held_b = full(rows[i], cols[j]) && rows[i] >= a[j] && p[i] <= cols[j] && cols[j] <= q[i];
+            let held_a =
+                full(rows[j], cols[i]) && rows[j] <= b[i] && p[j] <= cols[i] && cols[i] <= q[j];
+            let held_b =
+                full(rows[i], cols[j]) && rows[i] >= a[j] && p[i] <= cols[j] && cols[j] <= q[i];
             if held_a || held_b {
                 continue;
             }
@@ -713,7 +741,8 @@ pub fn pegasus_clique_fragment(m: usize) -> Option<Embedding> {
 
     // ---- back to qubits: two chains per corner, one for each shore of the odd-coupled pair -----
     let topo = crate::device::pegasus(m, 1.0);
-    let lin = |u: usize, w: usize, k: usize, z: usize| (((u * m + w) * 12 + k) * (m - 1) + z) as u32;
+    let lin =
+        |u: usize, w: usize, k: usize, z: usize| (((u * m + w) * 12 + k) * (m - 1) + z) as u32;
     let mut chains = Vec::with_capacity(2 * n);
     for i in 0..n {
         let (c, r) = (cols[i], rows[i]);
@@ -732,7 +761,10 @@ pub fn pegasus_clique_fragment(m: usize) -> Option<Embedding> {
             chains.push(chain);
         }
     }
-    Some(Embedding { chains, sites: topo.graph.n })
+    Some(Embedding {
+        chains,
+        sites: topo.graph.n,
+    })
 }
 
 // ---- machine-checked theorem for the Zephyr construction ------------------------------------------
@@ -808,8 +840,14 @@ mod proofs {
         let k: usize = kani::any();
         kani::assume(k < 12);
         // the four hold universally...
-        assert!(0 < OFF1[k] && 1 < OFF1[k], "columns (0, m-1, 0/1) cross every ell");
-        assert!(10 >= OFF0[k] && 11 >= OFF0[k], "rows (1, 0, 10/11) cross every ell");
+        assert!(
+            0 < OFF1[k] && 1 < OFF1[k],
+            "columns (0, m-1, 0/1) cross every ell"
+        );
+        assert!(
+            10 >= OFF0[k] && 11 >= OFF0[k],
+            "rows (1, 0, 10/11) cross every ell"
+        );
         // ...and their crossings land inside the ell segments: the column meets ell (w1, k)'s row
         // at z_row = m - 2 (b = 1), inside [w1 - 1, m - 2]; the row meets the ell's column at
         // z_col = 0 (a = 0), inside [0, w1].
@@ -839,7 +877,10 @@ mod proofs {
         kani::assume(cand < 12);
         if cand >= 2 {
             // a column track >= 2 misses every ell whose row track has off1 = 2 (tracks 4..8).
-            assert!(!(cand < OFF1[4]), "column (0, m-1, {cand}) is not universal");
+            assert!(
+                !(cand < OFF1[4]),
+                "column (0, m-1, {cand}) is not universal"
+            );
         }
         if cand < 10 {
             // a row track < 10 is crossed (a = 1) by every column track with off0 = 10 (4..8),
@@ -903,14 +944,21 @@ mod clique_tests {
         assert_eq!(built.chains.len(), 32);
         let built_longest = built.chains.iter().map(std::vec::Vec::len).max().unwrap();
         assert_eq!(built_longest, 9);
-        built.verify(&clique(32), &hw).expect("K_32 by construction");
+        built
+            .verify(&clique(32), &hw)
+            .expect("K_32 by construction");
 
         // The search at its default budget cannot even PLACE K_32 here (the comparison tables
         // record it as "not found"), so compare where it succeeds: its K_18 uses a longer chain
         // than the construction needs for K_32.
         let searched = embed_bounded(&clique(18), &hw, 7, 10, DEFAULT_SEARCH_BUDGET)
             .expect("the tables record K_18 as found");
-        let searched_longest = searched.chains.iter().map(std::vec::Vec::len).max().unwrap();
+        let searched_longest = searched
+            .chains
+            .iter()
+            .map(std::vec::Vec::len)
+            .max()
+            .unwrap();
         assert!(
             searched_longest > built_longest,
             "search: chain {searched_longest} for K_18; construction: chain {built_longest} for K_32"
@@ -930,8 +978,15 @@ mod clique_tests {
         for m in 1..=8usize {
             let topo = crate::device::zephyr(m, 4, 1.0);
             let e = zephyr_clique(m, 4).expect("m, t > 0");
-            assert_eq!(e.chains.len(), 16 * m - 8, "K_{{2t(2m-1)}} = K_{{16m-8}} for t=4");
-            assert!(e.chains.iter().all(|c| c.len() == m + 1), "uniform chains at m+1, Z{m}");
+            assert_eq!(
+                e.chains.len(),
+                16 * m - 8,
+                "K_{{2t(2m-1)}} = K_{{16m-8}} for t=4"
+            );
+            assert!(
+                e.chains.iter().all(|c| c.len() == m + 1),
+                "uniform chains at m+1, Z{m}"
+            );
             e.verify(&clique(16 * m - 8), &topo.graph)
                 .unwrap_or_else(|err| panic!("Z{m}: {err}"));
         }
@@ -949,7 +1004,9 @@ mod clique_tests {
     fn the_boundary_admits_exactly_two_tracks_at_each_end() {
         for m in [4usize, 5, 8] {
             let topo = crate::device::pegasus(m, 1.0);
-            let lin = |u: usize, w: usize, k: usize, z: usize| (((u * m + w) * 12 + k) * (m - 1) + z) as u32;
+            let lin = |u: usize, w: usize, k: usize, z: usize| {
+                (((u * m + w) * 12 + k) * (m - 1) + z) as u32
+            };
             let build = |w: usize, k: usize| -> Option<Vec<usize>> {
                 let mut c = Vec::new();
                 let (ev, sh) = (w.min(m - 2), w.saturating_sub(1));
@@ -970,17 +1027,22 @@ mod clique_tests {
                     for e in topo.graph.offset[c[i]]..topo.graph.offset[c[i] + 1] {
                         let y = topo.graph.nbr[e] as usize;
                         if let Some(j) = c.iter().position(|&v| v == y)
-                            && !seen[j] {
-                                seen[j] = true;
-                                count += 1;
-                                stack.push(j);
-                            }
+                            && !seen[j]
+                        {
+                            seen[j] = true;
+                            count += 1;
+                            stack.push(j);
+                        }
                     }
                 }
                 count == c.len()
             };
-            let hot: Vec<usize> = (0..12).filter(|&k| build(0, k).is_some_and(|c| connected(&c))).collect();
-            let cold: Vec<usize> = (0..12).filter(|&k| build(m - 1, k).is_some_and(|c| connected(&c))).collect();
+            let hot: Vec<usize> = (0..12)
+                .filter(|&k| build(0, k).is_some_and(|c| connected(&c)))
+                .collect();
+            let cold: Vec<usize> = (0..12)
+                .filter(|&k| build(m - 1, k).is_some_and(|c| connected(&c)))
+                .collect();
             assert_eq!(hot, vec![10, 11], "P{m}: hot-end tracks");
             assert_eq!(cold, vec![0, 1], "P{m}: cold-end tracks");
         }
@@ -1002,12 +1064,18 @@ mod clique_tests {
             // The body is uniform at m+1; the four universal wires are SHORTER, at m-1.
             let (body, wires) = e.chains.split_at(12 * (m - 2));
             assert!(body.iter().all(|c| c.len() == m + 1), "ells at m+1, P_{m}");
-            assert!(wires.iter().all(|c| c.len() == m - 1), "universal wires at m-1, P_{m}");
+            assert!(
+                wires.iter().all(|c| c.len() == m - 1),
+                "universal wires at m-1, P_{m}"
+            );
             e.verify(&clique(n), &topo.graph)
                 .unwrap_or_else(|err| panic!("P_{m}: {err}"));
         }
         assert!(pegasus_clique(0).is_none());
-        assert!(pegasus_clique(2).is_none(), "no interior diagonal below P_3");
+        assert!(
+            pegasus_clique(2).is_none(),
+            "no interior diagonal below P_3"
+        );
     }
 
     /// The fragment construction is AT the frontier: `busclique`'s size and chain, every size.
@@ -1018,18 +1086,36 @@ mod clique_tests {
     #[test]
     fn the_fragment_clique_reaches_buscliques_frontier_at_every_size() {
         // (m, busclique's K on a perfect P_m, measured)
-        for &(m, theirs) in
-            &[(3usize, 24usize), (4, 36), (5, 48), (6, 60), (7, 72), (8, 84), (9, 96)]
-        {
+        for &(m, theirs) in &[
+            (3usize, 24usize),
+            (4, 36),
+            (5, 48),
+            (6, 60),
+            (7, 72),
+            (8, 84),
+            (9, 96),
+        ] {
             let topo = crate::device::pegasus(m, 1.0);
             let e = pegasus_clique_fragment(m).expect("m >= 3");
             let k = e.chains.len();
             assert_eq!(k, 12 * (m - 1), "P_{m}: K_{{12(m-1)}}");
             assert_eq!(k, theirs, "P_{m} is exactly busclique's size, not near it");
-            assert!(k > pegasus_clique(m).expect("m >= 3").chains.len(), "P_{m} beats closed form");
-            let longest = e.chains.iter().map(std::vec::Vec::len).max().expect("nonempty");
-            assert!(longest <= m + 1, "P_{m}: chain {longest} exceeds m+1, busclique's bound too");
-            e.verify(&clique(k), &topo.graph).unwrap_or_else(|err| panic!("P_{m}: {err}"));
+            assert!(
+                k > pegasus_clique(m).expect("m >= 3").chains.len(),
+                "P_{m} beats closed form"
+            );
+            let longest = e
+                .chains
+                .iter()
+                .map(std::vec::Vec::len)
+                .max()
+                .expect("nonempty");
+            assert!(
+                longest <= m + 1,
+                "P_{m}: chain {longest} exceeds m+1, busclique's bound too"
+            );
+            e.verify(&clique(k), &topo.graph)
+                .unwrap_or_else(|err| panic!("P_{m}: {err}"));
         }
         assert!(pegasus_clique_fragment(2).is_none());
     }
@@ -1040,10 +1126,24 @@ mod clique_tests {
         let m = 16;
         let topo = crate::device::pegasus(m, 1.0);
         let e = pegasus_clique_fragment(m).expect("m >= 3");
-        assert_eq!(e.chains.len(), 180, "K_180 on P_16 -- busclique's frontier, exactly");
-        let longest = e.chains.iter().map(std::vec::Vec::len).max().expect("nonempty");
-        assert_eq!(longest, m + 1, "chain 17, which is busclique's chain length too");
-        e.verify(&clique(180), &topo.graph).expect("a valid minor on the shipped fabric");
+        assert_eq!(
+            e.chains.len(),
+            180,
+            "K_180 on P_16 -- busclique's frontier, exactly"
+        );
+        let longest = e
+            .chains
+            .iter()
+            .map(std::vec::Vec::len)
+            .max()
+            .expect("nonempty");
+        assert_eq!(
+            longest,
+            m + 1,
+            "chain 17, which is busclique's chain length too"
+        );
+        e.verify(&clique(180), &topo.graph)
+            .expect("a valid minor on the shipped fabric");
     }
 
     /// Every arm stays on its own wire, which is what makes the trimming safe to do blind.
@@ -1068,11 +1168,26 @@ mod clique_tests {
                         None => wires.push((u, w, k, vec![z])),
                     }
                 }
-                assert_eq!(wires.len(), 2, "P_{m} chain {v} spans {} wires, not 2", wires.len());
-                assert_ne!(wires[0].0, wires[1].0, "P_{m} chain {v}: both arms same orientation");
+                assert_eq!(
+                    wires.len(),
+                    2,
+                    "P_{m} chain {v} spans {} wires, not 2",
+                    wires.len()
+                );
+                assert_ne!(
+                    wires[0].0, wires[1].0,
+                    "P_{m} chain {v}: both arms same orientation"
+                );
                 for (u, w, k, zs) in &wires {
-                    let (lo, hi) = (*zs.iter().min().expect("nonempty"), *zs.iter().max().expect("nonempty"));
-                    assert_eq!(hi - lo + 1, zs.len(), "P_{m} chain {v}: gap in wire ({u},{w},{k})");
+                    let (lo, hi) = (
+                        *zs.iter().min().expect("nonempty"),
+                        *zs.iter().max().expect("nonempty"),
+                    );
+                    assert_eq!(
+                        hi - lo + 1,
+                        zs.len(),
+                        "P_{m} chain {v}: gap in wire ({u},{w},{k})"
+                    );
                     assert!(hi <= m - 2, "P_{m} chain {v}: z={hi} past the wire's end");
                 }
             }
@@ -1136,7 +1251,12 @@ pub fn embed_bounded(
 
 /// As [`embed`], with an explicit number of rip-up rounds.
 #[must_use]
-pub fn embed_with(logical: &Graph, hardware: &Graph, seed: u64, rounds: usize) -> Option<Embedding> {
+pub fn embed_with(
+    logical: &Graph,
+    hardware: &Graph,
+    seed: u64,
+    rounds: usize,
+) -> Option<Embedding> {
     embed_inner(logical, hardware, seed, rounds, DEFAULT_SEARCH_BUDGET)
 }
 
@@ -1149,7 +1269,10 @@ fn embed_inner(
 ) -> Option<Embedding> {
     let mut spent: u64 = 0;
     if logical.n == 0 {
-        return Some(Embedding { chains: Vec::new(), sites: hardware.n });
+        return Some(Embedding {
+            chains: Vec::new(),
+            sites: hardware.n,
+        });
     }
     if logical.n > hardware.n {
         return None; // more variables than sites, before any structure is considered
@@ -1278,7 +1401,10 @@ fn embed_inner(
         let all_placed = chains.iter().all(|c| !c.is_empty());
 
         if excess == 0 && all_placed {
-            let e = Embedding { chains: chains.clone(), sites: hardware.n };
+            let e = Embedding {
+                chains: chains.clone(),
+                sites: hardware.n,
+            };
             // An embedding this module returns is always checked. A wrong one does not fail
             // loudly on a machine; it returns plausible answers to a different problem.
             //
@@ -1336,7 +1462,11 @@ fn site_cost(load: &[usize], s: usize) -> u64 {
 /// The emptiest site, preferring hardware degree, breaking ties at random.
 fn seed_site(h: &Graph, load: &[usize], rng: &mut Pcg) -> Option<usize> {
     (0..h.n).min_by_key(|&s| {
-        (load[s], core::cmp::Reverse(h.offset[s + 1] - h.offset[s]), rng.next() % 1024)
+        (
+            load[s],
+            core::cmp::Reverse(h.offset[s + 1] - h.offset[s]),
+            rng.next() % 1024,
+        )
     })
 }
 
@@ -1455,8 +1585,12 @@ fn prune(h: &Graph, chain: &mut Vec<usize>, neighbours: &[usize], chains: &[Vec<
         if chain.len() == 1 {
             break;
         }
-        let trial: Vec<usize> =
-            chain.iter().enumerate().filter(|&(k, _)| k != i).map(|(_, &s)| s).collect();
+        let trial: Vec<usize> = chain
+            .iter()
+            .enumerate()
+            .filter(|&(k, _)| k != i)
+            .map(|(_, &s)| s)
+            .collect();
         let keeps = connected(&trial, h)
             && neighbours
                 .iter()
@@ -1562,7 +1696,12 @@ pub struct Embedded {
 /// are shared out along each chain, so the total weight is unchanged however long a chain is.
 #[must_use]
 pub fn apply(logical: &Graph, hardware: &Graph, e: &Embedding) -> Embedded {
-    apply_with(logical, hardware, e, DEFAULT_CHAIN_MULTIPLE * worst_coefficient(logical))
+    apply_with(
+        logical,
+        hardware,
+        e,
+        DEFAULT_CHAIN_MULTIPLE * worst_coefficient(logical),
+    )
 }
 
 /// The multiple of the largest logical coefficient [`apply`] holds chains together with.
@@ -1602,11 +1741,7 @@ pub fn worst_coefficient(logical: &Graph) -> f64 {
         .flat_map(|i| (logical.offset[i]..logical.offset[i + 1]).map(move |k| logical.w[k].abs()))
         .chain(logical.h.iter().map(|x| x.abs()))
         .fold(0.0f64, f64::max);
-    if worst > 0.0 {
-        worst
-    } else {
-        0.5
-    }
+    if worst > 0.0 { worst } else { 0.5 }
 }
 
 /// Rewrite a logical model onto hardware sites, choosing the chain coupling yourself.
@@ -1688,7 +1823,11 @@ pub fn apply_with(
         }
     }
 
-    Embedded { graph: b.build(), embedding: e.clone(), chain_strength }
+    Embedded {
+        graph: b.build(),
+        embedding: e.clone(),
+        chain_strength,
+    }
 }
 
 /// Read a hardware state back as logical values, by majority vote along each chain.
@@ -1701,7 +1840,10 @@ pub fn unembed(e: &Embedding, state: &[i8]) -> (Vec<i8>, Vec<usize>) {
     let mut out = vec![0i8; e.chains.len()];
     let mut broken = Vec::new();
     for (v, chain) in e.chains.iter().enumerate() {
-        let up = chain.iter().filter(|&&s| state.get(s).copied().unwrap_or(0) > 0).count();
+        let up = chain
+            .iter()
+            .filter(|&&s| state.get(s).copied().unwrap_or(0) > 0)
+            .count();
         let down = chain.len() - up;
         if up != 0 && down != 0 {
             broken.push(v);
@@ -1716,10 +1858,15 @@ struct Pcg(u64);
 
 impl Pcg {
     fn new(seed: u64) -> Pcg {
-        Pcg(seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407))
+        Pcg(seed
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407))
     }
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
         let x = self.0;
         (x >> 33) ^ x
     }
@@ -1822,24 +1969,37 @@ mod tests {
         let g = grid(4);
         let eg = embed(&triangle(), &g, 7).expect("a triangle is a minor of a 4x4 grid");
         eg.verify(&triangle(), &g).unwrap();
-        assert!(eg.longest_chain() > 1, "a square grid has no triangle: {:?}", eg.chains);
+        assert!(
+            eg.longest_chain() > 1,
+            "a square grid has no triangle: {:?}",
+            eg.chains
+        );
     }
 
     #[test]
     fn verify_rejects_an_embedding_that_is_not_one() {
         let g = grid(4);
         // a disconnected "chain"
-        let broken = Embedding { chains: vec![vec![0, 15], vec![1], vec![2]], sites: g.n };
+        let broken = Embedding {
+            chains: vec![vec![0, 15], vec![1], vec![2]],
+            sites: g.n,
+        };
         let e = broken.verify(&triangle(), &g).unwrap_err();
         assert!(e.contains("not connected"), "{e}");
 
         // two variables on one site
-        let shared = Embedding { chains: vec![vec![0], vec![0], vec![2]], sites: g.n };
+        let shared = Embedding {
+            chains: vec![vec![0], vec![0], vec![2]],
+            sites: g.n,
+        };
         let e = shared.verify(&triangle(), &g).unwrap_err();
         assert!(e.contains("used by both"), "{e}");
 
         // an interaction with nowhere to happen
-        let apart = Embedding { chains: vec![vec![0], vec![3], vec![12]], sites: g.n };
+        let apart = Embedding {
+            chains: vec![vec![0], vec![3], vec![12]],
+            sites: g.n,
+        };
         let e = apart.verify(&triangle(), &g).unwrap_err();
         assert!(e.contains("interact"), "{e}");
     }
@@ -1857,7 +2017,11 @@ mod tests {
 
     #[test]
     fn more_variables_than_sites_is_refused_immediately() {
-        assert_eq!(embed(&clique(10, 1.0), &grid(3), 1), None, "9 sites cannot hold 10 variables");
+        assert_eq!(
+            embed(&clique(10, 1.0), &grid(3), 1),
+            None,
+            "9 sites cannot hold 10 variables"
+        );
     }
 
     #[test]
@@ -1886,12 +2050,16 @@ mod tests {
             .ground_state
             .expect("a ground state");
         let (values, broken) = unembed(&e, &best);
-        assert!(broken.is_empty(), "the chain coupling should hold at the optimum: {broken:?}");
+        assert!(
+            broken.is_empty(),
+            "the chain coupling should hold at the optimum: {broken:?}"
+        );
 
         let want = (0u32..(1 << logical.n))
             .map(|m| {
-                let s: Vec<i8> =
-                    (0..logical.n).map(|i| if m & (1 << i) != 0 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..logical.n)
+                    .map(|i| if m & (1 << i) != 0 { 1 } else { -1 })
+                    .collect();
                 (logical.energy(&s) * 1e9) as i64
             })
             .min()
@@ -1907,7 +2075,10 @@ mod tests {
     fn a_broken_chain_is_reported_rather_than_resolved_silently() {
         // A chain that disagrees with itself has no value for that variable. Majority vote gives an
         // answer; saying which variables needed one is what stops it being mistaken for a result.
-        let e = Embedding { chains: vec![vec![0, 1, 2], vec![3]], sites: 4 };
+        let e = Embedding {
+            chains: vec![vec![0, 1, 2], vec![3]],
+            sites: 4,
+        };
         let (v, broken) = unembed(&e, &[1, 1, -1, 1]);
         assert_eq!(v, vec![1, 1], "majority is up");
         assert_eq!(broken, vec![0], "and variable 0 is the one that disagreed");
@@ -1936,9 +2107,18 @@ mod tests {
         for seed in 0..8 {
             let e = embed(&star, &hardware, seed)
                 .unwrap_or_else(|| panic!("the star must embed, seed {seed}"));
-            e.verify(&star, &hardware).expect("and the embedding must be one");
-            assert!(e.longest_chain() >= 2, "the centre must be a chain: {:?}", e.chains);
-            assert!(e.used() <= 20, "about ten sites, not a sprawl: {:?}", e.chains);
+            e.verify(&star, &hardware)
+                .expect("and the embedding must be one");
+            assert!(
+                e.longest_chain() >= 2,
+                "the centre must be a chain: {:?}",
+                e.chains
+            );
+            assert!(
+                e.used() <= 20,
+                "about ten sites, not a sprawl: {:?}",
+                e.chains
+            );
         }
         // And it is not a matter of budget either way: one round finds it.
         let e = embed_with(&star, &hardware, 0, 0).expect("the first round already places it");
@@ -1960,17 +2140,20 @@ mod tests {
             for seed in 0..4 {
                 let e = embed(&c, &hardware, seed)
                     .unwrap_or_else(|| panic!("K_{n} must embed, seed {seed}"));
-                e.verify(&c, &hardware).expect("and the embedding must be one");
-                assert!(e.longest_chain() > 1, "K_{n} cannot fit without a chain: {:?}", e.chains);
+                e.verify(&c, &hardware)
+                    .expect("and the embedding must be one");
+                assert!(
+                    e.longest_chain() > 1,
+                    "K_{n} cannot fit without a chain: {:?}",
+                    e.chains
+                );
             }
         }
         // Stated as "at least this many of these seeds" on purpose. This is a heuristic, and a
         // claim that it always succeeds is one it cannot make. Measured here: 8 of 8.
         let c = clique(16, 1.0);
         let ok = (0..8u64)
-            .filter(|&s| {
-                embed(&c, &hardware, s).is_some_and(|e| e.verify(&c, &hardware).is_ok())
-            })
+            .filter(|&s| embed(&c, &hardware, s).is_some_and(|e| e.verify(&c, &hardware).is_ok()))
             .count();
         assert!(ok >= 6, "K_16 embedded on only {ok} of 8 seeds");
     }
@@ -2013,12 +2196,22 @@ mod tests {
 
         let mut checked = 0;
         for hw in &machines {
-            for g in [clique(4), clique(6), clique(8), clique(12), star(3), star(8), star(20),
-                      path(5), path(40)] {
+            for g in [
+                clique(4),
+                clique(6),
+                clique(8),
+                clique(12),
+                star(3),
+                star(8),
+                star(20),
+                path(5),
+                path(40),
+            ] {
                 let lb = site_lower_bound(&g, hw);
                 for seed in 0..4u64 {
                     if let Some(e) = embed(&g, hw, seed) {
-                        e.verify(&g, hw).expect("embed only returns verified embeddings");
+                        e.verify(&g, hw)
+                            .expect("embed only returns verified embeddings");
                         assert!(
                             lb <= e.used(),
                             "the bound claims {lb} sites are needed and an embedding used {} \
@@ -2031,7 +2224,10 @@ mod tests {
             }
         }
         // A floor: if nothing embedded, the loop above asserted nothing.
-        assert!(checked > 30, "only {checked} embeddings to check the bound against");
+        assert!(
+            checked > 30,
+            "only {checked} embeddings to check the bound against"
+        );
     }
 
     /// And it has to actually bite, or it is decoration on the hot path.
@@ -2073,7 +2269,11 @@ mod tests {
         let hw = grid(4);
         let e = embed(&logical, &hw, 5).unwrap();
         let emb = apply(&logical, &hw, &e);
-        assert!(emb.chain_strength > 5.0, "a chain must outrank the couplings it carries: {}", emb.chain_strength);
+        assert!(
+            emb.chain_strength > 5.0,
+            "a chain must outrank the couplings it carries: {}",
+            emb.chain_strength
+        );
     }
 
     #[test]

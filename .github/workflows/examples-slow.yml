@@ -29,8 +29,8 @@ jobs:
     env:
       SHARDS: 4
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Examples build
         run: cargo build --release --examples
       - name: This shard's slow examples run to completion

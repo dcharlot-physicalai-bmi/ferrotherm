@@ -45,7 +45,10 @@ fn frustrated(n: usize, seed: u64) -> Graph {
         b.couple(i, (i + 1) % n, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
     }
     for _ in 0..n / 4 {
-        let (i, j) = ((rng.f64() * n as f64) as usize % n, (rng.f64() * n as f64) as usize % n);
+        let (i, j) = (
+            (rng.f64() * n as f64) as usize % n,
+            (rng.f64() * n as f64) as usize % n,
+        );
         if i != j {
             b.couple(i, j, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
         }
@@ -112,12 +115,29 @@ fn main() {
     let start_flips_per_spin = 4_000usize;
     let cap_flips_per_spin = 128_000usize;
     println!("THE INFORMED PROPOSAL'S ADVANTAGE AGAINST n, AND AGAINST WHAT A FLIP COSTS\n");
-    println!("  fixture   frustrated ring with n/4 chords and fields (the informed_mixing fixture), beta = {beta}");
-    println!("  budget    from {start_flips_per_spin} flips per spin per chain, doubled until both arms hold ESS >= {MIN_ESS:.0}");
+    println!(
+        "  fixture   frustrated ring with n/4 chords and fields (the informed_mixing fixture), beta = {beta}"
+    );
+    println!(
+        "  budget    from {start_flips_per_spin} flips per spin per chain, doubled until both arms hold ESS >= {MIN_ESS:.0}"
+    );
     println!("            (cap {cap_flips_per_spin}), {seeds} seeds per size, tau_int in FLIPS\n");
     println!(
         "  {:>5} {:>5} {:>7}   {:>9} {:>9} {:>7}   {:>10} {:>10} {:>10}   {:>8} {:>8}  {:>6}  {:>5} {:>5}",
-        "n", "deg", "f/spin", "tau G", "tau B", "G/B", "work G", "work B:scan", "work B:tree", "adv:scan", "adv:tree", "acc", "ESS G", "ESS B"
+        "n",
+        "deg",
+        "f/spin",
+        "tau G",
+        "tau B",
+        "G/B",
+        "work G",
+        "work B:scan",
+        "work B:tree",
+        "adv:scan",
+        "adv:tree",
+        "acc",
+        "ESS G",
+        "ESS B"
     );
     let mut resolved: Vec<(usize, f64, f64, f64)> = Vec::new();
     let mut unresolved: Vec<(usize, f64, f64)> = Vec::new();
@@ -148,7 +168,9 @@ fn main() {
             let ess_g = draws as f64 / (2.0 * tg / n as f64);
             let ess_b = draws as f64 / (2.0 * tb / n as f64);
             if (ess_g >= MIN_ESS && ess_b >= MIN_ESS) || flips_per_spin >= cap_flips_per_spin {
-                break (tg, tb, acc, deg, ess_g, ess_b, trunc_g, trunc_b, low_g, low_b);
+                break (
+                    tg, tb, acc, deg, ess_g, ess_b, trunc_g, trunc_b, low_g, low_b,
+                );
             }
             flips_per_spin = (flips_per_spin * 2).min(cap_flips_per_spin);
         };
@@ -176,9 +198,15 @@ fn main() {
         }
     }
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  G/B is the per-flip advantage `informed_mixing` reports for one size. adv:scan is what");
-    println!("  that advantage was worth as WORK before 2026-09-13, when choosing a site scanned every");
-    println!("  weight; adv:tree is what it is worth now. A value below 1 means the informed chain costs");
+    println!(
+        "  G/B is the per-flip advantage `informed_mixing` reports for one size. adv:scan is what"
+    );
+    println!(
+        "  that advantage was worth as WORK before 2026-09-13, when choosing a site scanned every"
+    );
+    println!(
+        "  weight; adv:tree is what it is worth now. A value below 1 means the informed chain costs"
+    );
     println!("  MORE work per independent sample than Gibbs, whatever its flips say.");
     let scan_wins = resolved.iter().filter(|r| r.2 > 1.0).count();
     let tree_wins = resolved.iter().filter(|r| r.3 > 1.0).count();
@@ -212,7 +240,13 @@ fn main() {
             "  n = {n}: UNRESOLVED at the cap -- Gibbs ESS {eg:.0}, informed ESS {eb:.0}; its ratios are printed and not counted."
         );
     }
-    println!("\n  tau_int's relative error is about 1/sqrt(ESS), which is why the ESS columns are there and why");
-    println!("  a row is escalated until both clear {MIN_ESS:.0}. Four seeds are averaged; the spread between");
-    println!("  them is the reproducibility of every ratio above, and no ratio is tighter than it.");
+    println!(
+        "\n  tau_int's relative error is about 1/sqrt(ESS), which is why the ESS columns are there and why"
+    );
+    println!(
+        "  a row is escalated until both clear {MIN_ESS:.0}. Four seeds are averaged; the spread between"
+    );
+    println!(
+        "  them is the reproducibility of every ratio above, and no ratio is tighter than it."
+    );
 }

@@ -37,7 +37,8 @@
 // run: cargo run --release --example penalty_mixing
 
 use ferrotherm::autocorr::{
-    spins, tau_int_censored, tau_int_solved, time_to_mass, Kernel, MassRoute, MassTime, Metastable, Route,
+    Kernel, MassRoute, MassTime, Metastable, Route, spins, tau_int_censored, tau_int_solved,
+    time_to_mass,
 };
 use ferrotherm::npising::Tsp;
 use ferrotherm::rng::Pcg;
@@ -78,10 +79,24 @@ fn analyse(n: usize, weights: &[f64]) -> Instance {
             a_crit = a_crit.max((t_star - w) / p);
         }
     }
-    let optimal: Vec<bool> = pw.iter().zip(&feasible).map(|(&(_, w), &f)| f && (w - t_star).abs() < 1e-9).collect();
-    let max_w = weights.iter().copied().filter(|w| w.is_finite()).fold(0.0f64, f64::max);
+    let optimal: Vec<bool> = pw
+        .iter()
+        .zip(&feasible)
+        .map(|(&(_, w), &f)| f && (w - t_star).abs() < 1e-9)
+        .collect();
+    let max_w = weights
+        .iter()
+        .copied()
+        .filter(|w| w.is_finite())
+        .fold(0.0f64, f64::max);
     let threshold = Tsp::new(n, weights).expect("valid").threshold();
-    Instance { a_crit, max_w, threshold, t_star, optimal }
+    Instance {
+        a_crit,
+        max_w,
+        threshold,
+        t_star,
+        optimal,
+    }
 }
 
 fn weights(n: usize, seed: u64) -> Vec<f64> {
@@ -134,14 +149,33 @@ fn main() {
     // how much), and the slow scale answers. The ROUTE of tau is no guide: instance 2's max(W) chain
     // (tau 354) is too ill-conditioned for GMRES to certify 1e-10 and goes to the censored solve.
     let push_frozen = 200usize;
-    let budget_for = |tau: f64| if tau < 1e6 { (20.0 * tau) as usize + 10_000 } else { push_frozen };
-    println!("WHAT A PENALTY COSTS IN SWEEPS -- exact, sequential Gibbs on all 2^16 states of four-city TSPs, beta = {beta}\n");
-    println!("  penalties  just above A_crit; Lucas's max(W); the provable threshold; four times it");
-    println!("  columns    P_GS at equilibrium; tau_int of the energy (sweeps); sweeps from uniform to within {}% of P_GS", rel * 100.0);
-    println!("  routes     tau: G = GMRES, C = censored (GTH); sweeps: p = pushed (exact), s = slow scale (reduction)\n");
+    let budget_for = |tau: f64| {
+        if tau < 1e6 {
+            (20.0 * tau) as usize + 10_000
+        } else {
+            push_frozen
+        }
+    };
+    println!(
+        "WHAT A PENALTY COSTS IN SWEEPS -- exact, sequential Gibbs on all 2^16 states of four-city TSPs, beta = {beta}\n"
+    );
+    println!(
+        "  penalties  just above A_crit; Lucas's max(W); the provable threshold; four times it"
+    );
+    println!(
+        "  columns    P_GS at equilibrium; tau_int of the energy (sweeps); sweeps from uniform to within {}% of P_GS",
+        rel * 100.0
+    );
+    println!(
+        "  routes     tau: G = GMRES, C = censored (GTH); sweeps: p = pushed (exact), s = slow scale (reduction)\n"
+    );
     println!(
         "  {:>4}   {:>27}   {:>27}   {:>27}   {:>27}",
-        "inst", "A_crit+: P_GS tau K1%", "max(W): P_GS tau K1%", "thresh: P_GS tau K1%", "4x thr: P_GS tau K1%"
+        "inst",
+        "A_crit+: P_GS tau K1%",
+        "max(W): P_GS tau K1%",
+        "thresh: P_GS tau K1%",
+        "4x thr: P_GS tau K1%"
     );
     let mut log_tau = [0.0f64; 4];
     let mut log_k = [0.0f64; 4];
@@ -153,18 +187,39 @@ fn main() {
     for seed in 0..instances {
         let w = weights(n, seed);
         let inst = analyse(n, &w);
-        let penalties = [inst.a_crit * 1.05 + 1e-9, inst.max_w, inst.threshold, 4.0 * inst.threshold];
+        let penalties = [
+            inst.a_crit * 1.05 + 1e-9,
+            inst.max_w,
+            inst.threshold,
+            4.0 * inst.threshold,
+        ];
         let mut cells = Vec::new();
         let (mut best_k, mut best_idx) = (f64::INFINITY, 0);
         for (i, &a) in penalties.iter().enumerate() {
             let model = Tsp::with_weights(n, &w, 1.0, a).expect("valid");
             let g = model.graph();
-            let tau = tau_int_solved(g, beta, Kernel::SequentialGibbs, |s| g.energy(s), 1e-10, 3_000)
-                .unwrap_or_else(|e| panic!("instance {seed}, A = {a}: {e}"));
+            let tau = tau_int_solved(
+                g,
+                beta,
+                Kernel::SequentialGibbs,
+                |s| g.energy(s),
+                1e-10,
+                3_000,
+            )
+            .unwrap_or_else(|e| panic!("instance {seed}, A = {a}: {e}"));
             let budget = budget_for(tau.tau_int);
             let start = vec![1.0 / (1usize << g.n) as f64; 1usize << g.n];
-            let k: MassTime = time_to_mass(g, beta, Kernel::SequentialGibbs, &start, |x| inst.optimal[x], rel, budget, Metastable::LocalMinima)
-                .unwrap_or_else(|e| panic!("instance {seed}, A = {a}: {e}"));
+            let k: MassTime = time_to_mass(
+                g,
+                beta,
+                Kernel::SequentialGibbs,
+                &start,
+                |x| inst.optimal[x],
+                rel,
+                budget,
+                Metastable::LocalMinima,
+            )
+            .unwrap_or_else(|e| panic!("instance {seed}, A = {a}: {e}"));
             if k.route == MassRoute::SlowScale {
                 worst_handover = worst_handover.max(k.handover / (rel * k.stationary));
             }
@@ -201,8 +256,15 @@ fn main() {
         );
     }
     let f = instances as f64;
-    println!("\n  over {instances} instances (tau and sweeps as GEOMETRIC means: at the top two penalties they span decades):");
-    let names = ["just above A_crit", "max(W)", "provable threshold", "4x threshold"];
+    println!(
+        "\n  over {instances} instances (tau and sweeps as GEOMETRIC means: at the top two penalties they span decades):"
+    );
+    let names = [
+        "just above A_crit",
+        "max(W)",
+        "provable threshold",
+        "4x threshold",
+    ];
     for (i, name) in names.iter().enumerate() {
         println!(
             "    {name:<20} P_GS {:.3}   tau_int {:>10} sweeps   sweeps to 1% of P_GS {:>10}   fastest on {:>2}   routes: censored {:>2}, slow scale {:>2}",
@@ -214,7 +276,9 @@ fn main() {
             slow_route[i]
         );
     }
-    println!("    slow-scale hand-over: the pushed mass and the reduction's differed by at most {worst_handover:.1e} of the 1% band");
+    println!(
+        "    slow-scale hand-over: the pushed mass and the reduction's differed by at most {worst_handover:.1e} of the 1% band"
+    );
 
     // THE CHECKS THE TWO NEW ROUTES CARRY IN PLACE OF AN ERROR BAR.
     println!("\n  CHECKS");
@@ -222,12 +286,30 @@ fn main() {
     // nothing, the 36 local minima and those with every single-flip neighbour.
     let w0 = weights(n, 0);
     let inst0 = analyse(n, &w0);
-    for (name, a) in [("threshold", inst0.threshold), ("4x threshold", 4.0 * inst0.threshold)] {
+    for (name, a) in [
+        ("threshold", inst0.threshold),
+        ("4x threshold", 4.0 * inst0.threshold),
+    ] {
         let model = Tsp::with_weights(n, &w0, 1.0, a).expect("valid");
         let g = model.graph();
-        let one = tau_int_censored(g, beta, Kernel::SequentialGibbs, |s| g.energy(s), Metastable::LocalMinima, 1e-13).expect("censored");
-        let two = tau_int_censored(g, beta, Kernel::SequentialGibbs, |s| g.energy(s), Metastable::LocalMinimaAndNeighbours, 1e-13)
-            .expect("censored");
+        let one = tau_int_censored(
+            g,
+            beta,
+            Kernel::SequentialGibbs,
+            |s| g.energy(s),
+            Metastable::LocalMinima,
+            1e-13,
+        )
+        .expect("censored");
+        let two = tau_int_censored(
+            g,
+            beta,
+            Kernel::SequentialGibbs,
+            |s| g.energy(s),
+            Metastable::LocalMinimaAndNeighbours,
+            1e-13,
+        )
+        .expect("censored");
         println!(
             "    instance 0, {name:<12} censored tau on the minima {:.10e}, on minima and neighbours {:.10e}: rel {:.1e}",
             one.tau_int,
@@ -244,19 +326,43 @@ fn main() {
         let model = Tsp::with_weights(n, &w, 1.0, inst.max_w).expect("valid");
         let g = model.graph();
         let start = vec![1.0 / (1usize << g.n) as f64; 1usize << g.n];
-        let pushed = time_to_mass(g, beta, Kernel::SequentialGibbs, &start, |x| inst.optimal[x], rel, 200_000, Metastable::LocalMinima)
-            .expect("pushed");
-        let reduced = time_to_mass(g, beta, Kernel::SequentialGibbs, &start, |x| inst.optimal[x], rel, push_frozen, Metastable::LocalMinima)
-            .expect("reduced");
+        let pushed = time_to_mass(
+            g,
+            beta,
+            Kernel::SequentialGibbs,
+            &start,
+            |x| inst.optimal[x],
+            rel,
+            200_000,
+            Metastable::LocalMinima,
+        )
+        .expect("pushed");
+        let reduced = time_to_mass(
+            g,
+            beta,
+            Kernel::SequentialGibbs,
+            &start,
+            |x| inst.optimal[x],
+            rel,
+            push_frozen,
+            Metastable::LocalMinima,
+        )
+        .expect("reduced");
         if pushed.route == MassRoute::Pushed && reduced.route == MassRoute::SlowScale {
             worst = worst.max((reduced.steps - pushed.steps).abs() / pushed.steps);
         }
     }
-    println!("    slow scale against pushing on the twelve max(W) cells, the lowest barriers of the frozen-capable: worst rel {worst:.1e}");
+    println!(
+        "    slow scale against pushing on the twelve max(W) cells, the lowest barriers of the frozen-capable: worst rel {worst:.1e}"
+    );
 
     println!("\n  WHAT THE TABLE SAYS.\n");
     let decades = |i: usize| (log_tau[i] / f) / std::f64::consts::LN_10;
-    println!("  P_GS rises with A -- the equilibrium half, a theorem: {:.3} just above A_crit to {:.3} at four times the threshold.", mass[0] / f, mass[3] / f);
+    println!(
+        "  P_GS rises with A -- the equilibrium half, a theorem: {:.3} just above A_crit to {:.3} at four times the threshold.",
+        mass[0] / f,
+        mass[3] / f
+    );
     println!(
         "  tau_int rises from about 10^{:.1} sweeps to 10^{:.1}, 10^{:.1} and 10^{:.1}: the dynamics half, measured exactly on every cell.",
         decades(0),
@@ -264,5 +370,7 @@ fn main() {
         decades(2),
         decades(3)
     );
-    println!("  A small penalty wins for any sampler with a sweep budget; the large ones buy mass no sampler reaches.");
+    println!(
+        "  A small penalty wins for any sampler with a sweep budget; the large ones buy mass no sampler reaches."
+    );
 }

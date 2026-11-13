@@ -43,8 +43,12 @@ fn main() {
     let k_mix = 250; // sweeps per independent sample, the vendor's Fashion-MNIST-tuned constant
     let p: Prices = Z1_SPICE;
 
-    println!("Z1-class fabric {w}x{h} = {n} nodes, degree 16, 2-colorable; prices = SPICE Table IV");
-    println!("(pre-silicon vendor estimates; every number below is THEIR device model, our arithmetic)\n");
+    println!(
+        "Z1-class fabric {w}x{h} = {n} nodes, degree 16, 2-colorable; prices = SPICE Table IV"
+    );
+    println!(
+        "(pre-silicon vendor estimates; every number below is THEIR device model, our arithmetic)\n"
+    );
 
     // ---- A. generative: 64 independent samples, read 834 data nodes each (their DTM data size) ----
     {
@@ -57,10 +61,22 @@ fn main() {
             let _ = smp.read_subset(&data_nodes, Some(&mut led));
         }
         let (s, r, wr) = led.shares(&p);
-        println!("A. GENERATIVE, model resident, 64 samples x {k_mix} sweeps, read 834 data nodes/sample:");
-        println!("   total {}   shares: sampling {:.0}%  read {:.0}%  write {:.0}% (one-time program)",
-                 joules_fmt(led.joules(&p).expect("these examples price against stated prices")), s * 100.0, r * 100.0, wr * 100.0);
-        println!("   -> their favorable regime, reproduced: local updates dominate, I/O amortized.\n");
+        println!(
+            "A. GENERATIVE, model resident, 64 samples x {k_mix} sweeps, read 834 data nodes/sample:"
+        );
+        println!(
+            "   total {}   shares: sampling {:.0}%  read {:.0}%  write {:.0}% (one-time program)",
+            joules_fmt(
+                led.joules(&p)
+                    .expect("these examples price against stated prices")
+            ),
+            s * 100.0,
+            r * 100.0,
+            wr * 100.0
+        );
+        println!(
+            "   -> their favorable regime, reproduced: local updates dominate, I/O amortized.\n"
+        );
     }
 
     // ---- B. control loop: 100 Hz, 1 s of operation, obs clamp + action read every tick ----
@@ -84,12 +100,24 @@ fn main() {
             let _ = smp.read_subset(&act_idx, Some(&mut led));
         }
         let (s, r, wr) = led.shares(&p);
-        let per_tick = led.joules(&p).expect("these examples price against stated prices") / ticks as f64;
-        println!("B1. CONTROL 100 Hz, clamping BILLED AS WRITE (Table IV literal), {obs_bits} obs + {act_bits} act bits/tick:");
-        println!("    per tick {}   shares: sampling {:.0}%  read {:.0}%  write {:.0}%",
-                 joules_fmt(per_tick), s * 100.0, r * 100.0, wr * 100.0);
-        println!("    write path = {:.0}x the sampling energy per tick; and 100 reflashes/s vs the <=1/s cap -> INFEASIBLE as specced.",
-                 (obs_bits as f64 * p.e_write) / (sweeps_per_tick as f64 * n as f64 * p.e_sample));
+        let per_tick = led
+            .joules(&p)
+            .expect("these examples price against stated prices")
+            / ticks as f64;
+        println!(
+            "B1. CONTROL 100 Hz, clamping BILLED AS WRITE (Table IV literal), {obs_bits} obs + {act_bits} act bits/tick:"
+        );
+        println!(
+            "    per tick {}   shares: sampling {:.0}%  read {:.0}%  write {:.0}%",
+            joules_fmt(per_tick),
+            s * 100.0,
+            r * 100.0,
+            wr * 100.0
+        );
+        println!(
+            "    write path = {:.0}x the sampling energy per tick; and 100 reflashes/s vs the <=1/s cap -> INFEASIBLE as specced.",
+            (obs_bits as f64 * p.e_write) / (sweeps_per_tick as f64 * n as f64 * p.e_sample)
+        );
     }
 
     // B2: optimistic — clamping costs read-class energy (unpublished; the deciding unknown)
@@ -107,17 +135,42 @@ fn main() {
             let _ = smp.read_subset(&act_idx, Some(&mut led));
         }
         let (s, r, wr) = led.shares(&p);
-        let per_tick = led.joules(&p).expect("these examples price against stated prices") / ticks as f64;
-        let per_tick_no_program = (led.joules(&p).expect("these examples price against stated prices") - n as f64 * p.e_write) / ticks as f64;
+        let per_tick = led
+            .joules(&p)
+            .expect("these examples price against stated prices")
+            / ticks as f64;
+        let per_tick_no_program = (led
+            .joules(&p)
+            .expect("these examples price against stated prices")
+            - n as f64 * p.e_write)
+            / ticks as f64;
         println!("\nB2. CONTROL 100 Hz, clamping priced READ-CLASS (optimistic, unpublished):");
-        println!("    per tick {} ({} excluding one-time program)   shares: sampling {:.0}%  read {:.0}%  write {:.0}%",
-                 joules_fmt(per_tick), joules_fmt(per_tick_no_program), s * 100.0, r * 100.0, wr * 100.0);
-        println!("    -> viable on paper; the single unpublished line item (clamp cost) separates B1 from B2.");
+        println!(
+            "    per tick {} ({} excluding one-time program)   shares: sampling {:.0}%  read {:.0}%  write {:.0}%",
+            joules_fmt(per_tick),
+            joules_fmt(per_tick_no_program),
+            s * 100.0,
+            r * 100.0,
+            wr * 100.0
+        );
+        println!(
+            "    -> viable on paper; the single unpublished line item (clamp cost) separates B1 from B2."
+        );
     }
 
-    println!("\nREADING: same fabric, same prices, two regimes. Generative amortizes I/O and looks like the");
-    println!("marketing; a 100 Hz control loop pays the write path per tick and violates the reflash cap —");
-    println!("per the vendor's own Table IV. The deciding unknown is the energy price of clamping an input.");
-    println!("This ledger runs identically over any device model: swap Prices to re-price the same workload");
-    println!("on GPU-simulated sampling (measured watts x time), which is the impedance-tax comparison.");
+    println!(
+        "\nREADING: same fabric, same prices, two regimes. Generative amortizes I/O and looks like the"
+    );
+    println!(
+        "marketing; a 100 Hz control loop pays the write path per tick and violates the reflash cap —"
+    );
+    println!(
+        "per the vendor's own Table IV. The deciding unknown is the energy price of clamping an input."
+    );
+    println!(
+        "This ledger runs identically over any device model: swap Prices to re-price the same workload"
+    );
+    println!(
+        "on GPU-simulated sampling (measured watts x time), which is the impedance-tax comparison."
+    );
 }

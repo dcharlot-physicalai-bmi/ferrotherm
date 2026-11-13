@@ -217,7 +217,11 @@ Info   something else entirely
     #[test]
     fn parses_the_documented_line_shape_and_skips_the_rest() {
         let bits = parse_ll(SAMPLE);
-        assert_eq!(bits.len(), 3, "comments, Info lines and unattributed cells are skipped");
+        assert_eq!(
+            bits.len(),
+            3,
+            "comments, Info lines and unattributed cells are skipped"
+        );
         assert_eq!(bits[0].frame_address, 0x0008_cb0c);
         assert_eq!(bits[0].frame_offset, 2072);
         assert_eq!(bits[0].slr, "SLR1");
@@ -252,7 +256,11 @@ Info   something else entirely
             net: None,
         };
         assert_eq!(low.column_base(), 0x0008_cb00);
-        assert_eq!(high.column_base(), 0x0008_cb80, "bit 7 is column, not minor");
+        assert_eq!(
+            high.column_base(),
+            0x0008_cb80,
+            "bit 7 is column, not minor"
+        );
         assert_ne!(
             high.column_base(),
             high.frame_address & !0xFF,
@@ -266,7 +274,10 @@ Info   something else entirely
     fn the_cross_check_names_the_slice_that_disagrees() {
         let grid = TileGrid::parse(&grid_json("0x0008cb00", "0x0008cb80")).unwrap();
         let ok = cross_check(&grid, &parse_ll(SAMPLE));
-        assert_eq!(ok.agreed, 2, "two distinct slices, though one is named twice");
+        assert_eq!(
+            ok.agreed, 2,
+            "two distinct slices, though one is named twice"
+        );
         assert!(ok.disagreed.is_empty());
         assert_eq!(ok.unknown, 0);
         assert!(ok.verified());
@@ -289,11 +300,12 @@ Info   something else entirely
         let grid = TileGrid::parse(&grid_json("0x0008cb00", "0x0008cb80")).unwrap();
         let none = cross_check(&grid, &[]);
         assert_eq!(none.agreed, 0);
-        assert!(!none.verified(), "a check with no evidence must not report success");
-        // A slice this grid has never heard of is counted as unknown, not as agreement.
-        let elsewhere = parse_ll(
-            "Bit   1 0x0008cb0c 2 SLR1 0 Block=SLICE_X99Y99 Latch=CQ\n",
+        assert!(
+            !none.verified(),
+            "a check with no evidence must not report success"
         );
+        // A slice this grid has never heard of is counted as unknown, not as agreement.
+        let elsewhere = parse_ll("Bit   1 0x0008cb0c 2 SLR1 0 Block=SLICE_X99Y99 Latch=CQ\n");
         let out = cross_check(&grid, &elsewhere);
         assert_eq!(out.unknown, 1);
         assert_eq!(out.agreed, 0);

@@ -44,8 +44,16 @@ fn glass(l: usize) -> Graph {
     for y in 0..l {
         for x in 0..l {
             let i = y * l + x;
-            b.couple(i, y * l + (x + 1) % l, if r.f64() < 0.5 { 1.0 } else { -1.0 });
-            b.couple(i, ((y + 1) % l) * l + x, if r.f64() < 0.5 { 1.0 } else { -1.0 });
+            b.couple(
+                i,
+                y * l + (x + 1) % l,
+                if r.f64() < 0.5 { 1.0 } else { -1.0 },
+            );
+            b.couple(
+                i,
+                ((y + 1) % l) * l + x,
+                if r.f64() < 0.5 { 1.0 } else { -1.0 },
+            );
         }
     }
     b.build()

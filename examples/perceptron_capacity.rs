@@ -6,32 +6,60 @@
 //! usage: cargo run --release --example `perceptron_capacity`
 
 use ferrotherm::perceptron::{
-    annealed_capacity, annealed_log_z, gardner_capacity, p_sat, Perceptron, SphericalPerceptron, KRAUTH_MEZARD_CAPACITY,
+    KRAUTH_MEZARD_CAPACITY, Perceptron, SphericalPerceptron, annealed_capacity, annealed_log_z,
+    gardner_capacity, p_sat,
 };
 
 fn main() {
     // ---- 1. the first moment, exact at finite N ----------------------------------------------
-    println!("--- the annealed count E[Z] = 2^N p_sat^P, against enumeration averaged over 400 pattern sets");
-    println!("{:<5} {:<4} {:<7} {:>12} {:>14} {:>8}", "N", "P", "alpha", "mean count", "2^N p_sat^P", "ratio");
+    println!(
+        "--- the annealed count E[Z] = 2^N p_sat^P, against enumeration averaged over 400 pattern sets"
+    );
+    println!(
+        "{:<5} {:<4} {:<7} {:>12} {:>14} {:>8}",
+        "N", "P", "alpha", "mean count", "2^N p_sat^P", "ratio"
+    );
     for (n, p) in [(9usize, 5usize), (11, 6), (11, 11), (10, 5), (12, 12)] {
         let sets = 400u64;
-        let total: u64 = (0..sets).map(|s| Perceptron::random(n, p, 900 + s).solution_count().unwrap()).sum();
+        let total: u64 = (0..sets)
+            .map(|s| Perceptron::random(n, p, 900 + s).solution_count().unwrap())
+            .sum();
         let mean = total as f64 / sets as f64;
         let want = annealed_log_z(n, p).exp();
-        println!("{n:<5} {p:<4} {:<7.2} {mean:>12.3} {want:>14.3} {:>8.3}", p as f64 / n as f64, mean / want);
+        println!(
+            "{n:<5} {p:<4} {:<7.2} {mean:>12.3} {want:>14.3} {:>8.3}",
+            p as f64 / n as f64,
+            mean / want
+        );
     }
-    println!("  p_sat is 1/2 only for ODD N; with N even a tie J.xi = 0 is a misclassification, so");
-    println!("  p_sat(10) = {:.6} < 1/2 and the annealed capacity is {:.4}, not 1.\n", p_sat(10), annealed_capacity(10));
+    println!(
+        "  p_sat is 1/2 only for ODD N; with N even a tie J.xi = 0 is a misclassification, so"
+    );
+    println!(
+        "  p_sat(10) = {:.6} < 1/2 and the annealed capacity is {:.4}, not 1.\n",
+        p_sat(10),
+        annealed_capacity(10)
+    );
 
     // ---- 2. the three capacities -------------------------------------------------------------
     println!("--- three capacities, three kinds of claim");
-    println!("  first moment (a THEOREM: P(Z >= 1) <= E[Z])      alpha <= {:.4}   [odd N]", annealed_capacity(11));
-    println!("  Krauth-Mezard replica value (CITED, 1989)        alpha_c ~ {KRAUTH_MEZARD_CAPACITY}");
+    println!(
+        "  first moment (a THEOREM: P(Z >= 1) <= E[Z])      alpha <= {:.4}   [odd N]",
+        annealed_capacity(11)
+    );
+    println!(
+        "  Krauth-Mezard replica value (CITED, 1989)        alpha_c ~ {KRAUTH_MEZARD_CAPACITY}"
+    );
     println!("  enumeration (EXACT, this N, these patterns)      measured below\n");
 
     // ---- 3. what enumeration sees, and what the annealer reaches ------------------------------
-    println!("--- N = 15: solutions that exist, and solutions the annealer finds (40 instances each)");
-    println!("{:<7} {:<4} {:>18} {:>18} {:>20}", "alpha", "P", "solvable (exact)", "annealer found", "median log2 count");
+    println!(
+        "--- N = 15: solutions that exist, and solutions the annealer finds (40 instances each)"
+    );
+    println!(
+        "{:<7} {:<4} {:>18} {:>18} {:>20}",
+        "alpha", "P", "solvable (exact)", "annealer found", "median log2 count"
+    );
     for p in [3usize, 7, 11, 13, 15, 17] {
         let (n, sets) = (15usize, 40u64);
         let (mut solvable, mut found) = (0, 0);
@@ -49,13 +77,22 @@ fn main() {
         }
         counts.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let med = counts.get(counts.len() / 2).copied().unwrap_or(f64::NAN);
-        println!("{:<7.2} {p:<4} {:>18} {:>18} {med:>20.1}", p as f64 / n as f64, format!("{solvable}/{sets}"), format!("{found}/{sets}"));
+        println!(
+            "{:<7.2} {p:<4} {:>18} {:>18} {med:>20.1}",
+            p as f64 / n as f64,
+            format!("{solvable}/{sets}"),
+            format!("{found}/{sets}")
+        );
     }
-    println!("  At every size enumeration can reach, there is NO algorithmic gap: annealing finds a");
+    println!(
+        "  At every size enumeration can reach, there is NO algorithmic gap: annealing finds a"
+    );
     println!("  solution in essentially every instance that has one.\n");
 
     // ---- 4. the gap, which is a statement about N --------------------------------------------
-    println!("--- the gap opens with N: annealer success rate (20 instances, 3 restarts), capacity is {KRAUTH_MEZARD_CAPACITY} at every N");
+    println!(
+        "--- the gap opens with N: annealer success rate (20 instances, 3 restarts), capacity is {KRAUTH_MEZARD_CAPACITY} at every N"
+    );
     print!("{:<6}", "N");
     for a in [0.2, 0.3, 0.4, 0.5, 0.6, 0.7] {
         print!("  a={a:.1}");
@@ -75,9 +112,15 @@ fn main() {
         }
         println!();
     }
-    println!("  At alpha = 0.5, far below the capacity, the success rate falls from 20/20 to 0/20 as N");
-    println!("  grows. The instances did not become unsatisfiable -- the solution space is FROZEN into");
-    println!("  isolated points, and a local search has nothing to follow. Easy to verify, hard to find.\n");
+    println!(
+        "  At alpha = 0.5, far below the capacity, the success rate falls from 20/20 to 0/20 as N"
+    );
+    println!(
+        "  grows. The instances did not become unsatisfiable -- the solution space is FROZEN into"
+    );
+    println!(
+        "  isolated points, and a local search has nothing to follow. Easy to verify, hard to find.\n"
+    );
 
     // ---- 5. the spherical case: the same question, a convex answer -----------------------------
     println!("--- spherical couplings: Gardner's capacity is COMPUTED here, not cited");
@@ -85,19 +128,55 @@ fn main() {
     for k in [-0.5, 0.0, 0.25, 0.5, 1.0, 2.0] {
         println!("{k:<10.2} {:>16.6}", gardner_capacity(k));
     }
-    println!("  alpha_c(0) = {} exactly: 1/[(1+k^2)Phi(k) + k phi(k)] at k = 0 is 1/(1/2).\n", gardner_capacity(0.0));
+    println!(
+        "  alpha_c(0) = {} exactly: 1/[(1+k^2)Phi(k) + k phi(k)] at k = 0 is 1/(1/2).\n",
+        gardner_capacity(0.0)
+    );
 
     println!("--- minover on the sphere (N = 120, 8 instances): where the failure BELONGS");
-    println!("{:<8} {:>10} {:>11} {:>12} {:>14}", "alpha", "2k iters", "20k iters", "200k iters", "best margin");
+    println!(
+        "{:<8} {:>10} {:>11} {:>12} {:>14}",
+        "alpha", "2k iters", "20k iters", "200k iters", "best margin"
+    );
     for a in [1.5f64, 1.8, 1.9, 2.0, 2.2] {
         let p = (a * 120.0).round() as usize;
-        let rate = |iters: usize| (0..8u64).filter(|&s| SphericalPerceptron::random(120, p, 4000 + s).minover(iters).1 > 0.0).count();
-        let best = (0..8u64).map(|s| SphericalPerceptron::random(120, p, 4000 + s).minover(200_000).1).fold(f64::NEG_INFINITY, f64::max);
-        println!("{a:<8.1} {:>10} {:>11} {:>12} {best:>+14.4}", format!("{}/8", rate(2_000)), format!("{}/8", rate(20_000)), format!("{}/8", rate(200_000)));
+        let rate = |iters: usize| {
+            (0..8u64)
+                .filter(|&s| {
+                    SphericalPerceptron::random(120, p, 4000 + s)
+                        .minover(iters)
+                        .1
+                        > 0.0
+                })
+                .count()
+        };
+        let best = (0..8u64)
+            .map(|s| {
+                SphericalPerceptron::random(120, p, 4000 + s)
+                    .minover(200_000)
+                    .1
+            })
+            .fold(f64::NEG_INFINITY, f64::max);
+        println!(
+            "{a:<8.1} {:>10} {:>11} {:>12} {best:>+14.4}",
+            format!("{}/8", rate(2_000)),
+            format!("{}/8", rate(20_000)),
+            format!("{}/8", rate(200_000))
+        );
     }
-    println!("  Below the capacity every failure is a BUDGET: the max margin is positive, the problem");
-    println!("  is convex, and more iterations always help -- the budget diverges as the margin goes to");
-    println!("  zero at alpha = 2. Above it the converged margin is NEGATIVE at any budget: the failure");
-    println!("  belongs to the model. In the binary case it belongs to neither -- solutions exist and");
-    println!("  the search cannot reach them, and no margin exists to tell you which case you are in.");
+    println!(
+        "  Below the capacity every failure is a BUDGET: the max margin is positive, the problem"
+    );
+    println!(
+        "  is convex, and more iterations always help -- the budget diverges as the margin goes to"
+    );
+    println!(
+        "  zero at alpha = 2. Above it the converged margin is NEGATIVE at any budget: the failure"
+    );
+    println!(
+        "  belongs to the model. In the binary case it belongs to neither -- solutions exist and"
+    );
+    println!(
+        "  the search cannot reach them, and no margin exists to tell you which case you are in."
+    );
 }

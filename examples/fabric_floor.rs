@@ -19,7 +19,9 @@
 //
 // run: cargo run --release --example fabric_floor
 
-use ferrotherm::autocorr::{boltzmann, kemeny_constant, stationary_solved, total_variation, Kernel};
+use ferrotherm::autocorr::{
+    Kernel, boltzmann, kemeny_constant, stationary_solved, total_variation,
+};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -45,35 +47,100 @@ fn grid_glass(w: usize, h: usize, seed: u64) -> Graph {
 
 fn main() {
     let g = grid_glass(4, 3, 7);
-    println!("THE COMPARATOR FLOOR AND THE FABRIC'S RELAXATION, EXACTLY, ON ALL 2^{} STATES\n", g.n);
-    println!("  model    4x3 open grid, random +-1 couplings, fields in [-0.2, 0.2] (the fabric_exact fixture)");
-    println!("  measure  Kemeny's constant K of the Quantised kernel against the exact chromatic kernel; TV of its law from Boltzmann\n");
+    println!(
+        "THE COMPARATOR FLOOR AND THE FABRIC'S RELAXATION, EXACTLY, ON ALL 2^{} STATES\n",
+        g.n
+    );
+    println!(
+        "  model    4x3 open grid, random +-1 couplings, fields in [-0.2, 0.2] (the fabric_exact fixture)"
+    );
+    println!(
+        "  measure  Kemeny's constant K of the Quantised kernel against the exact chromatic kernel; TV of its law from Boltzmann\n"
+    );
     for &beta in &[2.0f64, 3.0] {
         let pi = boltzmann(&g, beta).expect("small");
         let k_exact = kemeny_constant(&g, beta, Kernel::ChromaticGibbs).expect("small");
         println!("  beta {beta:.1}: exact kernel K = {k_exact:.4e}\n");
-        println!("  {:<26} {:>10} {:>10} {:>12} {:>9}", "kernel {frac, rom, prob}", "floor", "TV(law,B)", "K", "K/K_exact");
+        println!(
+            "  {:<26} {:>10} {:>10} {:>12} {:>9}",
+            "kernel {frac, rom, prob}", "floor", "TV(law,B)", "K", "K/K_exact"
+        );
         let rows: Vec<(&str, Kernel)> = vec![
-            ("{8, 10, 12}", Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 12 }),
-            ("{8, 10, 16} shipped", Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 16 }),
-            ("{8, 10, 20}", Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 20 }),
-            ("{8, 10, 24}", Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 24 }),
-            ("{8, 10, 32}", Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 32 }),
-            ("{12, 12, 16}", Kernel::Quantised { frac_bits: 12, lut_bits: 12, prob_bits: 16 }),
+            (
+                "{8, 10, 12}",
+                Kernel::Quantised {
+                    frac_bits: 8,
+                    lut_bits: 10,
+                    prob_bits: 12,
+                },
+            ),
+            (
+                "{8, 10, 16} shipped",
+                Kernel::Quantised {
+                    frac_bits: 8,
+                    lut_bits: 10,
+                    prob_bits: 16,
+                },
+            ),
+            (
+                "{8, 10, 20}",
+                Kernel::Quantised {
+                    frac_bits: 8,
+                    lut_bits: 10,
+                    prob_bits: 20,
+                },
+            ),
+            (
+                "{8, 10, 24}",
+                Kernel::Quantised {
+                    frac_bits: 8,
+                    lut_bits: 10,
+                    prob_bits: 24,
+                },
+            ),
+            (
+                "{8, 10, 32}",
+                Kernel::Quantised {
+                    frac_bits: 8,
+                    lut_bits: 10,
+                    prob_bits: 32,
+                },
+            ),
+            (
+                "{12, 12, 16}",
+                Kernel::Quantised {
+                    frac_bits: 12,
+                    lut_bits: 12,
+                    prob_bits: 16,
+                },
+            ),
         ];
         for (name, k) in rows {
-            let Kernel::Quantised { prob_bits, .. } = k else { unreachable!() };
+            let Kernel::Quantised { prob_bits, .. } = k else {
+                unreachable!()
+            };
             let floor = 2f64.powi(-(prob_bits as i32));
             let law = stationary_solved(&g, beta, k).expect("small");
             let tv = total_variation(&law, &pi);
             let kk = kemeny_constant(&g, beta, k).expect("small");
-            println!("  {name:<26} {floor:>10.2e} {tv:>10.3e} {kk:>12.4e} {:>9.3}", kk / k_exact);
+            println!(
+                "  {name:<26} {floor:>10.2e} {tv:>10.3e} {kk:>12.4e} {:>9.3}",
+                kk / k_exact
+            );
         }
         println!();
     }
     println!("  WHAT THE TABLE SAYS.\n");
-    println!("  'floor' is 2^-prob: the smallest nonzero probability the comparator can express, and the granularity of");
-    println!("  every probability near 0 or 1. If K/K_exact climbs toward 1 down the comparator column while the {{12, 12, 16}}");
-    println!("  row stays where the shipped fabric is, the fabric's fast relaxation when cold is the comparator's floor");
-    println!("  inflating its rarest flips, not the field or ROM precision -- and not the weighting of any observable.");
+    println!(
+        "  'floor' is 2^-prob: the smallest nonzero probability the comparator can express, and the granularity of"
+    );
+    println!(
+        "  every probability near 0 or 1. If K/K_exact climbs toward 1 down the comparator column while the {{12, 12, 16}}"
+    );
+    println!(
+        "  row stays where the shipped fabric is, the fabric's fast relaxation when cold is the comparator's floor"
+    );
+    println!(
+        "  inflating its rarest flips, not the field or ROM precision -- and not the weighting of any observable."
+    );
 }

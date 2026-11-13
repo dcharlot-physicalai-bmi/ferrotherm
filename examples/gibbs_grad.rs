@@ -23,11 +23,19 @@ fn main() {
     let n = 6usize;
     let g = ring(n, 0.5, 0.0);
     let prog = Program {
-        gates: vec![Gate::GibbsK { g: 0, sweeps: 4, beta: 0.8, p_h0: 0 }],
+        gates: vec![Gate::GibbsK {
+            g: 0,
+            sweeps: 4,
+            beta: 0.8,
+            p_h0: 0,
+        }],
         graphs: vec![g],
         n_params: n,
     };
-    let init = State { bits: vec![1; n], reals: vec![] };
+    let init = State {
+        bits: vec![1; n],
+        reals: vec![],
+    };
     let loss = |s: &State| {
         let m: i64 = s.bits.iter().map(|&v| v as i64).sum();
         (m * m) as f64 / n as f64
@@ -35,12 +43,20 @@ fn main() {
 
     // ---- 1. gradient cross-check at three bias points ----
     println!("REINFORCE-through-Gibbs vs finite differences (common random numbers), 6-node ring:");
-    println!("  {:>28} {:>12} {:>12} {:>9}", "bias point", "REINFORCE", "FD referee", "|delta|");
+    println!(
+        "  {:>28} {:>12} {:>12} {:>9}",
+        "bias point", "REINFORCE", "FD referee", "|delta|"
+    );
     let mut worst: f64 = 0.0;
     for (tag, h) in [
         ("h = 0", vec![0.0; n]),
         ("h = +0.3 uniform", vec![0.3; n]),
-        ("h = alternating +-0.4", (0..n).map(|i| if i % 2 == 0 { 0.4 } else { -0.4 }).collect()),
+        (
+            "h = alternating +-0.4",
+            (0..n)
+                .map(|i| if i % 2 == 0 { 0.4 } else { -0.4 })
+                .collect(),
+        ),
     ] {
         let (grf, _) = prog.reinforce_grad(&init, &h, &loss, 300_000, 0x9B5);
         // check two representative coordinates against FD
@@ -48,11 +64,17 @@ fn main() {
             let gfd = prog.fd_grad(j, 0.05, &init, &h, &loss, 300_000, 0xFD & j as u64 ^ 0xABC);
             let d = (grf[j] - gfd).abs();
             worst = worst.max(d);
-            println!("  {:>28} {:>12.4} {:>12.4} {:>9.4}   (coord {})", tag, grf[j], gfd, d, j);
+            println!(
+                "  {:>28} {:>12.4} {:>12.4} {:>9.4}   (coord {})",
+                tag, grf[j], gfd, d, j
+            );
         }
     }
     let grad_ok = worst < 0.05;
-    println!("  gradient check: {}\n", if grad_ok { "PASS" } else { "FAIL" });
+    println!(
+        "  gradient check: {}\n",
+        if grad_ok { "PASS" } else { "FAIL" }
+    );
 
     // ---- 2. train the biases to reshape the sampled distribution ----
     let mut h = vec![0.0; n];
@@ -83,8 +105,15 @@ fn main() {
     let l0 = eval(&vec![0.0; n], 0xE0);
     let l1 = eval(&h, 0xE1);
     println!("training the Gibbs biases against E[(sum s)^2/n] (ferromagnetic ring resists it):");
-    println!("  E[L] untrained = {l0:.3}   trained = {l1:.3}   (training-curve {before:.3} -> {after:.3})");
-    println!("  learned biases: {:?}", h.iter().map(|v| (v * 100.0).round() / 100.0).collect::<Vec<_>>());
+    println!(
+        "  E[L] untrained = {l0:.3}   trained = {l1:.3}   (training-curve {before:.3} -> {after:.3})"
+    );
+    println!(
+        "  learned biases: {:?}",
+        h.iter()
+            .map(|v| (v * 100.0).round() / 100.0)
+            .collect::<Vec<_>>()
+    );
     let train_ok = l1 < 0.75 * l0;
     println!(
         "  verdict: {}",

@@ -111,8 +111,11 @@ fn main() {
             let ok = e.verify(&clique(32), &hw).is_ok();
             println!(
                 "{:<16} {:>6} {:>7} {:>9} {:>10}",
-                "Chimera C8", "K_32", e.chains.iter().map(std::vec::Vec::len).max().unwrap(),
-                if ok { "yes" } else { "NO" }, "K_33 (K_{4m+1})"
+                "Chimera C8",
+                "K_32",
+                e.chains.iter().map(std::vec::Vec::len).max().unwrap(),
+                if ok { "yes" } else { "NO" },
+                "K_33 (K_{4m+1})"
             );
         }
         // Pegasus, both constructions on the same fabric. The whole-qubit ell family is
@@ -122,16 +125,24 @@ fn main() {
         for m in [8usize, 16] {
             let hw = device::pegasus(m, 1.0).graph;
             for (label, e) in [
-                (format!("Pegasus P{m}"), embed::pegasus_clique(m).expect("m>=3")),
-                ("  .. fragment".to_string(), embed::pegasus_clique_fragment(m).expect("m>=3")),
+                (
+                    format!("Pegasus P{m}"),
+                    embed::pegasus_clique(m).expect("m>=3"),
+                ),
+                (
+                    "  .. fragment".to_string(),
+                    embed::pegasus_clique_fragment(m).expect("m>=3"),
+                ),
             ] {
                 let n = e.chains.len();
                 let ok = e.verify(&clique(n), &hw).is_ok();
                 println!(
                     "{:<16} {:>6} {:>7} {:>9} {:>10}",
-                    label, format!("K_{n}"),
+                    label,
+                    format!("K_{n}"),
                     e.chains.iter().map(std::vec::Vec::len).max().unwrap(),
-                    if ok { "yes" } else { "NO" }, format!("K_{}", 12 * (m - 1))
+                    if ok { "yes" } else { "NO" },
+                    format!("K_{}", 12 * (m - 1))
                 );
             }
         }
@@ -144,9 +155,11 @@ fn main() {
             let ok = e.verify(&clique(n), &hw).is_ok();
             println!(
                 "{:<16} {:>6} {:>7} {:>9} {:>10}",
-                format!("Zephyr Z{m}"), format!("K_{n}"),
+                format!("Zephyr Z{m}"),
+                format!("K_{n}"),
                 e.chains.iter().map(std::vec::Vec::len).max().unwrap(),
-                if ok { "yes" } else { "NO" }, format!("K_{}", 16 * m - 8)
+                if ok { "yes" } else { "NO" },
+                format!("K_{}", 16 * m - 8)
             );
         }
         println!();

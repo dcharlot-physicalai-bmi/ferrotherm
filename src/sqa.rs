@@ -165,7 +165,13 @@ pub fn run_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut Led
     let n = g.n;
     let m = p.trotter.max(1);
     if n == 0 {
-        return Outcome { state: Vec::new(), energy: 0.0, proposals: 0, accepted: 0, max_j_perp: 0.0 };
+        return Outcome {
+            state: Vec::new(),
+            energy: 0.0,
+            proposals: 0,
+            accepted: 0,
+            max_j_perp: 0.0,
+        };
     }
     let mut rng = Pcg::new(seed, 0x0005_9A11);
     // `s[k * n + i]` is site `i` in Trotter slice `k`.
@@ -181,7 +187,11 @@ pub fn run_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut Led
     for step in 0..steps {
         // Geometric in Γ, which is the schedule the transverse-field literature uses: the
         // interesting dynamics are at small Γ and a linear ramp spends its budget at large Γ.
-        let f = if steps == 1 { 1.0 } else { step as f64 / (steps - 1) as f64 };
+        let f = if steps == 1 {
+            1.0
+        } else {
+            step as f64 / (steps - 1) as f64
+        };
         let gamma = gmax * (gmin / gmax).powf(f);
         // J⊥ = −(1 / 2β) ln tanh(βΓ / M). Only meaningful for M > 1: see the module note.
         let j_perp = if m == 1 {
@@ -237,7 +247,13 @@ pub fn run_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut Led
         }
     }
     let energy = g.energy(&best);
-    Outcome { state: best, energy, proposals, accepted, max_j_perp }
+    Outcome {
+        state: best,
+        energy,
+        proposals,
+        accepted,
+        max_j_perp,
+    }
 }
 
 #[cfg(test)]
@@ -292,7 +308,11 @@ mod tests {
                     c[i][j] = a[i][0] * b[0][j] + a[i][1] * b[1][j];
                 }
             }
-            let s = c.iter().flatten().fold(0.0f64, |m, &x| m.max(x.abs())).max(1e-300);
+            let s = c
+                .iter()
+                .flatten()
+                .fold(0.0f64, |m, &x| m.max(x.abs()))
+                .max(1e-300);
             for row in &mut c {
                 for v in row.iter_mut() {
                     *v /= s;
@@ -343,8 +363,16 @@ mod tests {
         for y in 0..l {
             for x in 0..l {
                 let i = y * l + x;
-                gb.couple(i, y * l + (x + 1) % l, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
-                gb.couple(i, ((y + 1) % l) * l + x, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+                gb.couple(
+                    i,
+                    y * l + (x + 1) % l,
+                    if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+                );
+                gb.couple(
+                    i,
+                    ((y + 1) % l) * l + x,
+                    if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+                );
             }
         }
         gb.build()
@@ -358,7 +386,10 @@ mod tests {
             assert_eq!(out.state.len(), g.n);
             assert!(out.state.iter().all(|&v| v == 1 || v == -1));
             assert!((out.energy - g.energy(&out.state)).abs() < 1e-9);
-            assert_eq!(out.proposals, (Params::default().trotter * g.n * Params::default().steps) as u64);
+            assert_eq!(
+                out.proposals,
+                (Params::default().trotter * g.n * Params::default().steps) as u64
+            );
             assert!(out.accepted <= out.proposals);
         }
     }
@@ -394,8 +425,16 @@ mod tests {
             // Matched WORK, not matched steps: one slice at M sweeps per step does the same number
             // of proposals as M slices at one. Comparing at equal steps would hand the quantum arm
             // four times the budget and prove nothing.
-            let classical = Params { trotter: 1, sweeps_per_step: 4, ..Params::default() };
-            let quantum = Params { trotter: 4, sweeps_per_step: 1, ..Params::default() };
+            let classical = Params {
+                trotter: 1,
+                sweeps_per_step: 4,
+                ..Params::default()
+            };
+            let quantum = Params {
+                trotter: 4,
+                sweeps_per_step: 1,
+                ..Params::default()
+            };
             let c = run(&g, &classical, seed);
             let q = run(&g, &quantum, seed);
             assert_eq!(c.proposals, q.proposals, "the arms must do equal work");
@@ -433,11 +472,21 @@ mod tests {
     fn the_derived_slice_count_beats_the_literal_it_replaced() {
         let inst = crate::planted::frustrated_loops(8, 96, 3);
         let (g, opt) = (&inst.graph, inst.ground_energy);
-        let base = Params { steps: 50, ..Params::default() };
+        let base = Params {
+            steps: 50,
+            ..Params::default()
+        };
         let m = base.trotter;
         // M * spp is 4m in both arms, whatever the default's m happens to be.
-        let derived = Params { sweeps_per_step: 4, ..base };
-        let shipped = Params { trotter: 4, sweeps_per_step: m, ..base };
+        let derived = Params {
+            sweeps_per_step: 4,
+            ..base
+        };
+        let shipped = Params {
+            trotter: 4,
+            sweeps_per_step: m,
+            ..base
+        };
 
         let excess = |p: &Params| -> f64 {
             let mut sum = 0.0;
@@ -480,10 +529,26 @@ mod tests {
     #[test]
     fn the_slice_rule_scales_with_the_parameters_it_reads() {
         assert_eq!(Params::slices_for(10.0, 3.0), 15);
-        assert_eq!(Params::slices_for(20.0, 3.0), 30, "twice the beta is twice the slices");
-        assert_eq!(Params::slices_for(10.0, 6.0), 30, "and so is twice the field");
-        assert_eq!(Params::slices_for(0.1, 0.1), 1, "never zero slices, which is not a model");
-        assert_eq!(Params::slices_for(f64::NAN, 3.0), 1, "nor a cast of something that is not one");
+        assert_eq!(
+            Params::slices_for(20.0, 3.0),
+            30,
+            "twice the beta is twice the slices"
+        );
+        assert_eq!(
+            Params::slices_for(10.0, 6.0),
+            30,
+            "and so is twice the field"
+        );
+        assert_eq!(
+            Params::slices_for(0.1, 0.1),
+            1,
+            "never zero slices, which is not a model"
+        );
+        assert_eq!(
+            Params::slices_for(f64::NAN, 3.0),
+            1,
+            "nor a cast of something that is not one"
+        );
     }
 
     /// `Γ` must not be annealed to zero, and the reported `J⊥` is how a reader checks that.
@@ -491,15 +556,32 @@ mod tests {
     fn the_transverse_field_stops_short_of_zero() {
         let g = glass(5, 1);
         let out = run(&g, &Params::default(), 1);
-        assert!(out.max_j_perp.is_finite(), "J_perp went to infinity: gamma reached zero");
+        assert!(
+            out.max_j_perp.is_finite(),
+            "J_perp went to infinity: gamma reached zero"
+        );
         assert!(out.max_j_perp > 0.0);
 
         // A caller who asks for zero is clamped rather than divided by, and the run still returns.
-        let zeroed = run(&g, &Params { gamma_min: 0.0, ..Params::default() }, 1);
+        let zeroed = run(
+            &g,
+            &Params {
+                gamma_min: 0.0,
+                ..Params::default()
+            },
+            1,
+        );
         assert!(zeroed.max_j_perp.is_finite() && zeroed.energy.is_finite());
 
         // One slice has no Trotter coupling at all, which is the documented classical case.
-        let one = run(&g, &Params { trotter: 1, ..Params::default() }, 1);
+        let one = run(
+            &g,
+            &Params {
+                trotter: 1,
+                ..Params::default()
+            },
+            1,
+        );
         assert_eq!(one.max_j_perp, 0.0);
     }
 

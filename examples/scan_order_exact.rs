@@ -20,7 +20,7 @@
 //! ```text
 //! cargo run --release --example scan_order_exact
 //! ```
-use ferrotherm::autocorr::{tau_int_fundamental, Kernel};
+use ferrotherm::autocorr::{Kernel, tau_int_fundamental};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -48,13 +48,25 @@ fn main() {
         ("5x2 +-J glass", grid(5, 2, true, 7)),
         ("4x2 ferromagnet", grid(4, 2, false, 1)),
     ];
-    println!("tau_int per SITE UPDATE: a fixed-order sweep (n updates) against n random-scan steps");
-    println!("  fixture            beta   energy: fixed    random  ratio   magnetisation: fixed        random  ratio");
+    println!(
+        "tau_int per SITE UPDATE: a fixed-order sweep (n updates) against n random-scan steps"
+    );
+    println!(
+        "  fixture            beta   energy: fixed    random  ratio   magnetisation: fixed        random  ratio"
+    );
     for (name, g) in &fixtures {
         let n = g.n as f64;
         for &beta in &[0.2f64, 0.4, 0.7, 1.0, 1.5, 2.0, 3.0] {
-            let e = |k: Kernel| tau_int_fundamental(g, beta, k, |s| g.energy(s)).expect("dense").tau_int;
-            let mg = |k: Kernel| tau_int_fundamental(g, beta, k, |s| s.iter().map(|&v| f64::from(v)).sum()).expect("dense").tau_int;
+            let e = |k: Kernel| {
+                tau_int_fundamental(g, beta, k, |s| g.energy(s))
+                    .expect("dense")
+                    .tau_int
+            };
+            let mg = |k: Kernel| {
+                tau_int_fundamental(g, beta, k, |s| s.iter().map(|&v| f64::from(v)).sum())
+                    .expect("dense")
+                    .tau_int
+            };
             // Per site update: a sweep's tau is in sweeps of n updates; a random-scan step is one.
             let (ef, er) = (e(Kernel::SequentialGibbs) * n, e(Kernel::RandomScan));
             let (mf, mr) = (mg(Kernel::SequentialGibbs) * n, mg(Kernel::RandomScan));

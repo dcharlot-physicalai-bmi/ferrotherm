@@ -69,15 +69,24 @@ fn via_sparsify(logical: &Graph, hw: &Graph, budget: usize) -> Option<Cost> {
     let longest = s
         .copies
         .iter()
-        .map(|set| set.iter().map(|&c| e.chains[c as usize].len()).sum::<usize>())
+        .map(|set| {
+            set.iter()
+                .map(|&c| e.chains[c as usize].len())
+                .sum::<usize>()
+        })
         .max()
         .unwrap_or(0);
-    Some(Cost { sites: e.chains.iter().map(std::vec::Vec::len).sum(), longest })
+    Some(Cost {
+        sites: e.chains.iter().map(std::vec::Vec::len).sum(),
+        longest,
+    })
 }
 
 fn main() {
-    let machines: [(&str, Graph); 2] =
-        [("Pegasus P16", device::pegasus(16, 1.0).graph), ("Zephyr Z15", device::zephyr(15, 4, 1.0).graph)];
+    let machines: [(&str, Graph); 2] = [
+        ("Pegasus P16", device::pegasus(16, 1.0).graph),
+        ("Zephyr Z15", device::zephyr(15, 4, 1.0).graph),
+    ];
 
     for (name, hw) in &machines {
         let d = hw.max_degree();

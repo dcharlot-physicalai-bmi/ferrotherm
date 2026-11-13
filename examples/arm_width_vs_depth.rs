@@ -55,7 +55,11 @@ const P_IDLE: f64 = 9.0;
 
 fn fk(q: &[f64; NJ]) -> (f64, f64) {
     let (mut x, mut y, mut a) = (0.0, 0.0, 0.0);
-    for j in 0..NJ { a += q[j]; x += LINK[j] * a.cos(); y += LINK[j] * a.sin(); }
+    for j in 0..NJ {
+        a += q[j];
+        x += LINK[j] * a.cos();
+        y += LINK[j] * a.sin();
+    }
     (x, y)
 }
 fn gravity_tau(q: &[f64; NJ]) -> [f64; NJ] {
@@ -64,7 +68,9 @@ fn gravity_tau(q: &[f64; NJ]) -> [f64; NJ] {
         let mut acc = 0.0;
         for k in j..NJ {
             let mut a = 0.0;
-            for i in 0..=k { a += q[i]; }
+            for i in 0..=k {
+                a += q[i];
+            }
             let r = if k == j { 0.5 * LINK[k] } else { LINK[k] };
             acc += MASS[k] * G * r * a.cos();
         }
@@ -89,7 +95,10 @@ fn expert(q: &[f64; NJ], tgt: (f64, f64)) -> [f64; NJ] {
         let (mut a, mut dx, mut dy) = (0.0, 0.0, 0.0);
         for k in 0..NJ {
             a += q[k];
-            if k >= j { dx += -LINK[k] * a.sin(); dy += LINK[k] * a.cos(); }
+            if k >= j {
+                dx += -LINK[k] * a.sin();
+                dy += LINK[k] * a.cos();
+            }
         }
         out[j] = 35.0 * (dx * ex + dy * ey) / 1.08;
     }
@@ -98,7 +107,11 @@ fn expert(q: &[f64; NJ], tgt: (f64, f64)) -> [f64; NJ] {
 }
 fn cap(u: &mut [f64; NJ]) {
     let n: f64 = u.iter().map(|v| v * v).sum::<f64>().sqrt();
-    if n > VCAP { for v in u.iter_mut() { *v *= VCAP / n; } }
+    if n > VCAP {
+        for v in u.iter_mut() {
+            *v *= VCAP / n;
+        }
+    }
 }
 /// One control tick of the true dynamics. Returns electrical joules spent in the tick.
 fn tick(q: &mut [f64; NJ], qd: &mut [f64; NJ], cmd: &[f64; NJ]) -> f64 {
@@ -118,11 +131,17 @@ fn rand_target(r: &mut Pcg) -> (f64, f64) {
         let a = r.f64() * 1.6 - 0.2;
         let rad = 0.30 + r.f64() * 0.38;
         let (x, y) = (rad * a.cos(), rad * a.sin());
-        if x > 0.10 && (x * x + y * y).sqrt() < 0.70 { return (x, y); }
+        if x > 0.10 && (x * x + y * y).sqrt() < 0.70 {
+            return (x, y);
+        }
     }
 }
 
-struct Run { ok: bool, e_act: f64, evals: u64 }
+struct Run {
+    ok: bool,
+    e_act: f64,
+    evals: u64,
+}
 
 /// The reference controller, closed loop.
 fn run_expert(tgt: (f64, f64)) -> Run {
@@ -133,15 +152,30 @@ fn run_expert(tgt: (f64, f64)) -> Run {
         t += DT;
         let (cx, cy) = fk(&q);
         if ((cx - tgt.0).powi(2) + (cy - tgt.1).powi(2)).sqrt() < TOL {
-            return Run { ok: true, e_act: e, evals: (t / DT) as u64 };
+            return Run {
+                ok: true,
+                e_act: e,
+                evals: (t / DT) as u64,
+            };
         }
     }
-    Run { ok: false, e_act: e, evals: (MAX_T / DT) as u64 }
+    Run {
+        ok: false,
+        e_act: e,
+        evals: (MAX_T / DT) as u64,
+    }
 }
 
 /// MPPI on the same arm. `rollouts` divide across lanes; `passes` are a chain.
-fn run_mppi(tgt: (f64, f64), rollouts: usize, passes: usize, horizon: usize,
-            sigma: f64, lambda: f64, seed: u64) -> Run {
+fn run_mppi(
+    tgt: (f64, f64),
+    rollouts: usize,
+    passes: usize,
+    horizon: usize,
+    sigma: f64,
+    lambda: f64,
+    seed: u64,
+) -> Run {
     let (mut q, mut qd, mut e, mut t) = (START, [0.0; NJ], 0.0, 0.0);
     let mut rng = Pcg::new(seed, 0);
     let mut nominal = vec![[0.0f64; NJ]; horizon];
@@ -177,11 +211,15 @@ fn run_mppi(tgt: (f64, f64), rollouts: usize, passes: usize, horizon: usize,
             let best = costs.iter().copied().fold(f64::INFINITY, f64::min);
             let w: Vec<f64> = costs.iter().map(|c| (-(c - best) / lambda).exp()).collect();
             let sw: f64 = w.iter().sum();
-            for h in 0..horizon { for d in 0..NJ {
-                let mut acc = 0.0;
-                for r in 0..rollouts { acc += w[r] * noise[r * horizon + h][d]; }
-                nominal[h][d] += acc / sw;
-            } }
+            for h in 0..horizon {
+                for d in 0..NJ {
+                    let mut acc = 0.0;
+                    for r in 0..rollouts {
+                        acc += w[r] * noise[r * horizon + h][d];
+                    }
+                    nominal[h][d] += acc / sw;
+                }
+            }
         }
         let mut cmd = nominal[0];
         cap(&mut cmd);
@@ -189,14 +227,23 @@ fn run_mppi(tgt: (f64, f64), rollouts: usize, passes: usize, horizon: usize,
         t += DT;
         let (cx, cy) = fk(&q);
         if ((cx - tgt.0).powi(2) + (cy - tgt.1).powi(2)).sqrt() < TOL {
-            return Run { ok: true, e_act: e, evals };
+            return Run {
+                ok: true,
+                e_act: e,
+                evals,
+            };
         }
-        for h in 0..horizon - 1 { nominal[h] = nominal[h + 1]; }
+        for h in 0..horizon - 1 {
+            nominal[h] = nominal[h + 1];
+        }
         nominal[horizon - 1] = [0.0; NJ];
     }
-    Run { ok: false, e_act: e, evals }
+    Run {
+        ok: false,
+        e_act: e,
+        evals,
+    }
 }
-
 
 /// MPPI with the identified power model **inside** the objective.
 ///
@@ -208,8 +255,16 @@ fn run_mppi(tgt: (f64, f64), rollouts: usize, passes: usize, horizon: usize,
 /// `w_e` is joules-weight. At zero this is the controller above. As it rises the controller should
 /// spend less and, past some point, decline to reach at all — so the metric that decides is joules
 /// per COMPLETED task, which charges every failed attempt to the task rather than discarding it.
-fn run_mppi_energy(tgt: (f64, f64), rollouts: usize, passes: usize, horizon: usize,
-                   sigma: f64, lambda: f64, w_e: f64, seed: u64) -> Run {
+fn run_mppi_energy(
+    tgt: (f64, f64),
+    rollouts: usize,
+    passes: usize,
+    horizon: usize,
+    sigma: f64,
+    lambda: f64,
+    w_e: f64,
+    seed: u64,
+) -> Run {
     let (mut q, mut qd, mut e, mut t) = (START, [0.0; NJ], 0.0, 0.0);
     let mut rng = Pcg::new(seed, 0);
     let mut nominal = vec![[0.0f64; NJ]; horizon];
@@ -242,19 +297,23 @@ fn run_mppi_energy(tgt: (f64, f64), rollouts: usize, passes: usize, horizon: usi
                     let (cx, cy) = fk(&sq);
                     let d2 = (cx - tgt.0).powi(2) + (cy - tgt.1).powi(2);
                     costs[r] += d2 * 60.0
-                              + u.iter().map(|v| v * v).sum::<f64>() * 0.02
-                              + w_e * joint_power(&sqd, &tau) * DT;
+                        + u.iter().map(|v| v * v).sum::<f64>() * 0.02
+                        + w_e * joint_power(&sqd, &tau) * DT;
                     evals += 1;
                 }
             }
             let best = costs.iter().copied().fold(f64::INFINITY, f64::min);
             let w: Vec<f64> = costs.iter().map(|c| (-(c - best) / lambda).exp()).collect();
             let sw: f64 = w.iter().sum();
-            for h in 0..horizon { for d in 0..NJ {
-                let mut acc = 0.0;
-                for r in 0..rollouts { acc += w[r] * noise[r * horizon + h][d]; }
-                nominal[h][d] += acc / sw;
-            } }
+            for h in 0..horizon {
+                for d in 0..NJ {
+                    let mut acc = 0.0;
+                    for r in 0..rollouts {
+                        acc += w[r] * noise[r * horizon + h][d];
+                    }
+                    nominal[h][d] += acc / sw;
+                }
+            }
         }
         let mut cmd = nominal[0];
         cap(&mut cmd);
@@ -262,12 +321,22 @@ fn run_mppi_energy(tgt: (f64, f64), rollouts: usize, passes: usize, horizon: usi
         t += DT;
         let (cx, cy) = fk(&q);
         if ((cx - tgt.0).powi(2) + (cy - tgt.1).powi(2)).sqrt() < TOL {
-            return Run { ok: true, e_act: e, evals };
+            return Run {
+                ok: true,
+                e_act: e,
+                evals,
+            };
         }
-        for h in 0..horizon - 1 { nominal[h] = nominal[h + 1]; }
+        for h in 0..horizon - 1 {
+            nominal[h] = nominal[h + 1];
+        }
         nominal[horizon - 1] = [0.0; NJ];
     }
-    Run { ok: false, e_act: e, evals }
+    Run {
+        ok: false,
+        e_act: e,
+        evals,
+    }
 }
 
 fn energy_sweep() {
@@ -279,30 +348,51 @@ fn energy_sweep() {
     let ex: Vec<Run> = targets.iter().map(|&t| run_expert(t)).collect();
     let ok_ex = ex.iter().filter(|r| r.ok).count();
     let tot_ex: f64 = ex.iter().map(|r| r.e_act).sum();
-    println!("reference controller: {ok_ex}/{} reached, {:.1} J per completed task\n",
-             targets.len(), tot_ex / ok_ex as f64);
-    println!("{:>10} {:>9} {:>12} {:>22} {:>11} {:>13} {:>10}", "w_energy", "reached", "median J", "J per completed task", "median t", "worst J", "worst t");
+    println!(
+        "reference controller: {ok_ex}/{} reached, {:.1} J per completed task\n",
+        targets.len(),
+        tot_ex / ok_ex as f64
+    );
+    println!(
+        "{:>10} {:>9} {:>12} {:>22} {:>11} {:>13} {:>10}",
+        "w_energy", "reached", "median J", "J per completed task", "median t", "worst J", "worst t"
+    );
     for &w_e in &[0.0f64, 0.05, 0.2, 0.8, 3.0] {
-        let runs: Vec<Run> = targets.iter().enumerate()
+        let runs: Vec<Run> = targets
+            .iter()
+            .enumerate()
             .map(|(i, &t)| run_mppi_energy(t, 200, 8, 12, 0.9, 4.0, w_e, 100 + i as u64))
             .collect();
         let ok = runs.iter().filter(|r| r.ok).count();
-        let total: f64 = runs.iter().map(|r| r.e_act).sum();   // failures charged to the task
-        if ok == 0 { println!("{w_e:>10} {:>8}/{:<2}      none reached", 0, targets.len()); continue; }
+        let total: f64 = runs.iter().map(|r| r.e_act).sum(); // failures charged to the task
+        if ok == 0 {
+            println!("{w_e:>10} {:>8}/{:<2}      none reached", 0, targets.len());
+            continue;
+        }
         let mut es: Vec<f64> = runs.iter().filter(|r| r.ok).map(|r| r.e_act).collect();
         es.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let per_action = (200 * 8 * 12) as f64;
-        let mut secs: Vec<f64> = runs.iter().filter(|r| r.ok)
-            .map(|r| (r.evals as f64 / per_action) * DT).collect();
+        let mut secs: Vec<f64> = runs
+            .iter()
+            .filter(|r| r.ok)
+            .map(|r| (r.evals as f64 / per_action) * DT)
+            .collect();
         secs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let t_med = secs[secs.len()/2];
+        let t_med = secs[secs.len() / 2];
         // If duration is what the energy term buys, the idle draw pays for it: P_IDLE * time.
         // The mean rose while the median held, which is a TAIL, and a median is the one statistic
         // guaranteed to hide one. Report the worst case alongside it.
         let worst_e = *es.last().unwrap();
         let t_worst = *secs.last().unwrap();
-        println!("{w_e:>10} {ok:>7}/{:<2} {:>11.1} J {:>21.1} J {:>9.2} s {:>11.1} J {:>9.2} s",
-                 targets.len(), es[es.len()/2], total / ok as f64, t_med, worst_e, t_worst);
+        println!(
+            "{w_e:>10} {ok:>7}/{:<2} {:>11.1} J {:>21.1} J {:>9.2} s {:>11.1} J {:>9.2} s",
+            targets.len(),
+            es[es.len() / 2],
+            total / ok as f64,
+            t_med,
+            worst_e,
+            t_worst
+        );
     }
     println!("\nThe median column rewards a controller for giving up on hard targets.");
     println!("The last column does not: every failed attempt is charged to the task.");
@@ -315,7 +405,10 @@ fn gauss(r: &mut Pcg) -> f64 {
 }
 
 fn main() {
-    if std::env::var("ONLY").as_deref() == Ok("energy") { energy_sweep(); return; }
+    if std::env::var("ONLY").as_deref() == Ok("energy") {
+        energy_sweep();
+        return;
+    }
     let mut tr = Pcg::new(20260815, 11);
     let targets: Vec<(f64, f64)> = (0..24).map(|_| rand_target(&mut tr)).collect();
 
@@ -326,18 +419,31 @@ fn main() {
     e_ex.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let med_ex = e_ex[e_ex.len() / 2];
     println!("reference controller (analytic Jacobian-transpose, velocity-capped)");
-    println!("  reaches {ok_ex}/{} targets, median actuation {med_ex:.1} J, 1 dynamics eval per tick\n",
-             targets.len());
+    println!(
+        "  reaches {ok_ex}/{} targets, median actuation {med_ex:.1} J, 1 dynamics eval per tick\n",
+        targets.len()
+    );
 
-    println!("{:>9} {:>7} {:>8} {:>12} {:>14} {:>13}",
-             "rollouts", "passes", "reached", "median J", "evals/action", "J vs expert");
+    println!(
+        "{:>9} {:>7} {:>8} {:>12} {:>14} {:>13}",
+        "rollouts", "passes", "reached", "median J", "evals/action", "J vs expert"
+    );
     for &rollouts in &[50usize, 200, 800] {
         for &passes in &[1usize, 2, 4, 8] {
-            let runs: Vec<Run> = targets.iter().enumerate()
+            let runs: Vec<Run> = targets
+                .iter()
+                .enumerate()
                 .map(|(i, &t)| run_mppi(t, rollouts, passes, 12, 0.9, 4.0, 100 + i as u64))
                 .collect();
             let ok = runs.iter().filter(|r| r.ok).count();
-            if ok == 0 { println!("{rollouts:>9} {passes:>7} {:>7}/{:<2}          none reached", 0, targets.len()); continue; }
+            if ok == 0 {
+                println!(
+                    "{rollouts:>9} {passes:>7} {:>7}/{:<2}          none reached",
+                    0,
+                    targets.len()
+                );
+                continue;
+            }
             let mut es: Vec<f64> = runs.iter().filter(|r| r.ok).map(|r| r.e_act).collect();
             es.sort_by(|a, b| a.partial_cmp(b).unwrap());
             let med = es[es.len() / 2];
@@ -347,11 +453,16 @@ fn main() {
             for r in &runs {
                 let ticks = (r.evals as f64 / per_action).round();
                 let implied = ticks * per_action;
-                debug_assert!((implied - r.evals as f64).abs() < 1.0,
-                    "evals/action formula disagrees with the measured count");
+                debug_assert!(
+                    (implied - r.evals as f64).abs() < 1.0,
+                    "evals/action formula disagrees with the measured count"
+                );
             }
-            println!("{rollouts:>9} {passes:>7} {ok:>6}/{:<2} {med:>11.1} J {per_action:>13.0} {:>12.2}x",
-                     targets.len(), med / med_ex);
+            println!(
+                "{rollouts:>9} {passes:>7} {ok:>6}/{:<2} {med:>11.1} J {per_action:>13.0} {:>12.2}x",
+                targets.len(),
+                med / med_ex
+            );
         }
     }
     println!("\nRollouts divide across lanes; passes do not. The joules column is the body,");

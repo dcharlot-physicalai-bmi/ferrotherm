@@ -114,7 +114,10 @@ impl core::fmt::Display for Invalid {
         match self {
             Invalid::TooFewStates(k) => write!(f, "MBAR needs at least two states, got {k}"),
             Invalid::Mismatched { states, counts } => {
-                write!(f, "{states} rows of reduced potentials but {counts} sample counts")
+                write!(
+                    f,
+                    "{states} rows of reduced potentials but {counts} sample counts"
+                )
             }
             Invalid::EmptyState(k) => write!(f, "state {k} contributed no samples"),
             Invalid::Ragged { state, len, total } => {
@@ -127,7 +130,10 @@ impl core::fmt::Display for Invalid {
                 write!(f, "warm start has {given} entries, needs {want}")
             }
             Invalid::NotAnchored(b) => {
-                write!(f, "the ladder must start at beta = 0 where ln Z is exact, not {b}")
+                write!(
+                    f,
+                    "the ladder must start at beta = 0 where ln Z is exact, not {b}"
+                )
             }
         }
     }
@@ -240,14 +246,20 @@ pub fn ladder(
 /// # Errors
 ///
 /// Everything [`solve`] refuses.
-pub fn from_traces(traces: &[(f64, Vec<f64>)], tol: f64, max_iters: usize) -> Result<Mbar, Invalid> {
+pub fn from_traces(
+    traces: &[(f64, Vec<f64>)],
+    tol: f64,
+    max_iters: usize,
+) -> Result<Mbar, Invalid> {
     if traces.len() < 2 {
         return Err(Invalid::TooFewStates(traces.len()));
     }
     let counts: Vec<usize> = traces.iter().map(|(_, e)| e.len()).collect();
     let all: Vec<f64> = traces.iter().flat_map(|(_, e)| e.iter().copied()).collect();
-    let u: Vec<Vec<f64>> =
-        traces.iter().map(|(b, _)| all.iter().map(|e| b * e).collect()).collect();
+    let u: Vec<Vec<f64>> = traces
+        .iter()
+        .map(|(b, _)| all.iter().map(|e| b * e).collect())
+        .collect();
     solve(&u, &counts, None, tol, max_iters)
 }
 
@@ -273,7 +285,10 @@ pub fn solve(
         return Err(Invalid::TooFewStates(k));
     }
     if counts.len() != k {
-        return Err(Invalid::Mismatched { states: k, counts: counts.len() });
+        return Err(Invalid::Mismatched {
+            states: k,
+            counts: counts.len(),
+        });
     }
     let total: usize = counts.iter().sum();
     for (i, &c) in counts.iter().enumerate() {
@@ -283,16 +298,28 @@ pub fn solve(
     }
     for (i, row) in u.iter().enumerate() {
         if row.len() != total {
-            return Err(Invalid::Ragged { state: i, len: row.len(), total });
+            return Err(Invalid::Ragged {
+                state: i,
+                len: row.len(),
+                total,
+            });
         }
         for (n, v) in row.iter().enumerate() {
             if !v.is_finite() {
-                return Err(Invalid::NotFinite { state: i, sample: n });
+                return Err(Invalid::NotFinite {
+                    state: i,
+                    sample: n,
+                });
             }
         }
     }
     let mut f = match init {
-        Some(v) if v.len() != k => return Err(Invalid::BadInit { given: v.len(), want: k }),
+        Some(v) if v.len() != k => {
+            return Err(Invalid::BadInit {
+                given: v.len(),
+                want: k,
+            });
+        }
         Some(v) => v.to_vec(),
         None => vec![0.0; k],
     };
@@ -491,7 +518,10 @@ fn covariance(gg: &[f64], counts: &[usize], k: usize) -> Vec<f64> {
     }
     let q = jacobi_eig(&mut b, k);
     let lam: Vec<f64> = (0..k).map(|c| b[c * k + c]).collect();
-    let scale = lam.iter().fold(0.0f64, |acc, &l| acc.max(l.abs())).max(f64::MIN_POSITIVE);
+    let scale = lam
+        .iter()
+        .fold(0.0f64, |acc, &l| acc.max(l.abs()))
+        .max(f64::MIN_POSITIVE);
     let cut = 1e-10 * scale;
     let mut pinv = vec![0.0; k * k];
     for c in 0..k {
@@ -557,7 +587,9 @@ mod tests {
     fn energies_of(g: &Graph) -> Vec<f64> {
         (0..1usize << g.n)
             .map(|mask| {
-                let s: Vec<i8> = (0..g.n).map(|b| if mask >> b & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|b| if mask >> b & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 g.energy(&s)
             })
             .collect()
@@ -631,7 +663,11 @@ mod tests {
             let traces: Vec<(f64, Vec<f64>)> =
                 betas.iter().map(|&b| (b, exact_multiset(g, b))).collect();
             let p = ladder(g.n, &traces, 1e-13, MAX_ITERS).unwrap();
-            assert!(p.mbar.converged, "residual {} after {} iters", p.mbar.residual, p.mbar.iters);
+            assert!(
+                p.mbar.converged,
+                "residual {} after {} iters",
+                p.mbar.residual, p.mbar.iters
+            );
             for (i, &b) in betas.iter().enumerate() {
                 let want = el.log_partition(g, b).unwrap().log_z.unwrap();
                 assert!(
@@ -667,7 +703,12 @@ mod tests {
                 -m.delta(0, 1)
             );
             let r = m.stderr_pair(0, 1) / b.stderr;
-            assert!((r - 1.0).abs() < 0.05, "stderr {} vs Bennett's {}", m.stderr_pair(0, 1), b.stderr);
+            assert!(
+                (r - 1.0).abs() < 0.05,
+                "stderr {} vs Bennett's {}",
+                m.stderr_pair(0, 1),
+                b.stderr
+            );
         }
     }
 
@@ -678,8 +719,9 @@ mod tests {
         let mut rng = Pcg::new(11, 3);
         let counts = [7usize, 11, 5];
         let total: usize = counts.iter().sum();
-        let u: Vec<Vec<f64>> =
-            (0..3).map(|_| (0..total).map(|_| 4.0 * rng.f64() - 2.0).collect()).collect();
+        let u: Vec<Vec<f64>> = (0..3)
+            .map(|_| (0..total).map(|_| 4.0 * rng.f64() - 2.0).collect())
+            .collect();
         let base = solve(&u, &counts, None, TOL, MAX_ITERS).unwrap();
 
         let a = 0.75;
@@ -689,7 +731,12 @@ mod tests {
         }
         let got = solve(&shifted, &counts, None, TOL, MAX_ITERS).unwrap();
         assert!((got.f[0] - base.f[0]).abs() < 1e-10);
-        assert!((got.f[1] - (base.f[1] + a)).abs() < 1e-10, "{} vs {}", got.f[1], base.f[1] + a);
+        assert!(
+            (got.f[1] - (base.f[1] + a)).abs() < 1e-10,
+            "{} vs {}",
+            got.f[1],
+            base.f[1] + a
+        );
         assert!((got.f[2] - base.f[2]).abs() < 1e-10);
     }
 
@@ -700,8 +747,9 @@ mod tests {
         let mut rng = Pcg::new(29, 1);
         let counts = [9usize, 4, 6, 3];
         let total: usize = counts.iter().sum();
-        let u: Vec<Vec<f64>> =
-            (0..4).map(|_| (0..total).map(|_| 3.0 * rng.f64() - 1.5).collect()).collect();
+        let u: Vec<Vec<f64>> = (0..4)
+            .map(|_| (0..total).map(|_| 3.0 * rng.f64() - 1.5).collect())
+            .collect();
         let base = solve(&u, &counts, None, TOL, MAX_ITERS).unwrap();
 
         let c: Vec<f64> = (0..total).map(|_| 5.0 * rng.f64() - 2.5).collect();
@@ -737,15 +785,30 @@ mod tests {
         for i in 0..3 {
             let want = straight.delta(0, i);
             let got = rev.delta(2, 2 - i);
-            assert!((got - want).abs() < 1e-9, "order changed f: {got} vs {want}");
+            assert!(
+                (got - want).abs() < 1e-9,
+                "order changed f: {got} vs {want}"
+            );
         }
 
         let all: Vec<f64> = traces.iter().flat_map(|(_, e)| e.iter().copied()).collect();
-        let u: Vec<Vec<f64>> =
-            betas.iter().map(|b| all.iter().map(|e| b * e).collect()).collect();
-        let far = solve(&u, &[300, 300, 300], Some(&[0.0, -40.0, 90.0]), TOL, MAX_ITERS).unwrap();
+        let u: Vec<Vec<f64>> = betas
+            .iter()
+            .map(|b| all.iter().map(|e| b * e).collect())
+            .collect();
+        let far = solve(
+            &u,
+            &[300, 300, 300],
+            Some(&[0.0, -40.0, 90.0]),
+            TOL,
+            MAX_ITERS,
+        )
+        .unwrap();
         for i in 0..3 {
-            assert!((far.f[i] - straight.f[i]).abs() < 1e-9, "warm start moved f[{i}]");
+            assert!(
+                (far.f[i] - straight.f[i]).abs() < 1e-9,
+                "warm start moved f[{i}]"
+            );
         }
     }
 
@@ -807,7 +870,10 @@ mod tests {
                  error bar over true spread: MBAR {cm:.3} BAR {cb:.3}",
                 rm / rb
             );
-            assert!(rm < rb, "{name}: MBAR rmse {rm} did not beat chained BAR {rb}");
+            assert!(
+                rm < rb,
+                "{name}: MBAR rmse {rm} did not beat chained BAR {rb}"
+            );
             assert!(
                 (cm - 1.0).abs() < 0.15,
                 "{name}: MBAR's covariance predicted {cm} of its own spread"
@@ -823,29 +889,47 @@ mod tests {
     #[test]
     fn refusals() {
         let err = |r: Result<Mbar, Invalid>| r.err().unwrap();
-        assert_eq!(err(solve(&[vec![0.0]], &[1], None, TOL, 10)), Invalid::TooFewStates(1));
+        assert_eq!(
+            err(solve(&[vec![0.0]], &[1], None, TOL, 10)),
+            Invalid::TooFewStates(1)
+        );
         let u = vec![vec![0.0; 4], vec![1.0; 4]];
         assert_eq!(
             err(solve(&u, &[2, 1, 1], None, TOL, 10)),
-            Invalid::Mismatched { states: 2, counts: 3 }
+            Invalid::Mismatched {
+                states: 2,
+                counts: 3
+            }
         );
-        assert_eq!(err(solve(&u, &[4, 0], None, TOL, 10)), Invalid::EmptyState(1));
+        assert_eq!(
+            err(solve(&u, &[4, 0], None, TOL, 10)),
+            Invalid::EmptyState(1)
+        );
         assert_eq!(
             err(solve(&[vec![0.0; 4], vec![1.0; 3]], &[2, 2], None, TOL, 10)),
-            Invalid::Ragged { state: 1, len: 3, total: 4 }
+            Invalid::Ragged {
+                state: 1,
+                len: 3,
+                total: 4
+            }
         );
         let mut bad = u.clone();
         bad[1][2] = f64::NAN;
         assert_eq!(
             err(solve(&bad, &[2, 2], None, TOL, 10)),
-            Invalid::NotFinite { state: 1, sample: 2 }
+            Invalid::NotFinite {
+                state: 1,
+                sample: 2
+            }
         );
         assert_eq!(
             err(solve(&u, &[2, 2], Some(&[0.0]), TOL, 10)),
             Invalid::BadInit { given: 1, want: 2 }
         );
         assert_eq!(
-            ladder(2, &[(0.5, vec![0.0; 2]), (1.0, vec![0.0; 2])], TOL, 10).err().unwrap(),
+            ladder(2, &[(0.5, vec![0.0; 2]), (1.0, vec![0.0; 2])], TOL, 10)
+                .err()
+                .unwrap(),
             Invalid::NotAnchored(0.5)
         );
     }
@@ -905,7 +989,11 @@ mod tests {
                 traces.push((beta, energies));
             }
             let p = ladder(g.n, &traces, 1e-10, 10_000).expect("a valid anchored ladder");
-            assert!(p.mbar.converged, "MBAR did not converge at seed {seed}: {}", p.mbar.residual);
+            assert!(
+                p.mbar.converged,
+                "MBAR did not converge at seed {seed}: {}",
+                p.mbar.residual
+            );
             p
         };
 

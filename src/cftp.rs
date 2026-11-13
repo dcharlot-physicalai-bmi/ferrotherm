@@ -155,14 +155,26 @@ impl<'g> Perfect<'g> {
         // construction to change nothing.
         let gauged =
             (!sigma.iter().all(|&x| x > 0)).then(|| crate::cluster::apply_gauge(g, &sigma));
-        Ok(Perfect { g, gauged, sigma, beta, max_steps: DEFAULT_MAX_STEPS })
+        Ok(Perfect {
+            g,
+            gauged,
+            sigma,
+            beta,
+            max_steps: DEFAULT_MAX_STEPS,
+        })
     }
 
     /// The sampler [`Perfect::new`] would have refused, for the test that measures what the
     /// refusal is worth. Not public: it returns biased draws, silently, by construction.
     #[cfg(test)]
     fn unchecked(g: &'g Graph, beta: f64) -> Perfect<'g> {
-        Perfect { g, gauged: None, sigma: vec![1i8; g.n], beta, max_steps: DEFAULT_MAX_STEPS }
+        Perfect {
+            g,
+            gauged: None,
+            sigma: vec![1i8; g.n],
+            beta,
+            max_steps: DEFAULT_MAX_STEPS,
+        }
     }
 
     /// Reach at most `steps` sweeps into the past before refusing.
@@ -208,7 +220,11 @@ impl<'g> Perfect<'g> {
             // chains, and independent chains coalesce with probability zero.
             let u = rng.f64();
             for c in &mut *chains {
-                c[i] = if u < p_up(g.field(i, c), self.beta) { 1 } else { -1 };
+                c[i] = if u < p_up(g.field(i, c), self.beta) {
+                    1
+                } else {
+                    -1
+                };
             }
         }
     }
@@ -273,7 +289,12 @@ impl<'g> Perfect<'g> {
             l.samples += updates;
             l.reads += n as u64;
         }
-        Ok(Draw { state, coalesced_at, doublings, updates })
+        Ok(Draw {
+            state,
+            coalesced_at,
+            doublings,
+            updates,
+        })
     }
 
     /// `k` independent exact draws, each on its own stream.
@@ -359,7 +380,11 @@ pub struct Bounding<'g> {
 impl core::fmt::Debug for Bounding<'_> {
     /// `Graph` is not `Debug`, so this reports the sampler's own parameters rather than the model.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Bounding {{ n: {}, beta: {}, max_steps: {} }}", self.g.n, self.beta, self.max_steps)
+        write!(
+            f,
+            "Bounding {{ n: {}, beta: {}, max_steps: {} }}",
+            self.g.n, self.beta, self.max_steps
+        )
     }
 }
 
@@ -373,7 +398,11 @@ impl<'g> Bounding<'g> {
         if !(beta.is_finite() && beta >= 0.0) {
             return Err(Refused::BadBeta { beta });
         }
-        Ok(Bounding { g, beta, max_steps: DEFAULT_MAX_STEPS })
+        Ok(Bounding {
+            g,
+            beta,
+            max_steps: DEFAULT_MAX_STEPS,
+        })
     }
 
     /// Stop doubling once an attempt reaches this many sweeps. Coerced up to 1.
@@ -453,7 +482,12 @@ impl<'g> Bounding<'g> {
             l.samples += updates;
             l.reads += n as u64;
         }
-        Ok(Draw { state, coalesced_at, doublings, updates })
+        Ok(Draw {
+            state,
+            coalesced_at,
+            doublings,
+            updates,
+        })
     }
 
     /// `k` independent exact draws, seeded as [`Perfect::draws`] seeds its own.
@@ -461,7 +495,12 @@ impl<'g> Bounding<'g> {
     /// # Errors
     ///
     /// Whatever [`Bounding::draw`] refuses, from the first draw that is refused.
-    pub fn draws(&self, seed: u64, k: usize, mut ledger: Option<&mut Ledger>) -> Result<Vec<Draw>, Refused> {
+    pub fn draws(
+        &self,
+        seed: u64,
+        k: usize,
+        mut ledger: Option<&mut Ledger>,
+    ) -> Result<Vec<Draw>, Refused> {
         let mut out = Vec::with_capacity(k);
         for i in 0..k {
             out.push(self.draw(mix(seed.wrapping_add(i as u64)), ledger.as_deref_mut())?);
@@ -513,7 +552,10 @@ mod tests {
             Err(Refused::NotAttractive(c)) => {
                 // Harary: balance is exactly the absence of a negative-product cycle, so the
                 // witness is checkable without trusting the code that produced it.
-                assert!(c.product(&g).unwrap() < 0.0, "the witness must prove itself: {c}");
+                assert!(
+                    c.product(&g).unwrap() < 0.0,
+                    "the witness must prove itself: {c}"
+                );
             }
             other => panic!("a frustrated triangle must be refused, got {other:?}"),
         }
@@ -551,7 +593,10 @@ mod tests {
                 hist[k] += 1.0 / draws as f64;
             }
             let worst = d.iter().map(|x| x.coalesced_at).max().unwrap_or(0);
-            (crate::ising::tv(&hist, &crate::ising::exact_boltzmann(g, beta)), worst)
+            (
+                crate::ising::tv(&hist, &crate::ising::exact_boltzmann(g, beta)),
+                worst,
+            )
         };
 
         let mut b = GraphBuilder::new(3);
@@ -559,16 +604,25 @@ mod tests {
         b.couple(1, 2, 1.0);
         b.couple(0, 2, -1.0);
         let (tv, worst) = measure(&b.build());
-        assert!(worst <= 256, "the failure is silent: it coalesced in {worst} sweeps every time");
+        assert!(
+            worst <= 256,
+            "the failure is silent: it coalesced in {worst} sweeps every time"
+        );
         // Measured 0.069 against a 0.010 floor, so the bar is set at five and the margin is real.
-        assert!(tv > 5.0 * floor, "frustrated: tv {tv:.4} against a {floor:.4} floor");
+        assert!(
+            tv > 5.0 * floor,
+            "frustrated: tv {tv:.4} against a {floor:.4} floor"
+        );
 
         let mut b = GraphBuilder::new(3);
         b.couple(0, 1, 1.0);
         b.couple(1, 2, 1.0);
         b.couple(0, 2, 1.0);
         let (tv, _) = measure(&b.build());
-        assert!(tv < floor, "attractive control: tv {tv:.4} against a {floor:.4} floor");
+        assert!(
+            tv < floor,
+            "attractive control: tv {tv:.4} against a {floor:.4} floor"
+        );
     }
 
     /// Uncoupled spins: the exact answer is a product of logistics, and one sweep must suffice.
@@ -588,7 +642,10 @@ mod tests {
         let n = 4000;
         let d = exact_draws(&g, beta, 11, n).unwrap();
 
-        assert!(d.iter().all(|x| x.coalesced_at == 1), "uncoupled chains coalesce in one sweep");
+        assert!(
+            d.iter().all(|x| x.coalesced_at == 1),
+            "uncoupled chains coalesce in one sweep"
+        );
         for (i, &h) in hs.iter().enumerate() {
             let want = p_up(h, beta);
             let got = up_rate(&d, i);
@@ -615,7 +672,10 @@ mod tests {
         let s = states(&d);
         let trace: Vec<f64> = s.iter().map(|x| g.energy(x)).collect();
         let cert = crate::certify::certify(&g, beta, &s, &trace);
-        assert!(cert.tau_int < 1.0, "independent draws, so tau_int is 1/2: {cert}");
+        assert!(
+            cert.tau_int < 1.0,
+            "independent draws, so tau_int is 1/2: {cert}"
+        );
         crate::certify::assert_boltzmann(&cert, beta, "cftp on a 9-ring with a field");
     }
 
@@ -638,7 +698,11 @@ mod tests {
 
         let beta = 0.4;
         let p = Perfect::new(&g, beta).unwrap();
-        assert_ne!(p.gauge(), vec![1i8; g.n], "and the sampler must actually need a gauge");
+        assert_ne!(
+            p.gauge(),
+            vec![1i8; g.n],
+            "and the sampler must actually need a gauge"
+        );
         let d = p.draws(31, 8000, None).unwrap();
         let s = states(&d);
         let trace: Vec<f64> = s.iter().map(|x| g.energy(x)).collect();
@@ -682,7 +746,10 @@ mod tests {
         let mut deeper = 0usize;
         for seed in 0..40u64 {
             let d = p.draw(seed, None).unwrap();
-            assert!(d.coalesced_at.is_power_of_two(), "the schedule doubles from one");
+            assert!(
+                d.coalesced_at.is_power_of_two(),
+                "the schedule doubles from one"
+            );
             assert_eq!(d.coalesced_at, 1 << (d.doublings - 1));
             assert_eq!(p.from_past(seed, d.coalesced_at).as_ref(), Some(&d.state));
             if d.coalesced_at > 1 {
@@ -695,9 +762,15 @@ mod tests {
                 );
             }
             // Going further back cannot change the answer: that invariance IS the exactness.
-            assert_eq!(p.from_past(seed, d.coalesced_at * 2).as_ref(), Some(&d.state));
+            assert_eq!(
+                p.from_past(seed, d.coalesced_at * 2).as_ref(),
+                Some(&d.state)
+            );
         }
-        assert!(deeper > 0, "the fixture must sometimes need more than one sweep");
+        assert!(
+            deeper > 0,
+            "the fixture must sometimes need more than one sweep"
+        );
     }
 
     /// At infinite temperature one sweep always suffices and the draw is uniform.
@@ -730,7 +803,9 @@ mod tests {
     fn marginals_match_exact_elimination_beyond_enumeration() {
         let g = chain(24, 0.6, 0.2);
         let beta = 0.35;
-        let want = crate::exact::Elimination::default().marginals(&g, beta).unwrap();
+        let want = crate::exact::Elimination::default()
+            .marginals(&g, beta)
+            .unwrap();
         let n = 3000;
         let d = exact_draws(&g, beta, 909, n).unwrap();
         for i in 0..g.n {
@@ -750,7 +825,10 @@ mod tests {
     fn a_cap_refuses_rather_than_running_forever() {
         let g = crate::ising::lattice2d(6, 1.0);
         let p = Perfect::new(&g, 1.0).unwrap().with_max_steps(4);
-        assert_eq!(p.draw(1, None).unwrap_err(), Refused::NotCoalesced { steps: 4 });
+        assert_eq!(
+            p.draw(1, None).unwrap_err(),
+            Refused::NotCoalesced { steps: 4 }
+        );
         // The same model coalesces above the critical temperature, so the cap is what refused it
         // and not the model being unsamplable.
         assert!(Perfect::new(&g, 0.1).unwrap().draw(1, None).is_ok());
@@ -766,7 +844,11 @@ mod tests {
         let mut distinct: Vec<Vec<i8>> = states(&a);
         distinct.sort_unstable();
         distinct.dedup();
-        assert!(distinct.len() > 8, "64 draws collapsed to {} states", distinct.len());
+        assert!(
+            distinct.len() > 8,
+            "64 draws collapsed to {} states",
+            distinct.len()
+        );
     }
 
     /// The ledger is charged for both chains and every restarted attempt, plus the readback.
@@ -780,7 +862,10 @@ mod tests {
         let p = Perfect::new(&g, 0.4).unwrap();
         let mut led = Ledger::default();
         let d = p.draw(4, Some(&mut led)).unwrap();
-        assert!(d.coalesced_at > 1, "the fixture must restart at least once for this to bite");
+        assert!(
+            d.coalesced_at > 1,
+            "the fixture must restart at least once for this to bite"
+        );
         let sweeps = 2 * d.coalesced_at - 1;
         assert_eq!(led.samples, 2 * sweeps as u64 * g.n as u64);
         assert_eq!(led.samples, d.updates);
@@ -900,7 +985,10 @@ mod tests {
             .map(|d| d.coalesced_at)
             .max()
             .expect("200 draws");
-        assert!(worst <= 128, "coalescence took {worst} sweeps, which is not a cheap referee");
+        assert!(
+            worst <= 128,
+            "coalescence took {worst} sweeps, which is not a cheap referee"
+        );
         let burn = 20 * worst;
 
         // The 99.9% point of chi-square(n) by Wilson-Hilferty.
@@ -965,9 +1053,18 @@ mod tests {
             let mono = Perfect::new(&g, beta).unwrap();
             let bound = Bounding::new(&g, beta).unwrap();
             for seed in 0..25u64 {
-                let (a, b) = (mono.draw(seed, None).unwrap(), bound.draw(seed, None).unwrap());
-                assert_eq!(a.state, b.state, "states differ at beta {beta}, seed {seed}");
-                assert_eq!(a.coalesced_at, b.coalesced_at, "coalescence differs at seed {seed}");
+                let (a, b) = (
+                    mono.draw(seed, None).unwrap(),
+                    bound.draw(seed, None).unwrap(),
+                );
+                assert_eq!(
+                    a.state, b.state,
+                    "states differ at beta {beta}, seed {seed}"
+                );
+                assert_eq!(
+                    a.coalesced_at, b.coalesced_at,
+                    "coalescence differs at seed {seed}"
+                );
                 assert_eq!(a.updates, b.updates, "and so the ledger charge differs");
             }
         }
@@ -990,21 +1087,52 @@ mod tests {
         b.couple(0, 2, -1.0);
         let tri = b.build();
         let (beta, draws) = (0.7, 20_000usize);
-        assert!(Perfect::new(&tri, beta).is_err(), "the fixture must be one Perfect refuses");
+        assert!(
+            Perfect::new(&tri, beta).is_err(),
+            "the fixture must be one Perfect refuses"
+        );
         let floor = 0.5 * (8.0 / draws as f64).sqrt();
-        let biased = tv_to_exact(&tri, beta, &Perfect::unchecked(&tri, beta).draws(4, draws, None).unwrap());
-        assert!(biased > 5.0 * floor, "premise: the sandwich is biased here: {biased:.4} vs {floor:.4}");
-        let exact = tv_to_exact(&tri, beta, &Bounding::new(&tri, beta).unwrap().draws(4, draws, None).unwrap());
-        assert!(exact < 1.5 * floor, "triangle: tv {exact:.4} against a {floor:.4} floor");
+        let biased = tv_to_exact(
+            &tri,
+            beta,
+            &Perfect::unchecked(&tri, beta)
+                .draws(4, draws, None)
+                .unwrap(),
+        );
+        assert!(
+            biased > 5.0 * floor,
+            "premise: the sandwich is biased here: {biased:.4} vs {floor:.4}"
+        );
+        let exact = tv_to_exact(
+            &tri,
+            beta,
+            &Bounding::new(&tri, beta)
+                .unwrap()
+                .draws(4, draws, None)
+                .unwrap(),
+        );
+        assert!(
+            exact < 1.5 * floor,
+            "triangle: tv {exact:.4} against a {floor:.4} floor"
+        );
 
         let g = frustrated();
         let draws = 40_000usize;
         let floor = 0.5 * ((1 << g.n) as f64 / draws as f64).sqrt();
         for beta in [0.7, 1.4] {
-            assert!(Perfect::new(&g, beta).is_err(), "the fixture must be one Perfect refuses");
-            let d = Bounding::new(&g, beta).unwrap().draws(4, draws, None).unwrap();
+            assert!(
+                Perfect::new(&g, beta).is_err(),
+                "the fixture must be one Perfect refuses"
+            );
+            let d = Bounding::new(&g, beta)
+                .unwrap()
+                .draws(4, draws, None)
+                .unwrap();
             let tv = tv_to_exact(&g, beta, &d);
-            assert!(tv < 1.5 * floor, "beta {beta}: tv {tv:.4} against a {floor:.4} floor");
+            assert!(
+                tv < 1.5 * floor,
+                "beta {beta}: tv {tv:.4} against a {floor:.4} floor"
+            );
         }
     }
 
@@ -1020,7 +1148,10 @@ mod tests {
         }
         let g = b.build();
         let cold = Bounding::new(&g, 3.0).unwrap().with_max_steps(64);
-        assert_eq!(cold.draw(1, None).unwrap_err(), Refused::NotCoalesced { steps: 64 });
+        assert_eq!(
+            cold.draw(1, None).unwrap_err(),
+            Refused::NotCoalesced { steps: 64 }
+        );
         assert!(Bounding::new(&g, f64::NAN).is_err() && Bounding::new(&g, -1.0).is_err());
         // and the same model hot coalesces, so the refusal is about temperature, not the model
         assert!(Bounding::new(&g, 0.02).unwrap().draw(1, None).is_ok());
@@ -1048,11 +1179,19 @@ mod tests {
         }
         let g = b.build();
         let beta = 0.4;
-        assert!(Perfect::new(&g, beta).is_err(), "premise: the strip must be frustrated");
+        assert!(
+            Perfect::new(&g, beta).is_err(),
+            "premise: the strip must be frustrated"
+        );
 
-        let want = crate::exact::Elimination::default().marginals(&g, beta).unwrap();
+        let want = crate::exact::Elimination::default()
+            .marginals(&g, beta)
+            .unwrap();
         let n = 3000;
-        let d = Bounding::new(&g, beta).unwrap().draws(909, n, None).unwrap();
+        let d = Bounding::new(&g, beta)
+            .unwrap()
+            .draws(909, n, None)
+            .unwrap();
         for i in 0..g.n {
             let got = up_rate(&d, i);
             let se = (want[i] * (1.0 - want[i]) / n as f64).sqrt();

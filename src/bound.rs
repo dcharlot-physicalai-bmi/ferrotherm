@@ -79,9 +79,9 @@
 //! right distribution; this asks whether one state is the lowest, and the two questions share
 //! nothing but the word "certificate".
 
-use crate::round::{accumulation_guard, sum_down, sum_up};
 use crate::exact::Elimination;
 use crate::graph::{Graph, GraphBuilder};
+use crate::round::{accumulation_guard, sum_down, sum_up};
 
 /// A lower bound on `min_s E(s)`, and how it was obtained.
 #[derive(Clone, Debug)]
@@ -225,7 +225,9 @@ pub fn forest(g: &Graph, rounds: usize) -> Bound {
     // h[p][i]: the share of node i's field carried by part p. Starts equal, and every update below
     // preserves the column sum, so `Σ_p h[p][i] == g.h[i]` at every round -- which is what keeps
     // the decomposition a decomposition rather than a different problem.
-    let mut share: Vec<Vec<f64>> = (0..k).map(|_| g.h.iter().map(|&h| h / k as f64).collect()).collect();
+    let mut share: Vec<Vec<f64>> = (0..k)
+        .map(|_| g.h.iter().map(|&h| h / k as f64).collect())
+        .collect();
 
     let mut best = f64::NEG_INFINITY;
     let mut best_round = 0usize;
@@ -415,7 +417,10 @@ pub fn odd_cycle(g: &Graph, max_len: usize) -> Bound {
             if negatives % 2 == 0 {
                 continue;
             }
-            let min_abs = edges.iter().map(|&e| ew[e].abs()).fold(f64::INFINITY, f64::min);
+            let min_abs = edges
+                .iter()
+                .map(|&e| ew[e].abs())
+                .fold(f64::INFINITY, f64::min);
             if !min_abs.is_finite() || min_abs <= 0.0 {
                 continue;
             }
@@ -508,7 +513,9 @@ mod tests {
     fn true_min(g: &Graph) -> f64 {
         let mut best = f64::INFINITY;
         for mask in 0u32..(1u32 << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                .collect();
             best = best.min(g.energy(&s));
         }
         best
@@ -556,12 +563,18 @@ mod tests {
             let g = random_graph(12, 0.35, seed);
             let cold = forest(&g, 0).value;
             let warm = forest(&g, 40).value;
-            assert!(warm >= cold - 1e-9, "seed {seed}: tightening lost ground, {cold} -> {warm}");
+            assert!(
+                warm >= cold - 1e-9,
+                "seed {seed}: tightening lost ground, {cold} -> {warm}"
+            );
             if warm > cold + 1e-6 {
                 improved += 1;
             }
         }
-        assert!(improved > 20, "tightening improved only {improved}/40; it is not earning its cost");
+        assert!(
+            improved > 20,
+            "tightening improved only {improved}/40; it is not earning its cost"
+        );
     }
 
     #[test]
@@ -575,7 +588,10 @@ mod tests {
         // round. Seed 1 is one of them, and `best_round < rounds` is the observable that says so.
         let g = random_graph(14, 0.35, 1);
         let b = forest(&g, 40);
-        assert_eq!(b.rounds, 40, "this instance should run the full ladder, not stop early");
+        assert_eq!(
+            b.rounds, 40,
+            "this instance should run the full ladder, not stop early"
+        );
         assert!(
             b.best_round < b.rounds,
             "seed 1 was chosen because its trajectory dips; if it no longer does, this test is \
@@ -633,7 +649,9 @@ mod tests {
                         }
                     }
                     let g = gb.build();
-                    let Ok(ex) = Elimination::default().ground_state(&g) else { continue };
+                    let Ok(ex) = Elimination::default().ground_state(&g) else {
+                        continue;
+                    };
                     let Some(gs) = ex.ground_state else { continue };
                     trials += 1;
 
@@ -695,8 +713,15 @@ mod tests {
         assert!(trials > 300, "the sweep must actually run: {trials} trials");
         // The bound stays tight while it is sound: the guard costs ulps, not accuracy. A tolerance
         // here would let a future guard grow without limit and still pass.
-        for (what, w) in [("forest", worst_f), ("decoupled", worst_d), ("odd_cycle", worst_c)] {
-            assert!(w < 1e-9, "{what}: soundness cost {w:e}, which is no longer a rounding guard");
+        for (what, w) in [
+            ("forest", worst_f),
+            ("decoupled", worst_d),
+            ("odd_cycle", worst_c),
+        ] {
+            assert!(
+                w < 1e-9,
+                "{what}: soundness cost {w:e}, which is no longer a rounding guard"
+            );
         }
     }
 
@@ -714,7 +739,11 @@ mod tests {
         let b = forest(&g, 5);
         assert_eq!(b.parts, 1, "a chain needs one forest");
         let truth = true_min(&g);
-        assert!((b.value - truth).abs() < 1e-9, "chain bound {} vs exact {truth}", b.value);
+        assert!(
+            (b.value - truth).abs() < 1e-9,
+            "chain bound {} vs exact {truth}",
+            b.value
+        );
     }
 
     #[test]
@@ -745,7 +774,10 @@ mod tests {
         // bound; the question only means anything where the floor is loose.
         let g = random_graph(14, 0.35, 7);
         let (d, f) = (decoupled(&g), forest(&g, 60));
-        assert!(f.parts >= 2, "a graph this dense does not fit in one forest");
+        assert!(
+            f.parts >= 2,
+            "a graph this dense does not fit in one forest"
+        );
         assert!(
             f.value > d.value + 1e-6,
             "forest {} did not beat decoupled {} on a frustrated instance",
@@ -757,7 +789,12 @@ mod tests {
         // On an unfrustrated lattice they must instead AGREE, and both be exact.
         let ferro = lattice2d(6, 1.0);
         let (dd, ff) = (decoupled(&ferro), forest(&ferro, 20));
-        assert!((dd.value - ff.value).abs() < 1e-9, "{} vs {}", dd.value, ff.value);
+        assert!(
+            (dd.value - ff.value).abs() < 1e-9,
+            "{} vs {}",
+            dd.value,
+            ff.value
+        );
         assert!((ff.value - ferro.energy(&vec![1i8; ferro.n])).abs() < 1e-9);
     }
 
@@ -799,11 +836,21 @@ mod tests {
             gb.couple(i, j, -1.0);
         }
         let g = gb.build();
-        assert!((true_min(&g) - (-1.0)).abs() < 1e-9, "a frustrated triangle bottoms out at -1");
-        assert!((decoupled(&g).value - (-3.0)).abs() < 1e-9, "the trivial floor is -3");
+        assert!(
+            (true_min(&g) - (-1.0)).abs() < 1e-9,
+            "a frustrated triangle bottoms out at -1"
+        );
+        assert!(
+            (decoupled(&g).value - (-3.0)).abs() < 1e-9,
+            "the trivial floor is -3"
+        );
         let b = odd_cycle(&g, 4);
         assert_eq!(b.parts, 1, "one cycle claimed");
-        assert!((b.value - (-1.0)).abs() < 1e-9, "cycle bound {} should be exact here", b.value);
+        assert!(
+            (b.value - (-1.0)).abs() < 1e-9,
+            "cycle bound {} should be exact here",
+            b.value
+        );
     }
 
     #[test]
@@ -830,7 +877,10 @@ mod tests {
             gb.couple(i, j, -1.0);
         }
         let g = gb.build();
-        assert!(g.h.iter().all(|&h| h == 0.0), "no fields, which is the G-set case");
+        assert!(
+            g.h.iter().all(|&h| h == 0.0),
+            "no fields, which is the G-set case"
+        );
         let (f, c) = (forest(&g, 40), odd_cycle(&g, 4));
         assert!(
             (f.value - decoupled(&g).value).abs() < 1e-9,
@@ -838,7 +888,12 @@ mod tests {
             f.value,
             decoupled(&g).value
         );
-        assert!(c.value > f.value + 1e-9, "cycle {} must beat forest {}", c.value, f.value);
+        assert!(
+            c.value > f.value + 1e-9,
+            "cycle {} must beat forest {}",
+            c.value,
+            f.value
+        );
         assert!(c.value <= true_min(&g) + 1e-9, "and still be sound");
     }
 
@@ -856,7 +911,10 @@ mod tests {
         seen.sort_unstable();
         seen.dedup();
         assert_eq!(seen.len(), total, "an edge appears in two parts");
-        let edges = (0..g.n).map(|i| g.offset[i + 1] - g.offset[i]).sum::<usize>() / 2;
+        let edges = (0..g.n)
+            .map(|i| g.offset[i + 1] - g.offset[i])
+            .sum::<usize>()
+            / 2;
         assert_eq!(total, edges, "the parts drop {} edge(s)", edges - total);
     }
 }

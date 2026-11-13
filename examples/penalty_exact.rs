@@ -76,16 +76,30 @@ fn analyse(n: usize, weights: &[f64]) -> Instance {
         }
     }
     permute(0, &mut perm, &one, &mut best);
-    assert!((best - t_star).abs() < 1e-9, "the spin model's best tour {t_star} must be the permutation optimum {best}");
+    assert!(
+        (best - t_star).abs() < 1e-9,
+        "the spin model's best tour {t_star} must be the permutation optimum {best}"
+    );
     let mut a_crit = 0.0f64;
     for &(p, w, feasible) in &table {
         if !feasible && p > 0.0 {
             a_crit = a_crit.max((t_star - w) / p);
         }
     }
-    let max_w = weights.iter().copied().filter(|w| w.is_finite()).fold(0.0f64, f64::max);
+    let max_w = weights
+        .iter()
+        .copied()
+        .filter(|w| w.is_finite())
+        .fold(0.0f64, f64::max);
     let threshold = Tsp::new(n, weights).expect("valid").threshold();
-    Instance { n_spins, table, t_star, a_crit, max_w, threshold }
+    Instance {
+        n_spins,
+        table,
+        t_star,
+        a_crit,
+        max_w,
+        threshold,
+    }
 }
 
 /// Exact Boltzmann mass on the optimal tours at penalty `a` and inverse temperature `beta`.
@@ -109,10 +123,16 @@ fn main() {
     let n = 4usize;
     let instances = 300u64;
     let beta = 1.0;
-    println!("THE EXACT CRITICAL PENALTY OF LUCAS'S TSP REDUCTION, OVER {instances} RANDOM FOUR-CITY INSTANCES\n");
+    println!(
+        "THE EXACT CRITICAL PENALTY OF LUCAS'S TSP REDUCTION, OVER {instances} RANDOM FOUR-CITY INSTANCES\n"
+    );
     println!("  weights   integers drawn uniformly from 1..=9, symmetric, complete graph; B = 1");
-    println!("  A_crit    the largest (T* - W(x)) / P(x) over infeasible x, from all 2^16 states, exact");
-    println!("  P_GS      exact Boltzmann mass on the optimal tours at beta = {beta}, as a function of A\n");
+    println!(
+        "  A_crit    the largest (T* - W(x)) / P(x) over infeasible x, from all 2^16 states, exact"
+    );
+    println!(
+        "  P_GS      exact Boltzmann mass on the optimal tours at beta = {beta}, as a function of A\n"
+    );
     let mut ratios: Vec<f64> = Vec::new();
     let mut insufficient = 0usize;
     let mut half_tstar_violations = 0usize;
@@ -160,25 +180,60 @@ fn main() {
             println!(
                 "  instance {seed}: T* = {}, max(W) = {}, A_crit = {:.3} ({:.2} x max W), threshold {:.1}; \
                  P_GS at A_crit+ {:.4}, at max W {:.4}, at threshold {:.4}, at 4x threshold {:.4}  [{} spins]",
-                inst.t_star, inst.max_w, inst.a_crit, inst.a_crit / inst.max_w, inst.threshold,
-                masses[0], masses[1], masses[2], masses[3], inst.n_spins
+                inst.t_star,
+                inst.max_w,
+                inst.a_crit,
+                inst.a_crit / inst.max_w,
+                inst.threshold,
+                masses[0],
+                masses[1],
+                masses[2],
+                masses[3],
+                inst.n_spins
             );
         }
     }
     ratios.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let q = |f: f64| ratios[((ratios.len() - 1) as f64 * f) as usize];
-    println!("\n  A_crit / max(W) over {instances} instances: min {:.3}, 10% {:.3}, median {:.3}, 90% {:.3}, max {:.3}",
-             ratios[0], q(0.1), q(0.5), q(0.9), ratios[ratios.len() - 1]);
-    println!("  instances where Lucas's max(W) is INSUFFICIENT (A_crit > max W): {insufficient} of {instances}");
-    println!("  instances where A_crit exceeds T*/2 (the bound npising's wave-4 note proved): {half_tstar_violations} of {instances}");
+    println!(
+        "\n  A_crit / max(W) over {instances} instances: min {:.3}, 10% {:.3}, median {:.3}, 90% {:.3}, max {:.3}",
+        ratios[0],
+        q(0.1),
+        q(0.5),
+        q(0.9),
+        ratios[ratios.len() - 1]
+    );
+    println!(
+        "  instances where Lucas's max(W) is INSUFFICIENT (A_crit > max W): {insufficient} of {instances}"
+    );
+    println!(
+        "  instances where A_crit exceeds T*/2 (the bound npising's wave-4 note proved): {half_tstar_violations} of {instances}"
+    );
     let inst_f = instances as f64;
-    println!("\n  mean P_GS at beta {beta}:  just above A_crit {:.4}   at max(W) {:.4}   at the provable threshold {:.4}   at 4x threshold {:.4}",
-             sum_mass[0] / inst_f, sum_mass[1] / inst_f, sum_mass[2] / inst_f, sum_mass[3] / inst_f);
-    println!("  best of the three feasible penalties: smallest {best_is_smallest}, max(W) {best_is_maxw}, threshold {best_is_thresh}  (ties counted for the smaller)");
+    println!(
+        "\n  mean P_GS at beta {beta}:  just above A_crit {:.4}   at max(W) {:.4}   at the provable threshold {:.4}   at 4x threshold {:.4}",
+        sum_mass[0] / inst_f,
+        sum_mass[1] / inst_f,
+        sum_mass[2] / inst_f,
+        sum_mass[3] / inst_f
+    );
+    println!(
+        "  best of the three feasible penalties: smallest {best_is_smallest}, max(W) {best_is_maxw}, threshold {best_is_thresh}  (ties counted for the smaller)"
+    );
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  A_crit is exact and instance-specific; the distribution of A_crit / max(W) is how far Lucas's");
-    println!("  stated bound sits from tight, and the INSUFFICIENT count is whether it ever fails. The P_GS");
-    println!("  columns are the exact price of a penalty above the critical one: every unit of A above A_crit");
-    println!("  lifts every infeasible state further, which sharpens the landscape, and whether that helps or");
-    println!("  hurts the mass on the optimal tours at a fixed temperature is the measured column, not a rule.");
+    println!(
+        "  A_crit is exact and instance-specific; the distribution of A_crit / max(W) is how far Lucas's"
+    );
+    println!(
+        "  stated bound sits from tight, and the INSUFFICIENT count is whether it ever fails. The P_GS"
+    );
+    println!(
+        "  columns are the exact price of a penalty above the critical one: every unit of A above A_crit"
+    );
+    println!(
+        "  lifts every infeasible state further, which sharpens the landscape, and whether that helps or"
+    );
+    println!(
+        "  hurts the mass on the optimal tours at a fixed temperature is the measured column, not a rule."
+    );
 }

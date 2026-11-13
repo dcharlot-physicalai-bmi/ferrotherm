@@ -20,7 +20,7 @@
 // run: cargo run --release --example clique_chain_bound
 
 use ferrotherm::device::{pegasus, zephyr};
-use ferrotherm::embed::{chimera_clique, pegasus_clique_fragment, zephyr_clique, Embedding};
+use ferrotherm::embed::{Embedding, chimera_clique, pegasus_clique_fragment, zephyr_clique};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::ising::chimera;
 
@@ -75,7 +75,11 @@ fn row(fabric: &str, m: usize, hw: &Graph, emb: Option<Embedding>) {
         (Some(b), Some(nx)) => (
             format!("{b:.2}"),
             format!("{:.3}", mean / b),
-            if nx > longest as f64 { format!("{nx:.2} > {longest}: excluded") } else { format!("{nx:.2} <= {longest}: not excluded") },
+            if nx > longest as f64 {
+                format!("{nx:.2} > {longest}: excluded")
+            } else {
+                format!("{nx:.2} <= {longest}: not excluded")
+            },
         ),
         _ => ("-".to_string(), "-".to_string(), "-".to_string()),
     };
@@ -88,10 +92,18 @@ fn row(fabric: &str, m: usize, hw: &Graph, emb: Option<Embedding>) {
 }
 
 fn main() {
-    println!("STRUCTURED CLIQUE EMBEDDINGS AGAINST THE DEGREE-SEQUENCE BOUND ON MEAN CHAIN LENGTH\n");
-    println!("  bound    least mean chain length at which n connected chains on the hardware's highest-degree sites could expose n(n-1) endpoints");
-    println!("  ratio    the construction's mean chain over the bound: how far from the least possible");
-    println!("  K_{{n+1}}  the bound at one more variable against the construction's LONGEST chain: 'excluded' is a proof by counting\n");
+    println!(
+        "STRUCTURED CLIQUE EMBEDDINGS AGAINST THE DEGREE-SEQUENCE BOUND ON MEAN CHAIN LENGTH\n"
+    );
+    println!(
+        "  bound    least mean chain length at which n connected chains on the hardware's highest-degree sites could expose n(n-1) endpoints"
+    );
+    println!(
+        "  ratio    the construction's mean chain over the bound: how far from the least possible"
+    );
+    println!(
+        "  K_{{n+1}}  the bound at one more variable against the construction's LONGEST chain: 'excluded' is a proof by counting\n"
+    );
     for m in 2..=16 {
         let hw = chimera(m, m, 4, 1.0);
         row("chimera", m, &hw, chimera_clique(m, 4));
@@ -107,9 +119,17 @@ fn main() {
         row("zephyr", m, &hw, zephyr_clique(m, 4));
     }
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  The bound is necessary, not sufficient: an embedding at the bound would have to place every chain");
-    println!("  on the highest-degree sites with no wasted coupler, so the ratio is an upper limit on how much a");
-    println!("  better construction could shorten chains. Where K_{{n+1}} is 'excluded', no embedding of one more");
-    println!("  variable exists at the construction's chain length in that hardware, by counting alone; where it");
+    println!(
+        "  The bound is necessary, not sufficient: an embedding at the bound would have to place every chain"
+    );
+    println!(
+        "  on the highest-degree sites with no wasted coupler, so the ratio is an upper limit on how much a"
+    );
+    println!(
+        "  better construction could shorten chains. Where K_{{n+1}} is 'excluded', no embedding of one more"
+    );
+    println!(
+        "  variable exists at the construction's chain length in that hardware, by counting alone; where it"
+    );
     println!("  is not, counting does not settle it and the question stays open for that size.");
 }

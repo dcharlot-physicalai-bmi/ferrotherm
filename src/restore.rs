@@ -86,7 +86,10 @@ impl core::fmt::Display for Error {
                  above 0.5 the honest model is the same channel with the observation negated"
             ),
             Error::Scale(t) => {
-                write!(f, "model scale {t} must be finite and positive; t = 1 is the Nishimori point")
+                write!(
+                    f,
+                    "model scale {t} must be finite and positive; t = 1 is the Nishimori point"
+                )
             }
             Error::Size { got, want } => write!(f, "image has {got} pixels, the model has {want}"),
             Error::NotASpin { at, value } => {
@@ -134,7 +137,10 @@ impl Model {
     /// non-finite coupling.
     pub fn new(w: usize, h: usize, k: f64, p: f64) -> Result<Model, Error> {
         if w == 0 || h == 0 {
-            return Err(Error::Size { got: 0, want: w * h });
+            return Err(Error::Size {
+                got: 0,
+                want: w * h,
+            });
         }
         if !k.is_finite() {
             return Err(Error::Scale(k));
@@ -192,7 +198,9 @@ impl Model {
     /// [`Error::Size`] or [`Error::NotASpin`] on a bad image.
     pub fn corrupt(&self, x: &[i8], rng: &mut Pcg) -> Result<Vec<i8>, Error> {
         self.check(x)?;
-        Ok(x.iter().map(|&v| if rng.f64() < self.p { -v } else { v }).collect())
+        Ok(x.iter()
+            .map(|&v| if rng.f64() < self.p { -v } else { v })
+            .collect())
     }
 
     /// Exact posterior marginals `P(x_i = +1 | y)` at scale `t`, by variable elimination.
@@ -202,7 +210,9 @@ impl Model {
     /// As [`Model::posterior`], plus [`Error::Width`] when the grid is too wide to eliminate.
     pub fn posterior_marginals(&self, y: &[i8], t: f64) -> Result<Vec<f64>, Error> {
         let g = self.posterior(y, t)?;
-        Elimination::default().marginals(&g, 1.0).map_err(Error::Width)
+        Elimination::default()
+            .marginals(&g, 1.0)
+            .map_err(Error::Width)
     }
 
     /// The MPM restoration at scale `t`, from exact marginals.
@@ -229,7 +239,9 @@ impl Model {
     /// Never: `ground_state` fills its `ground_state` field whenever it returns `Ok`.
     pub fn restore_map(&self, y: &[i8]) -> Result<Vec<i8>, Error> {
         let g = self.posterior(y, NISHIMORI)?;
-        let e = Elimination::default().ground_state(&g).map_err(Error::Width)?;
+        let e = Elimination::default()
+            .ground_state(&g)
+            .map_err(Error::Width)?;
         Ok(e.ground_state.expect("min-sum was run"))
     }
 
@@ -277,7 +289,11 @@ impl Model {
                 }
             })
             .collect();
-        Ok(Restored { mean, image, sweeps })
+        Ok(Restored {
+            mean,
+            image,
+            sweeps,
+        })
     }
 
     /// Exact expected pixel error of the MPM estimate at scale `t`, over the whole joint.
@@ -321,7 +337,9 @@ impl Model {
             set_fields(&mut g, ym, hc);
             let mu = marginals_by_enumeration(&g);
             // P(y), marginalised over every image that could have produced it.
-            let py: f64 = (0..m).map(|xm| pri[xm] * lik[(xm ^ ym).count_ones() as usize]).sum();
+            let py: f64 = (0..m)
+                .map(|xm| pri[xm] * lik[(xm ^ ym).count_ones() as usize])
+                .sum();
             risk += py * mu.iter().map(|&u| u.min(1.0 - u)).sum::<f64>();
         }
         Ok(risk / n as f64)
@@ -377,14 +395,19 @@ impl Model {
     /// `P(y|x)` by Hamming distance: `p^d (1-p)^(n-d)`.
     fn likelihood_table(&self) -> Vec<f64> {
         let n = self.pixels();
-        (0..=n).map(|d| self.p.powi(d as i32) * (1.0 - self.p).powi((n - d) as i32)).collect()
+        (0..=n)
+            .map(|d| self.p.powi(d as i32) * (1.0 - self.p).powi((n - d) as i32))
+            .collect()
     }
 
     /// Pixel count, if the joint fits.
     fn enumerable(&self) -> Result<usize, Error> {
         let n = self.pixels();
         if n > MAX_JOINT_PIXELS {
-            return Err(Error::TooBig { pixels: n, max: MAX_JOINT_PIXELS });
+            return Err(Error::TooBig {
+                pixels: n,
+                max: MAX_JOINT_PIXELS,
+            });
         }
         Ok(n)
     }
@@ -392,7 +415,10 @@ impl Model {
     /// Length and alphabet of an image.
     fn check(&self, x: &[i8]) -> Result<(), Error> {
         if x.len() != self.pixels() {
-            return Err(Error::Size { got: x.len(), want: self.pixels() });
+            return Err(Error::Size {
+                got: x.len(),
+                want: self.pixels(),
+            });
         }
         match x.iter().position(|&v| v != 1 && v != -1) {
             Some(at) => Err(Error::NotASpin { at, value: x[at] }),
@@ -473,7 +499,11 @@ fn marginals_by_enumeration(g: &Graph) -> Vec<f64> {
 
 /// A model scale must be finite and positive.
 fn check_scale(t: f64) -> Result<(), Error> {
-    if t.is_finite() && t > 0.0 { Ok(()) } else { Err(Error::Scale(t)) }
+    if t.is_finite() && t > 0.0 {
+        Ok(())
+    } else {
+        Err(Error::Scale(t))
+    }
 }
 
 #[cfg(test)]
@@ -486,7 +516,9 @@ mod tests {
     const CASES: [(usize, usize, f64, f64); 2] = [(3, 3, 0.4, 0.15), (3, 3, 0.6, 0.2)];
 
     fn image(mask: usize, n: usize) -> Vec<i8> {
-        (0..n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect()
+        (0..n)
+            .map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 })
+            .collect()
     }
 
     /// `hc` is the channel, not a knob: `exp(+-hc) / (2 cosh hc)` must BE `(1-p, p)`.
@@ -499,8 +531,14 @@ mod tests {
             let m = Model::new(2, 2, 0.3, p).unwrap();
             let hc = m.channel_field();
             let z = 2.0 * hc.cosh();
-            assert!((hc.exp() / z - (1.0 - p)).abs() < 1e-15, "agreement weight at p={p}");
-            assert!(((-hc).exp() / z - p).abs() < 1e-15, "disagreement weight at p={p}");
+            assert!(
+                (hc.exp() / z - (1.0 - p)).abs() < 1e-15,
+                "agreement weight at p={p}"
+            );
+            assert!(
+                ((-hc).exp() / z - p).abs() < 1e-15,
+                "disagreement weight at p={p}"
+            );
         }
     }
 
@@ -553,7 +591,10 @@ mod tests {
                     .zip(&by_enum)
                     .map(|(a, b)| (a - b).abs())
                     .fold(0.0f64, f64::max);
-                assert!(worst < 1e-12, "y={ym:b} t={t}: worst marginal gap {worst:e}");
+                assert!(
+                    worst < 1e-12,
+                    "y={ym:b} t={t}: worst marginal gap {worst:e}"
+                );
             }
         }
     }
@@ -586,7 +627,10 @@ mod tests {
             for i in 0..25 {
                 let t = 0.1 + 0.2 * f64::from(i);
                 let e = m.expected_error(t).unwrap();
-                assert!(e >= best - 1e-12, "t={t} beat the Nishimori point: {e:.12} < {best:.12}");
+                assert!(
+                    e >= best - 1e-12,
+                    "t={t} beat the Nishimori point: {e:.12} < {best:.12}"
+                );
             }
         }
     }
@@ -602,14 +646,23 @@ mod tests {
             let m = Model::new(w, h, k, p).unwrap();
             let risk = m.bayes_risk().unwrap();
             let at_one = m.expected_error(NISHIMORI).unwrap();
-            assert!((risk - at_one).abs() < 1e-12, "risk {risk:.15} vs error {at_one:.15}");
+            assert!(
+                (risk - at_one).abs() < 1e-12,
+                "risk {risk:.15} vs error {at_one:.15}"
+            );
             for i in 0..25 {
                 let t = 0.1 + 0.2 * f64::from(i);
-                assert!(m.expected_error(t).unwrap() >= risk - 1e-12, "t={t} beat the Bayes risk");
+                assert!(
+                    m.expected_error(t).unwrap() >= risk - 1e-12,
+                    "t={t} beat the Bayes risk"
+                );
             }
             // And restoration is worth doing: fewer wrong pixels than the raw observation, which
             // is wrong on exactly a fraction p of them.
-            assert!(risk < p, "{w}x{h} k={k}: risk {risk:.6} did not beat the channel {p}");
+            assert!(
+                risk < p,
+                "{w}x{h} k={k}: risk {risk:.6} did not beat the channel {p}"
+            );
         }
     }
 
@@ -623,7 +676,10 @@ mod tests {
             let m = Model::new(w, h, k, p).unwrap();
             let mpm_err = m.expected_error(NISHIMORI).unwrap();
             let map_err = m.expected_error_map().unwrap();
-            assert!(map_err > mpm_err + 1e-5, "{w}x{h} k={k} p={p}: map {map_err} mpm {mpm_err}");
+            assert!(
+                map_err > mpm_err + 1e-5,
+                "{w}x{h} k={k} p={p}: map {map_err} mpm {mpm_err}"
+            );
         }
     }
 
@@ -637,7 +693,10 @@ mod tests {
         for (w, h, k, p) in CASES {
             let m = Model::new(w, h, k, p).unwrap();
             let e = m.expected_error(1e-9).unwrap();
-            assert!((e - p).abs() < 1e-12, "{w}x{h} k={k}: hot error {e:.15}, channel {p}");
+            assert!(
+                (e - p).abs() < 1e-12,
+                "{w}x{h} k={k}: hot error {e:.15}, channel {p}"
+            );
         }
     }
 
@@ -655,7 +714,9 @@ mod tests {
         let y = m.corrupt(&truth, &mut rng).unwrap();
 
         let exact = m.posterior_marginals(&y, NISHIMORI).unwrap();
-        let run = m.restore_gibbs(&y, NISHIMORI, 2_000, 200_000, 20_260_910).unwrap();
+        let run = m
+            .restore_gibbs(&y, NISHIMORI, 2_000, 200_000, 20_260_910)
+            .unwrap();
 
         let mut worst = 0.0f64;
         for (i, (&mu, &mean)) in exact.iter().zip(&run.mean).enumerate() {
@@ -692,7 +753,10 @@ mod tests {
         let rate = flipped as f64 / n;
         // Four standard deviations of a Binomial(n, p): this fails on a wrong rate, not on luck.
         let tol = 4.0 * (0.25 * 0.75 / n).sqrt();
-        assert!((rate - 0.25).abs() < tol, "flip rate {rate:.4}, tolerance {tol:.4}");
+        assert!(
+            (rate - 0.25).abs() < tol,
+            "flip rate {rate:.4}, tolerance {tol:.4}"
+        );
     }
 
     /// A marginal of exactly one half decides nothing, so the observation stands.
@@ -700,14 +764,20 @@ mod tests {
     fn an_undecided_pixel_keeps_its_observation() {
         let y = [1i8, -1, 1];
         assert_eq!(mpm(&[0.5, 0.5, 0.5], &y), y);
-        assert_eq!(mpm(&[0.5 + f64::EPSILON, 0.5 - f64::EPSILON, 0.5], &y), [1, -1, 1]);
+        assert_eq!(
+            mpm(&[0.5 + f64::EPSILON, 0.5 - f64::EPSILON, 0.5], &y),
+            [1, -1, 1]
+        );
         assert_eq!(pixel_error(&[1, 1, -1], &[1, -1, -1]), 1.0 / 3.0);
     }
 
     /// Every refusal, and each for its own reason.
     #[test]
     fn bad_models_and_bad_images_are_refused() {
-        assert_eq!(Model::new(0, 3, 0.4, 0.1), Err(Error::Size { got: 0, want: 0 }));
+        assert_eq!(
+            Model::new(0, 3, 0.4, 0.1),
+            Err(Error::Size { got: 0, want: 0 })
+        );
         assert_eq!(Model::new(3, 3, 0.4, 0.5), Err(Error::Noise(0.5)));
         assert_eq!(Model::new(3, 3, 0.4, 0.0), Err(Error::Noise(0.0)));
         // NaN is not equal to itself, so this one is matched rather than compared.
@@ -716,19 +786,34 @@ mod tests {
         let m = Model::new(3, 3, 0.4, 0.15).unwrap();
         // `.err()` rather than the whole `Result`: a `Graph` is not `Debug`, and it is not this
         // module's business to make it one.
-        assert_eq!(m.posterior(&[1i8; 8], NISHIMORI).err(), Some(Error::Size { got: 8, want: 9 }));
+        assert_eq!(
+            m.posterior(&[1i8; 8], NISHIMORI).err(),
+            Some(Error::Size { got: 8, want: 9 })
+        );
         let mut bad = [1i8; 9];
         bad[4] = 0;
-        assert_eq!(m.posterior(&bad, NISHIMORI).err(), Some(Error::NotASpin { at: 4, value: 0 }));
+        assert_eq!(
+            m.posterior(&bad, NISHIMORI).err(),
+            Some(Error::NotASpin { at: 4, value: 0 })
+        );
         assert_eq!(m.posterior(&[1i8; 9], 0.0).err(), Some(Error::Scale(0.0)));
         assert_eq!(m.posterior(&[1i8; 9], -1.0).err(), Some(Error::Scale(-1.0)));
-        assert_eq!(m.expected_error(f64::INFINITY), Err(Error::Scale(f64::INFINITY)));
-        assert_eq!(m.restore_gibbs(&[1i8; 9], NISHIMORI, 10, 0, 1).err(), Some(Error::Scale(0.0)));
+        assert_eq!(
+            m.expected_error(f64::INFINITY),
+            Err(Error::Scale(f64::INFINITY))
+        );
+        assert_eq!(
+            m.restore_gibbs(&[1i8; 9], NISHIMORI, 10, 0, 1).err(),
+            Some(Error::Scale(0.0))
+        );
 
         let big = Model::new(4, 4, 0.4, 0.15).unwrap();
         assert_eq!(
             big.expected_error(NISHIMORI),
-            Err(Error::TooBig { pixels: 16, max: MAX_JOINT_PIXELS })
+            Err(Error::TooBig {
+                pixels: 16,
+                max: MAX_JOINT_PIXELS
+            })
         );
         assert!(!Error::Noise(0.5).to_string().is_empty());
     }

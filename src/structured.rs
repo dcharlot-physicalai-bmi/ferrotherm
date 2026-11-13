@@ -144,7 +144,12 @@ impl StructuredMeanField {
     /// A run at inverse temperature `beta`: 200 iterations, damping 0.5, width cap 20.
     #[must_use]
     pub fn new(beta: f64) -> Self {
-        StructuredMeanField { beta, iters: 200, damping: 0.5, max_width: 20 }
+        StructuredMeanField {
+            beta,
+            iters: 200,
+            damping: 0.5,
+            max_width: 20,
+        }
     }
 
     /// The bound `F(b)` at fields `b` of the caller's choosing — valid at every `b`, so this never
@@ -157,7 +162,12 @@ impl StructuredMeanField {
     /// # Panics
     ///
     /// If `parts` is not a partition of `0..g.n`, or `fields` is not one field per spin.
-    pub fn bound_at(&self, g: &Graph, parts: &[Vec<usize>], fields: &[f64]) -> Result<f64, TooWide> {
+    pub fn bound_at(
+        &self,
+        g: &Graph,
+        parts: &[Vec<usize>],
+        fields: &[f64],
+    ) -> Result<f64, TooWide> {
         assert_eq!(fields.len(), g.n, "one variational field per spin");
         let (mut built, of) = split(g, parts);
         self.evaluate(g, &mut built, &of, fields).map(|(f, _)| f)
@@ -193,10 +203,17 @@ impl StructuredMeanField {
     /// # Panics
     ///
     /// If `parts` is not a partition of `0..g.n`, or `m0` is not one magnetisation per spin.
-    pub fn run_from(&self, g: &Graph, parts: &[Vec<usize>], m0: &[f64]) -> Result<Structured, TooWide> {
+    pub fn run_from(
+        &self,
+        g: &Graph,
+        parts: &[Vec<usize>],
+        m0: &[f64],
+    ) -> Result<Structured, TooWide> {
         assert_eq!(m0.len(), g.n, "one starting magnetisation per spin");
         let (mut built, of) = split(g, parts);
-        let el = Elimination { max_width: self.max_width };
+        let el = Elimination {
+            max_width: self.max_width,
+        };
         let width = built.iter().map(|b| el.width(&b.sub)).max().unwrap_or(0);
 
         let mut b = vec![0.0f64; g.n];
@@ -260,7 +277,8 @@ impl StructuredMeanField {
     /// If `parts` is not a partition of `0..g.n`.
     pub fn tightest(&self, g: &Graph, parts: &[Vec<usize>]) -> Result<Structured, TooWide> {
         let cold = self.run(g, parts)?;
-        let mf = crate::meanfield::naive_mean_field(g, self.beta, self.iters.max(5000), self.damping);
+        let mf =
+            crate::meanfield::naive_mean_field(g, self.beta, self.iters.max(5000), self.damping);
         let warm = self.run_from(g, parts, &mf.m)?;
         Ok(if warm.log_z > cold.log_z { warm } else { cold })
     }
@@ -273,7 +291,9 @@ impl StructuredMeanField {
         of: &[usize],
         b: &[f64],
     ) -> Result<(f64, Vec<f64>), TooWide> {
-        let el = Elimination { max_width: self.max_width };
+        let el = Elimination {
+            max_width: self.max_width,
+        };
         let mut m = vec![0.0f64; g.n];
         let mut parts_log_z = 0.0;
         for blk in built.iter_mut() {
@@ -336,7 +356,10 @@ fn split(g: &Graph, parts: &[Vec<usize>]) -> (Vec<Block>, Vec<usize>) {
             of[i] = p;
         }
     }
-    assert!(of.iter().all(|&p| p != usize::MAX), "every spin must be in a part");
+    assert!(
+        of.iter().all(|&p| p != usize::MAX),
+        "every spin must be in a part"
+    );
 
     let mut local = vec![usize::MAX; g.n];
     let built = parts
@@ -354,7 +377,10 @@ fn split(g: &Graph, parts: &[Vec<usize>]) -> (Vec<Block>, Vec<usize>) {
                     }
                 }
             }
-            Block { nodes: part.clone(), sub: gb.build() }
+            Block {
+                nodes: part.clone(),
+                sub: gb.build(),
+            }
         })
         .collect();
     (built, of)
@@ -374,7 +400,10 @@ pub fn singletons(n: usize) -> Vec<Vec<usize>> {
 #[must_use]
 pub fn contiguous(n: usize, len: usize) -> Vec<Vec<usize>> {
     assert!(len > 0, "a part must hold at least one spin");
-    (0..n).step_by(len).map(|s| (s..(s + len).min(n)).collect()).collect()
+    (0..n)
+        .step_by(len)
+        .map(|s| (s..(s + len).min(n)).collect())
+        .collect()
 }
 
 /// Greedy breadth-first parts of at most `max_size` **connected** spins.
@@ -484,14 +513,19 @@ mod tests {
             ("lattice", ising::lattice2d(4, 1.0), 0.45),
         ] {
             let all: Vec<usize> = (0..g.n).collect();
-            let st = StructuredMeanField::new(beta).run(&g, &[all]).expect("narrow");
+            let st = StructuredMeanField::new(beta)
+                .run(&g, &[all])
+                .expect("narrow");
             let exact = truth(&g, beta);
             assert!(
                 (st.log_z - exact).abs() < 1e-9,
                 "{name}: one part gave {} for an exact ln Z of {exact}",
                 st.log_z
             );
-            assert!(st.converged(1e-12), "{name}: no across couplings, so nothing can move");
+            assert!(
+                st.converged(1e-12),
+                "{name}: no across couplings, so nothing can move"
+            );
         }
     }
 
@@ -513,11 +547,18 @@ mod tests {
         ] {
             let parts = singletons(g.n);
             for beta in [0.1, 0.5, 1.7] {
-                let smf = StructuredMeanField { beta, iters: 1, damping: 0.5, max_width: 4 };
+                let smf = StructuredMeanField {
+                    beta,
+                    iters: 1,
+                    damping: 0.5,
+                    max_width: 4,
+                };
                 for _ in 0..8 {
                     let b: Vec<f64> = (0..g.n).map(|_| 4.0 * rng.f64() - 2.0).collect();
                     let m: Vec<f64> = b.iter().map(|&x| (beta * x).tanh()).collect();
-                    let f = smf.bound_at(&g, &parts, &b).expect("a singleton has no width");
+                    let f = smf
+                        .bound_at(&g, &parts, &b)
+                        .expect("a singleton has no width");
                     let gb = crate::meanfield::gibbs_bogoliubov(&g, beta, &m);
                     assert!(
                         (f - gb).abs() < 1e-12,
@@ -549,9 +590,19 @@ mod tests {
         ] {
             for beta in [0.1, 0.2, 0.35] {
                 let mf = naive_mean_field(&g, beta, 20000, 0.5);
-                let smf = StructuredMeanField { beta, iters: 20000, damping: 0.5, max_width: 4 };
-                let st = smf.run(&g, &singletons(g.n)).expect("a singleton has no width");
-                assert!(mf.converged(1e-10) && st.converged(1e-10), "{name} beta {beta}");
+                let smf = StructuredMeanField {
+                    beta,
+                    iters: 20000,
+                    damping: 0.5,
+                    max_width: 4,
+                };
+                let st = smf
+                    .run(&g, &singletons(g.n))
+                    .expect("a singleton has no width");
+                assert!(
+                    mf.converged(1e-10) && st.converged(1e-10),
+                    "{name} beta {beta}"
+                );
                 assert!(
                     (st.log_z - mf.log_z).abs() < 1e-9,
                     "{name} beta {beta}: structured {} vs naive {}",
@@ -587,8 +638,18 @@ mod tests {
         ] {
             for beta in [0.15, 0.6, 1.4, 3.0] {
                 let exact = truth(&g, beta);
-                for parts in [singletons(g.n), contiguous(g.n, 3), blocks(&g, 5), blocks(&g, 8)] {
-                    let smf = StructuredMeanField { beta, iters: 100, damping: 0.5, max_width: 20 };
+                for parts in [
+                    singletons(g.n),
+                    contiguous(g.n, 3),
+                    blocks(&g, 5),
+                    blocks(&g, 8),
+                ] {
+                    let smf = StructuredMeanField {
+                        beta,
+                        iters: 100,
+                        damping: 0.5,
+                        max_width: 20,
+                    };
                     for _ in 0..6 {
                         let b: Vec<f64> = (0..g.n).map(|_| 6.0 * rng.f64() - 3.0).collect();
                         let f = smf.bound_at(&g, &parts, &b).expect("narrow parts");
@@ -628,10 +689,16 @@ mod tests {
                     "beta {beta}: parts of {len} gave {}, not above the previous rung {previous}",
                     st.log_z
                 );
-                assert!(st.log_z <= exact + 1e-9, "beta {beta}: parts of {len} above ln Z");
+                assert!(
+                    st.log_z <= exact + 1e-9,
+                    "beta {beta}: parts of {len} above ln Z"
+                );
                 previous = st.log_z;
             }
-            assert!((previous - exact).abs() < 1e-9, "beta {beta}: the top rung must be exact");
+            assert!(
+                (previous - exact).abs() < 1e-9,
+                "beta {beta}: the top rung must be exact"
+            );
         }
     }
 
@@ -642,20 +709,66 @@ mod tests {
     #[test]
     fn tighter_than_naive_mean_field() {
         let cases: Vec<(&str, Graph, f64, Vec<Vec<usize>>)> = vec![
-            ("ferro ring, arcs of 8", ising::ring(24, 1.0, 0.0), 0.6, contiguous(24, 8)),
-            ("ferro ring cold", ising::ring(24, 1.0, 0.0), 1.2, contiguous(24, 8)),
-            ("biased ring, arcs of 5", ising::ring(20, 1.0, 0.4), 0.3, contiguous(20, 5)),
-            ("lattice 6x6, rows", ising::lattice2d(6, 1.0), 0.2, contiguous(36, 6)),
-            ("lattice 6x6, rows, critical", ising::lattice2d(6, 1.0), 0.44, contiguous(36, 6)),
-            ("glass ring, arcs of 5", glass_ring(20, 7), 1.5, contiguous(20, 5)),
-            ("glass ring, arcs of 5, cold", glass_ring(20, 7), 3.0, contiguous(20, 5)),
-            ("dense glass, blocks of 6", dense_glass(18, 3), 0.5, blocks(&dense_glass(18, 3), 6)),
+            (
+                "ferro ring, arcs of 8",
+                ising::ring(24, 1.0, 0.0),
+                0.6,
+                contiguous(24, 8),
+            ),
+            (
+                "ferro ring cold",
+                ising::ring(24, 1.0, 0.0),
+                1.2,
+                contiguous(24, 8),
+            ),
+            (
+                "biased ring, arcs of 5",
+                ising::ring(20, 1.0, 0.4),
+                0.3,
+                contiguous(20, 5),
+            ),
+            (
+                "lattice 6x6, rows",
+                ising::lattice2d(6, 1.0),
+                0.2,
+                contiguous(36, 6),
+            ),
+            (
+                "lattice 6x6, rows, critical",
+                ising::lattice2d(6, 1.0),
+                0.44,
+                contiguous(36, 6),
+            ),
+            (
+                "glass ring, arcs of 5",
+                glass_ring(20, 7),
+                1.5,
+                contiguous(20, 5),
+            ),
+            (
+                "glass ring, arcs of 5, cold",
+                glass_ring(20, 7),
+                3.0,
+                contiguous(20, 5),
+            ),
+            (
+                "dense glass, blocks of 6",
+                dense_glass(18, 3),
+                0.5,
+                blocks(&dense_glass(18, 3), 6),
+            ),
         ];
         for (name, g, beta, parts) in cases {
             let exact = truth(&g, beta);
             let mf = naive_mean_field(&g, beta, 20000, 0.5).log_z;
-            let st = StructuredMeanField::new(beta).tightest(&g, &parts).expect("narrow parts");
-            assert!(st.log_z <= exact + 1e-9, "{name}: {} above ln Z {exact}", st.log_z);
+            let st = StructuredMeanField::new(beta)
+                .tightest(&g, &parts)
+                .expect("narrow parts");
+            assert!(
+                st.log_z <= exact + 1e-9,
+                "{name}: {} above ln Z {exact}",
+                st.log_z
+            );
             assert!(
                 st.log_z > mf,
                 "{name}: structured {} did NOT beat naive {mf} (exact {exact})",
@@ -696,23 +809,39 @@ mod tests {
         );
         // Both are sound whichever wins, which is what makes taking the maximum legitimate.
         assert!(cold.log_z <= exact + 1e-9 && warm.log_z <= exact + 1e-9);
-        assert!(smf.tightest(&g, &parts).expect("narrow parts").log_z >= cold.log_z.max(warm.log_z) - 1e-9);
+        assert!(
+            smf.tightest(&g, &parts).expect("narrow parts").log_z
+                >= cold.log_z.max(warm.log_z) - 1e-9
+        );
     }
 
     /// [`blocks`] and [`contiguous`] return partitions: every spin exactly once, parts within size.
     #[test]
     fn the_partition_helpers_partition() {
-        for g in [ising::lattice2d(5, 1.0), glass_ring(17, 2), random_tree(23, 6)] {
+        for g in [
+            ising::lattice2d(5, 1.0),
+            glass_ring(17, 2),
+            random_tree(23, 6),
+        ] {
             for size in [1usize, 2, 3, 7, 40] {
-                for (tag, parts) in [("blocks", blocks(&g, size)), ("contiguous", contiguous(g.n, size))] {
+                for (tag, parts) in [
+                    ("blocks", blocks(&g, size)),
+                    ("contiguous", contiguous(g.n, size)),
+                ] {
                     let mut seen = vec![0usize; g.n];
                     for part in &parts {
-                        assert!(!part.is_empty() && part.len() <= size, "{tag} {size}: bad part size");
+                        assert!(
+                            !part.is_empty() && part.len() <= size,
+                            "{tag} {size}: bad part size"
+                        );
                         for &i in part {
                             seen[i] += 1;
                         }
                     }
-                    assert!(seen.iter().all(|&c| c == 1), "{tag} {size}: not a partition");
+                    assert!(
+                        seen.iter().all(|&c| c == 1),
+                        "{tag} {size}: not a partition"
+                    );
                 }
             }
             // A `blocks` part is connected, which is the property that makes it worth keeping.

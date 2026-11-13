@@ -228,11 +228,7 @@ pub fn bsc(word: &[i8], p: f64, seed: u64) -> Vec<i8> {
         .map(|(i, &w)| {
             let u = (splitmix(seed ^ (i as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93)) >> 11) as f64
                 / (1u64 << 53) as f64;
-            if u < p {
-                -w
-            } else {
-                w
-            }
+            if u < p { -w } else { w }
         })
         .collect()
 }
@@ -609,7 +605,10 @@ mod tests {
                 "C = {c}: a bit error of zero on a noisy channel"
             );
             if c == 2 {
-                assert!(at_n < p, "C = {c}: the code with its message bits should beat the raw channel, got {at_n} against {p}");
+                assert!(
+                    at_n < p,
+                    "C = {c}: the code with its message bits should beat the raw channel, got {at_n} against {p}"
+                );
             }
         }
     }

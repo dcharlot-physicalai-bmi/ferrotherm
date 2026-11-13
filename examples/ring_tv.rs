@@ -28,7 +28,10 @@ fn hist(smp: &mut Sampler, n_samples: usize, thin: usize) -> Vec<f64> {
         }
         counts[mask] += 1;
     }
-    counts.iter().map(|&c| c as f64 / n_samples as f64).collect()
+    counts
+        .iter()
+        .map(|&c| c as f64 / n_samples as f64)
+        .collect()
 }
 
 fn main() {
@@ -50,10 +53,21 @@ fn main() {
     let tv_exact = tv(&pa, &p_exact);
     let tv_noise = tv(&pa, &pb); // two independent runs: the pure-noise floor at this sample count
 
-    println!("8-site Ising ring, beta = {beta}, J = 1, h = 0.15, {n_samples} samples (thin {thin})");
+    println!(
+        "8-site Ising ring, beta = {beta}, J = 1, h = 0.15, {n_samples} samples (thin {thin})"
+    );
     println!("  TV(sampled, exact Boltzmann) = {tv_exact:.4}");
-    println!("  TV(sampled, sampled')        = {tv_noise:.4}   <- noise floor at this sample count");
+    println!(
+        "  TV(sampled, sampled')        = {tv_noise:.4}   <- noise floor at this sample count"
+    );
     let ok = tv_exact < 1.5 * tv_noise + 0.005;
-    println!("  verdict: {}", if ok { "PASS — residual is sampling noise, not bias" } else { "FAIL — sampler is biased" });
+    println!(
+        "  verdict: {}",
+        if ok {
+            "PASS — residual is sampling noise, not bias"
+        } else {
+            "FAIL — sampler is biased"
+        }
+    );
     std::process::exit(if ok { 0 } else { 1 });
 }

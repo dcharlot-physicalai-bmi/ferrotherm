@@ -5,7 +5,7 @@
 //! alone, call it, and confirm the answer independently. Nothing here reaches for knowledge that
 //! is not reachable through the protocol itself.
 
-use ferrotherm_serve::json::{parse, write, Json};
+use ferrotherm_serve::json::{Json, parse, write};
 use ferrotherm_serve::{api, mcp};
 
 fn rpc(line: &str) -> Json {
@@ -36,9 +36,17 @@ fn discovery_alone_is_enough_to_make_a_valid_call() {
     // A model sees only tools/list. Every field it needs to construct a request must be described
     // there, including the shape of the graph argument, which is the one non-obvious input.
     let tools = rpc(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
-    let list = tools.get("result").unwrap().get("tools").unwrap().as_arr().unwrap();
+    let list = tools
+        .get("result")
+        .unwrap()
+        .get("tools")
+        .unwrap()
+        .as_arr()
+        .unwrap();
 
-    let sample = list.iter().find(|t| t.get("name").unwrap().as_str() == Some("ferrotherm_sample"));
+    let sample = list
+        .iter()
+        .find(|t| t.get("name").unwrap().as_str() == Some("ferrotherm_sample"));
     let sample = sample.expect("ferrotherm_sample must be listed");
     let graph_desc = sample
         .get("inputSchema")
@@ -53,17 +61,34 @@ fn discovery_alone_is_enough_to_make_a_valid_call() {
         .unwrap();
 
     // The description has to carry a literal example, not just prose about one.
-    assert!(graph_desc.contains("builtin"), "graph schema must show the builtin form");
-    assert!(graph_desc.contains("couplings"), "graph schema must show the explicit form");
-    assert!(graph_desc.contains("-1/+1"), "graph schema must state the state convention");
-    assert!(graph_desc.contains("energy is"), "graph schema must state the energy convention");
+    assert!(
+        graph_desc.contains("builtin"),
+        "graph schema must show the builtin form"
+    );
+    assert!(
+        graph_desc.contains("couplings"),
+        "graph schema must show the explicit form"
+    );
+    assert!(
+        graph_desc.contains("-1/+1"),
+        "graph schema must state the state convention"
+    );
+    assert!(
+        graph_desc.contains("energy is"),
+        "graph schema must state the energy convention"
+    );
 
     // Lift an example straight out of the description and use it verbatim.
-    let start = graph_desc.find("{\"builtin\":\"lattice2d\"").expect("a copyable example");
+    let start = graph_desc
+        .find("{\"builtin\":\"lattice2d\"")
+        .expect("a copyable example");
     let end = graph_desc[start..].find('}').unwrap() + start + 1;
     let lifted = &graph_desc[start..end];
-    let r = call_tool("ferrotherm_sample", &format!(r#"{{"graph":{lifted},"sweeps":5}}"#))
-        .expect("an example lifted from the schema must actually work");
+    let r = call_tool(
+        "ferrotherm_sample",
+        &format!(r#"{{"graph":{lifted},"sweeps":5}}"#),
+    )
+    .expect("an example lifted from the schema must actually work");
     assert_eq!(r.get("nodes").unwrap().as_f64(), Some(1024.0));
 }
 
@@ -72,14 +97,22 @@ fn an_agent_can_solve_a_problem_and_check_its_own_answer() {
     // The task: find the ground state of a frustrated 5-cycle. An odd antiferromagnetic ring
     // cannot be two-coloured, so exactly one bond must stay unsatisfied and the optimum is -3.
     let g = r#"{"n":5,"couplings":[[0,1,-1],[1,2,-1],[2,3,-1],[3,4,-1],[4,0,-1]]}"#;
-    let solved = call_tool("ferrotherm_anneal", &format!(r#"{{"graph":{g},"beta_max":5.0}}"#)).unwrap();
+    let solved = call_tool(
+        "ferrotherm_anneal",
+        &format!(r#"{{"graph":{g},"beta_max":5.0}}"#),
+    )
+    .unwrap();
     let best = solved.get("best_energy").unwrap().as_f64().unwrap();
     assert_eq!(best, -3.0, "frustrated 5-cycle optimum is -3");
 
     // Now the part that matters: the agent re-scores its own state with a different tool, rather
     // than believing the number the first tool handed back.
     let state = write(solved.get("state").unwrap());
-    let scored = call_tool("ferrotherm_energy", &format!(r#"{{"graph":{g},"state":{state}}}"#)).unwrap();
+    let scored = call_tool(
+        "ferrotherm_energy",
+        &format!(r#"{{"graph":{g},"state":{state}}}"#),
+    )
+    .unwrap();
     assert_eq!(
         scored.get("energy").unwrap().as_f64(),
         Some(best),
@@ -96,9 +129,20 @@ fn an_agent_can_establish_trust_before_scaling_up() {
         r#"{"graph":{"builtin":"ring","n":10,"j":1.0},"beta":0.5,"draws":30000,"thin":4}"#,
     )
     .unwrap();
-    let tv = small.get("total_variation_distance").unwrap().as_f64().unwrap();
-    let floor = small.get("expected_sampling_noise").unwrap().as_f64().unwrap();
-    assert!(tv < floor, "TV {tv} must sit under the reported {floor} noise floor");
+    let tv = small
+        .get("total_variation_distance")
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    let floor = small
+        .get("expected_sampling_noise")
+        .unwrap()
+        .as_f64()
+        .unwrap();
+    assert!(
+        tv < floor,
+        "TV {tv} must sit under the reported {floor} noise floor"
+    );
 
     // Trust established, scale to a size where enumeration is impossible.
     let big = call_tool(
@@ -107,7 +151,10 @@ fn an_agent_can_establish_trust_before_scaling_up() {
     )
     .unwrap();
     assert_eq!(big.get("nodes").unwrap().as_f64(), Some(90_000.0));
-    assert!(big.get("state").is_none(), "a 90k state should not be dumped unasked");
+    assert!(
+        big.get("state").is_none(),
+        "a 90k state should not be dumped unasked"
+    );
 }
 
 #[test]
@@ -116,12 +163,36 @@ fn every_error_message_tells_the_caller_what_to_do_next() {
     // mistake a first attempt actually makes.
     let cases: Vec<(&str, &str, &str)> = vec![
         ("ferrotherm_sample", r#"{}"#, "graph"),
-        ("ferrotherm_sample", r#"{"graph":{"builtin":"grid","l":4}}"#, "lattice2d"),
-        ("ferrotherm_sample", r#"{"graph":{"n":3,"couplings":[[0,5,1.0]]}}"#, "out of range"),
-        ("ferrotherm_sample", r#"{"graph":{"n":3,"couplings":[[0,1]]}}"#, "3 entries"),
-        ("ferrotherm_energy", r#"{"graph":{"builtin":"ring","n":4},"state":[1,-1]}"#, "4 nodes"),
-        ("ferrotherm_energy", r#"{"graph":{"builtin":"ring","n":2},"state":[1,0]}"#, "-1 or +1"),
-        ("ferrotherm_verify", r#"{"graph":{"builtin":"lattice2d","l":8}}"#, "capped at 20"),
+        (
+            "ferrotherm_sample",
+            r#"{"graph":{"builtin":"grid","l":4}}"#,
+            "lattice2d",
+        ),
+        (
+            "ferrotherm_sample",
+            r#"{"graph":{"n":3,"couplings":[[0,5,1.0]]}}"#,
+            "out of range",
+        ),
+        (
+            "ferrotherm_sample",
+            r#"{"graph":{"n":3,"couplings":[[0,1]]}}"#,
+            "3 entries",
+        ),
+        (
+            "ferrotherm_energy",
+            r#"{"graph":{"builtin":"ring","n":4},"state":[1,-1]}"#,
+            "4 nodes",
+        ),
+        (
+            "ferrotherm_energy",
+            r#"{"graph":{"builtin":"ring","n":2},"state":[1,0]}"#,
+            "-1 or +1",
+        ),
+        (
+            "ferrotherm_verify",
+            r#"{"graph":{"builtin":"lattice2d","l":8}}"#,
+            "capped at 20",
+        ),
     ];
     for (tool, args, must_say) in cases {
         let e = call_tool(tool, args).expect_err(&format!("{args} should fail"));
@@ -135,7 +206,14 @@ fn every_error_message_tells_the_caller_what_to_do_next() {
 #[test]
 fn capabilities_describes_the_server_without_recourse_to_source() {
     let c = api::capabilities();
-    for key in ["name", "version", "description", "operations", "graph_spec", "limits"] {
+    for key in [
+        "name",
+        "version",
+        "description",
+        "operations",
+        "graph_spec",
+        "limits",
+    ] {
         assert!(c.get(key).is_some(), "capabilities is missing {key}");
     }
     // Every advertised operation must be callable by the name given.
@@ -155,7 +233,7 @@ fn capabilities_describes_the_server_without_recourse_to_source() {
 #[test]
 fn the_two_transports_return_the_same_answer() {
     // The reason api:: exists as one module. If HTTP and MCP ever diverge, this catches it.
-    use ferrotherm_serve::http::{route, Request};
+    use ferrotherm_serve::http::{Request, route};
     let body = r#"{"graph":{"builtin":"ring","n":16},"beta":0.7,"sweeps":40,"seed":11}"#;
     let via_http = parse(
         &route(&Request {
@@ -168,7 +246,11 @@ fn the_two_transports_return_the_same_answer() {
     .unwrap();
     let via_mcp = call_tool("ferrotherm_sample", body).unwrap();
     for k in ["state", "energy", "magnetization", "nodes", "beta", "seed"] {
-        assert_eq!(via_http.get(k), via_mcp.get(k), "{k} differs between transports");
+        assert_eq!(
+            via_http.get(k),
+            via_mcp.get(k),
+            "{k} differs between transports"
+        );
     }
 }
 
@@ -196,7 +278,13 @@ fn an_agent_can_state_and_solve_a_problem_from_the_schema_alone() {
 
     // 2. Find it in the listing and read its schema.
     let tools = rpc(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#);
-    let list = tools.get("result").unwrap().get("tools").unwrap().as_arr().unwrap();
+    let list = tools
+        .get("result")
+        .unwrap()
+        .get("tools")
+        .unwrap()
+        .as_arr()
+        .unwrap();
     let solve = list
         .iter()
         .find(|t| t.get("name").and_then(|n| n.as_str()) == Some("ferrotherm_solve"))
@@ -207,8 +295,18 @@ fn an_agent_can_state_and_solve_a_problem_from_the_schema_alone() {
         .and_then(|p| p.as_obj())
         .expect("a schema with properties");
     let named: Vec<&str> = props.iter().map(|(k, _)| k.as_str()).collect();
-    for want in ["variables", "constraints", "objective", "tries", "penalty", "schedule"] {
-        assert!(named.contains(&want), "the schema must advertise {want:?}: {named:?}");
+    for want in [
+        "variables",
+        "constraints",
+        "objective",
+        "tries",
+        "penalty",
+        "schedule",
+    ] {
+        assert!(
+            named.contains(&want),
+            "the schema must advertise {want:?}: {named:?}"
+        );
     }
 
     // 3. Build a request from the schema's own wording and call it. Graph colouring, because the
@@ -223,7 +321,12 @@ fn an_agent_can_state_and_solve_a_problem_from_the_schema_alone() {
             "tries":12}"#,
     )
     .unwrap();
-    assert_eq!(r.get("feasible").unwrap().as_bool(), Some(true), "{}", write(&r));
+    assert_eq!(
+        r.get("feasible").unwrap().as_bool(),
+        Some(true),
+        "{}",
+        write(&r)
+    );
     let v = r.get("values").unwrap();
     let got: Vec<f64> = ["west", "middle", "east"]
         .iter()
@@ -250,7 +353,11 @@ fn an_agent_can_state_and_solve_a_problem_from_the_schema_alone() {
         r.get("values").unwrap().get("x").unwrap().as_f64().unwrap()
     };
     assert_eq!(pick("true"), 4.0, "the reward is at 4");
-    assert_eq!(pick("1"), pick("true"), "and the integer form is not the opposite request");
+    assert_eq!(
+        pick("1"),
+        pick("true"),
+        "and the integer form is not the opposite request"
+    );
 
     // 5. An infeasible answer has to be self-explaining: which constraint, and what to do.
     let r = call_tool(
@@ -263,17 +370,29 @@ fn an_agent_can_state_and_solve_a_problem_from_the_schema_alone() {
             "penalty":1,"tries":12}"#,
     )
     .unwrap();
-    assert_eq!(r.get("feasible").unwrap().as_bool(), Some(false), "{}", write(&r));
+    assert_eq!(
+        r.get("feasible").unwrap().as_bool(),
+        Some(false),
+        "{}",
+        write(&r)
+    );
     let broken = r.get("violated").unwrap().as_arr().unwrap();
     assert_eq!(broken.len(), 1, "{}", write(&r));
     // Each violation is an object now: what broke, and by how much. The magnitude is what tells a
     // near miss from a rout, and an agent deciding whether to raise the penalty or restructure the
     // model needs it.
     let first = &broken[0];
-    let what = first.get("constraint").and_then(|c| c.as_str()).unwrap_or("");
+    let what = first
+        .get("constraint")
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
     assert!(what.contains("must differ"), "it says which: {what}");
     assert!(
-        first.get("by").and_then(ferrotherm_serve::json::Json::as_f64).unwrap_or(0.0) > 0.0,
+        first
+            .get("by")
+            .and_then(ferrotherm_serve::json::Json::as_f64)
+            .unwrap_or(0.0)
+            > 0.0,
         "and by how much: {}",
         write(first)
     );
@@ -293,7 +412,12 @@ fn an_agent_can_state_and_solve_a_problem_from_the_schema_alone() {
             "penalty":500,"tries":12}"#,
     )
     .unwrap();
-    assert_eq!(fixed.get("feasible").unwrap().as_bool(), Some(true), "{}", write(&fixed));
+    assert_eq!(
+        fixed.get("feasible").unwrap().as_bool(),
+        Some(true),
+        "{}",
+        write(&fixed)
+    );
 
     // 7. A bad call must teach rather than merely refuse.
     let e = call_tool(
@@ -302,7 +426,10 @@ fn an_agent_can_state_and_solve_a_problem_from_the_schema_alone() {
             "constraints":[{"type":"fix","var":"t","value":3}]}"#,
     )
     .unwrap_err();
-    assert!(e.contains("10..=20"), "an out-of-range value names the range: {e}");
+    assert!(
+        e.contains("10..=20"),
+        "an out-of-range value names the range: {e}"
+    );
 }
 
 /// Every parameter the tools' own output tells you to reach for must be in their schemas.
@@ -312,7 +439,13 @@ fn an_agent_can_state_and_solve_a_problem_from_the_schema_alone() {
 #[test]
 fn the_remedy_a_tool_recommends_is_a_parameter_it_advertises() {
     let tools = rpc(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#);
-    let list = tools.get("result").unwrap().get("tools").unwrap().as_arr().unwrap();
+    let list = tools
+        .get("result")
+        .unwrap()
+        .get("tools")
+        .unwrap()
+        .as_arr()
+        .unwrap();
     let schema_of = |name: &str| -> Vec<String> {
         list.iter()
             .find(|t| t.get("name").and_then(|n| n.as_str()) == Some(name))

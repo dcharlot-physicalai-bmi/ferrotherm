@@ -124,7 +124,11 @@ impl Collection {
     #[must_use]
     pub fn new(quantum: f64) -> Collection {
         Collection {
-            quantum: if quantum > 0.0 { quantum } else { f64::MIN_POSITIVE },
+            quantum: if quantum > 0.0 {
+                quantum
+            } else {
+                f64::MIN_POSITIVE
+            },
             index: BTreeMap::new(),
             energy: Vec::new(),
             row: Vec::new(),
@@ -157,7 +161,11 @@ impl Collection {
     /// Attempted moves recorded from level `from` toward level `to`.
     #[must_use]
     pub fn count(&self, from: usize, to: usize) -> u64 {
-        self.row.get(from).and_then(|r| r.get(&to)).copied().unwrap_or(0)
+        self.row
+            .get(from)
+            .and_then(|r| r.get(&to))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Attempts made from level `l` — for a walk, the number of times it was there.
@@ -179,7 +187,10 @@ impl Collection {
             return Ok(i);
         }
         if self.energy.len() >= MAX_LEVELS {
-            return Err(TooManyLevels { found: self.energy.len(), cap: MAX_LEVELS });
+            return Err(TooManyLevels {
+                found: self.energy.len(),
+                cap: MAX_LEVELS,
+            });
         }
         let i = self.energy.len();
         self.index.insert(k, i);
@@ -221,7 +232,9 @@ impl Collection {
                 if b <= a {
                     continue;
                 }
-                let Some(&cba) = self.row[b].get(&a) else { continue };
+                let Some(&cba) = self.row[b].get(&a) else {
+                    continue;
+                };
                 let (cab, cba) = (cab as f64, cba as f64);
                 // ln T(a->b) - ln T(b->a), which the relation says is ln g(b) - ln g(a). The row
                 // total divided by is every attempt made from the level, moves that changed no
@@ -341,7 +354,11 @@ impl Collection {
         for v in &mut log_g {
             *v += target - total;
         }
-        Ok(Dos { energy, log_g, steps: (0..m).map(|a| self.visits(a)).sum() })
+        Ok(Dos {
+            energy,
+            log_g,
+            steps: (0..m).map(|a| self.visits(a)).sum(),
+        })
     }
 }
 
@@ -374,7 +391,15 @@ impl<'g> Tmmc<'g> {
         let mut rng = Pcg::new(seed, 0x_74D4D);
         let s: Vec<i8> = (0..g.n).map(|_| rng.spin(0.5)).collect();
         let e = g.energy(&s);
-        Tmmc { graph: g, coll: Collection::for_graph(g), bias: Vec::new(), s, e, rng, steps: 0 }
+        Tmmc {
+            graph: g,
+            coll: Collection::for_graph(g),
+            bias: Vec::new(),
+            s,
+            e,
+            rng,
+            steps: 0,
+        }
     }
 
     /// The matrix collected so far.
@@ -490,7 +515,9 @@ mod tests {
             let a = c.level_of(e).expect("a lattice spectrum has few levels");
             for i in 0..g.n {
                 let de = 2.0 * g.field(i, s) * f64::from(s[i]);
-                let b = c.level_of(e + de).expect("a lattice spectrum has few levels");
+                let b = c
+                    .level_of(e + de)
+                    .expect("a lattice spectrum has few levels");
                 c.record(a, b);
             }
         }
@@ -511,10 +538,15 @@ mod tests {
             ("4x4 lattice", crate::ising::lattice2d(4, 1.0)),
         ] {
             let want = exact_levels(&g);
-            let dos = enumerated_matrix(&g).solve(g.n).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let dos = enumerated_matrix(&g)
+                .solve(g.n)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(dos.energy.len(), want.len(), "{name}: level count");
             for ((e, got), (e_want, count)) in dos.energy.iter().zip(&dos.log_g).zip(&want) {
-                assert!((e - e_want).abs() < 1e-9, "{name}: level {e} against {e_want}");
+                assert!(
+                    (e - e_want).abs() < 1e-9,
+                    "{name}: level {e} against {e_want}"
+                );
                 let wanted = (*count as f64).ln();
                 assert!(
                     (got - wanted).abs() < 1e-9,
@@ -548,7 +580,10 @@ mod tests {
                 }
             }
         }
-        assert!(pairs > 5, "only {pairs} level pairs communicate; this fixture is degenerate");
+        assert!(
+            pairs > 5,
+            "only {pairs} level pairs communicate; this fixture is degenerate"
+        );
 
         // And the relation itself, in the form it is solved from.
         let by_energy: BTreeMap<i64, u64> = want
@@ -605,7 +640,10 @@ mod tests {
             w.step().unwrap();
         }
         let after: u64 = (0..w.coll.levels()).map(|a| w.coll.visits(a)).sum();
-        assert_eq!(after, 22_000, "a refusal is still an attempt and must still be recorded");
+        assert_eq!(
+            after, 22_000,
+            "a refusal is still an attempt and must still be recorded"
+        );
         let moved = before.iter().zip(&w.s).filter(|(a, b)| a != b).count();
         assert!(
             moved < g.n,
@@ -623,13 +661,23 @@ mod tests {
     #[test]
     fn the_sampled_density_of_states_matches_enumeration() {
         for (name, g, steps) in [
-            ("ring 12, field 0.2", crate::ising::ring(12, 1.0, 0.2), 20_000_000u64),
-            ("ring 12, no field", crate::ising::ring(12, 1.0, 0.0), 20_000_000),
+            (
+                "ring 12, field 0.2",
+                crate::ising::ring(12, 1.0, 0.2),
+                20_000_000u64,
+            ),
+            (
+                "ring 12, no field",
+                crate::ising::ring(12, 1.0, 0.0),
+                20_000_000,
+            ),
             ("4x4 lattice", crate::ising::lattice2d(4, 1.0), 20_000_000),
         ] {
             let want = exact_levels(&g);
             let mut w = Tmmc::new(&g, 7);
-            let dos = w.run(steps, 100_000).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let dos = w
+                .run(steps, 100_000)
+                .unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(
                 dos.energy.len(),
                 want.len(),
@@ -705,7 +753,9 @@ mod tests {
         let e0 = elim.ground_state(&g).unwrap().ground_energy.unwrap();
 
         let mut biased = Tmmc::new(&g, 3);
-        let with = biased.run(20_000_000, 200_000).expect("a torus has few levels");
+        let with = biased
+            .run(20_000_000, 200_000)
+            .expect("a torus has few levels");
         assert!(
             (with.energy[0] - e0).abs() < 1e-9,
             "the biased walk must reach the ground level {e0}, not stop at {}",
@@ -747,14 +797,28 @@ mod tests {
         let b = c.level_of(4.0).unwrap();
         c.record(a, a);
         c.record(b, b);
-        assert_eq!(c.solve(4).unwrap_err(), Refused::Disconnected { levels: 2, reached: 1 });
+        assert_eq!(
+            c.solve(4).unwrap_err(),
+            Refused::Disconnected {
+                levels: 2,
+                reached: 1
+            }
+        );
 
         // One-way traffic is not enough either: the reverse rate is what the relation divides by.
         c.record(a, b);
-        assert_eq!(c.solve(4).unwrap_err(), Refused::Disconnected { levels: 2, reached: 1 });
+        assert_eq!(
+            c.solve(4).unwrap_err(),
+            Refused::Disconnected {
+                levels: 2,
+                reached: 1
+            }
+        );
 
         c.record(b, a);
-        let dos = c.solve(4).expect("both directions seen, so the ratio is determined");
+        let dos = c
+            .solve(4)
+            .expect("both directions seen, so the ratio is determined");
         assert_eq!(dos.energy.len(), 2);
     }
 
@@ -804,7 +868,10 @@ mod tests {
             w.step().unwrap();
             if step % 1_000 == 0 {
                 assert!(
-                    w.coll.energies().iter().any(|&e| e.to_bits() == w.e.to_bits()),
+                    w.coll
+                        .energies()
+                        .iter()
+                        .any(|&e| e.to_bits() == w.e.to_bits()),
                     "after {step} steps the walk sits at {} which is no level exactly",
                     w.e
                 );

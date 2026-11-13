@@ -10,8 +10,8 @@
 //! module records the date they were read.
 
 use ferrotherm::access::{
-    Submission, ADVANTAGE2_SYSTEM1, ADVANTAGE2_SYSTEM2, ADVANTAGE2_SYSTEM4, ADVANTAGE_SYSTEM4,
-    ADVANTAGE_SYSTEM6,
+    ADVANTAGE_SYSTEM4, ADVANTAGE_SYSTEM6, ADVANTAGE2_SYSTEM1, ADVANTAGE2_SYSTEM2,
+    ADVANTAGE2_SYSTEM4, Submission,
 };
 use ferrotherm::ledger::{KV260_MEASURED, Z1_SPICE};
 
@@ -25,7 +25,15 @@ fn main() {
     ];
     println!(
         "{:<20} {:>6} {:>10} {:>9} {:>9} {:>11} {:>11} {:>11} {:>9}",
-        "solver", "qubits", "fixed ms", "J/read@1", "@100", "@10k", "uJ/qubit@10k", "amortise", "at 1%"
+        "solver",
+        "qubits",
+        "fixed ms",
+        "J/read@1",
+        "@100",
+        "@10k",
+        "uJ/qubit@10k",
+        "amortise",
+        "at 1%"
     );
     for q in &qpus {
         // A 20 us anneal and a readout at the middle of the solver's published range.

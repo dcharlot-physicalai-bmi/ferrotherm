@@ -39,7 +39,7 @@ use ferrotherm::certify::Finding;
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
-use ferrotherm::samples::{enumerate, Plan};
+use ferrotherm::samples::{Plan, enumerate};
 
 const DRAWS: usize = 20_000;
 const BURN: usize = 2_000;
@@ -71,7 +71,15 @@ fn main() {
     );
     println!(
         "{:>8} {:>5} {:>9} {:>10} {:>8} {:>12} {:>14} {:>10} {:>16}",
-        "model", "beta", "tau_int", "corrected", "naive", "mixed ok", "corrected|ok", "resolved", "corrected|res"
+        "model",
+        "beta",
+        "tau_int",
+        "corrected",
+        "naive",
+        "mixed ok",
+        "corrected|ok",
+        "resolved",
+        "corrected|res"
     );
 
     // (model, beta, tau, seeds that cleared both findings, coverage among them) for the summary.
@@ -79,8 +87,9 @@ fn main() {
     for (name, g) in &models {
         for beta in [0.3f64, 0.5, 0.8, 1.2] {
             let exact = enumerate(g, beta).expect("every model here enumerates");
-            let truth: Vec<f64> =
-                (0..g.n).map(|i| exact.mean_spin(i).expect("enumeration is exact").value).collect();
+            let truth: Vec<f64> = (0..g.n)
+                .map(|i| exact.mean_spin(i).expect("enumeration is exact").value)
+                .collect();
 
             let (mut hit, mut naive_hit, mut total) = (0usize, 0usize, 0usize);
             let (mut mixed, mut hit_mixed, mut total_mixed) = (0usize, 0usize, 0usize);
@@ -95,12 +104,18 @@ fn main() {
                 // 20,000 draws also reports TooFewSamples -- the TV noise floor for a 65,536-state
                 // space needs far more draws than a MARGINAL does -- and that finding is about a
                 // different question than the one this column asks.
-                let mixed_ok = !cert.findings.iter().any(|f| matches!(f, Finding::Undermixed { .. }));
+                let mixed_ok = !cert
+                    .findings
+                    .iter()
+                    .any(|f| matches!(f, Finding::Undermixed { .. }));
                 if mixed_ok {
                     mixed += 1;
                 }
                 let resolved_ok = mixed_ok
-                    && !cert.findings.iter().any(|f| matches!(f, Finding::TauLowerBound { .. }));
+                    && !cert
+                        .findings
+                        .iter()
+                        .any(|f| matches!(f, Finding::TauLowerBound { .. }));
                 if resolved_ok {
                     resolved += 1;
                 }
@@ -144,7 +159,11 @@ fn main() {
                 beta,
                 taus.iter().sum::<f64>() / taus.len() as f64,
                 resolved,
-                if total_resolved > 0 { hit_resolved as f64 / total_resolved as f64 } else { f64::NAN },
+                if total_resolved > 0 {
+                    hit_resolved as f64 / total_resolved as f64
+                } else {
+                    f64::NAN
+                },
             ));
             println!(
                 "{name:>8} {beta:>5.1} {:>9.1} {:>10} {:>8} {:>12} {:>14} {:>10} {:>16}",

@@ -176,13 +176,19 @@ pub fn export(g: &Graph) -> Export {
     let mut quadratic = Vec::new();
     if !quad.is_empty() {
         let mut rows = Vec::new();
-        for (r, _, _) in &quad { varint(&mut rows, *r); }
+        for (r, _, _) in &quad {
+            varint(&mut rows, *r);
+        }
         len_field(&mut quadratic, schema::QUAD_ROWS, &rows);
         let mut cols = Vec::new();
-        for (_, c, _) in &quad { varint(&mut cols, *c); }
+        for (_, c, _) in &quad {
+            varint(&mut cols, *c);
+        }
         len_field(&mut quadratic, schema::QUAD_COLUMNS, &cols);
         let mut vals = Vec::new();
-        for (_, _, v) in &quad { vals.extend_from_slice(&v.to_le_bytes()); }
+        for (_, _, v) in &quad {
+            vals.extend_from_slice(&v.to_le_bytes());
+        }
         len_field(&mut quadratic, schema::QUAD_VALUES, &vals);
     }
     len_field(&mut quadratic, schema::QUAD_LINEAR, &linear);
@@ -205,7 +211,11 @@ pub fn export(g: &Graph) -> Export {
     len_field(&mut out, schema::INSTANCE_OBJECTIVE, &objective);
     varint_field(&mut out, schema::INSTANCE_SENSE, schema::SENSE_MINIMIZE);
 
-    Export { bytes: out, constant, variables: n }
+    Export {
+        bytes: out,
+        constant,
+        variables: n,
+    }
 }
 
 // ---- the wire format ---------------------------------------------------------------------------
@@ -306,7 +316,12 @@ impl core::fmt::Display for ImportError {
                  encoding at any width; a general integer needs one the caller must choose, and \
                  guessing it would silently change the problem."
             ),
-            ImportError::NotBinary { id, name, lower, upper } => write!(
+            ImportError::NotBinary {
+                id,
+                name,
+                lower,
+                upper,
+            } => write!(
                 f,
                 "decision variable {id} ('{name}') is bounded [{lower}, {upper}] rather than \
                  [0, 1]. A binary variable with other bounds is a different variable."
@@ -365,17 +380,24 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
                 // Same proto3 rule throughout: absent means the default. A bound is [0, 1] here
                 // because that is what a binary variable's is, and an omitted `lower` is 0.0
                 // rather than missing.
-                let (mut id, mut name, mut kind, mut lo, mut hi) = (0u64, String::new(), 0u64, 0.0, 1.0);
+                let (mut id, mut name, mut kind, mut lo, mut hi) =
+                    (0u64, String::new(), 0u64, 0.0, 1.0);
                 for g in fields(b)? {
                     match (g.number, g.value) {
                         (schema::DV_ID, Value::Varint(v)) => id = v,
                         (schema::DV_KIND, Value::Varint(v)) => kind = v,
-                        (schema::DV_NAME, Value::Bytes(s)) => name = String::from_utf8_lossy(s).into(),
+                        (schema::DV_NAME, Value::Bytes(s)) => {
+                            name = String::from_utf8_lossy(s).into();
+                        }
                         (schema::DV_BOUND, Value::Bytes(bb)) => {
                             for h in fields(bb)? {
                                 match (h.number, h.value) {
-                                    (schema::BOUND_LOWER, Value::Fixed64(v)) => lo = f64::from_bits(v),
-                                    (schema::BOUND_UPPER, Value::Fixed64(v)) => hi = f64::from_bits(v),
+                                    (schema::BOUND_LOWER, Value::Fixed64(v)) => {
+                                        lo = f64::from_bits(v);
+                                    }
+                                    (schema::BOUND_UPPER, Value::Fixed64(v)) => {
+                                        hi = f64::from_bits(v);
+                                    }
                                     _ => {}
                                 }
                             }
@@ -406,10 +428,19 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
     }
     for (id, name, kind, lo, hi) in &vars {
         if *kind != schema::KIND_BINARY {
-            return Err(ImportError::UnsupportedKind { id: *id, name: name.clone(), kind: *kind });
+            return Err(ImportError::UnsupportedKind {
+                id: *id,
+                name: name.clone(),
+                kind: *kind,
+            });
         }
         if *lo != 0.0 || *hi != 1.0 {
-            return Err(ImportError::NotBinary { id: *id, name: name.clone(), lower: *lo, upper: *hi });
+            return Err(ImportError::NotBinary {
+                id: *id,
+                name: name.clone(),
+                lower: *lo,
+                upper: *hi,
+            });
         }
     }
     // Ids are the caller's; index by position after sorting so a sparse or shuffled id space maps
@@ -437,11 +468,19 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
                             // not, and both are legal. Packed decoding now REFUSES on a corrupt
                             // array instead of returning the prefix it managed to read.
                             (schema::QUAD_ROWS, Value::Varint(v)) => rows.push(v),
-                            (schema::QUAD_ROWS, Value::Bytes(p)) => rows.extend(crate::wire::packed_varints(p)?),
+                            (schema::QUAD_ROWS, Value::Bytes(p)) => {
+                                rows.extend(crate::wire::packed_varints(p)?);
+                            }
                             (schema::QUAD_COLUMNS, Value::Varint(v)) => cols.push(v),
-                            (schema::QUAD_COLUMNS, Value::Bytes(p)) => cols.extend(crate::wire::packed_varints(p)?),
-                            (schema::QUAD_VALUES, Value::Fixed64(v)) => vals.push(f64::from_bits(v)),
-                            (schema::QUAD_VALUES, Value::Bytes(p)) => vals.extend(crate::wire::packed_doubles(p)?),
+                            (schema::QUAD_COLUMNS, Value::Bytes(p)) => {
+                                cols.extend(crate::wire::packed_varints(p)?);
+                            }
+                            (schema::QUAD_VALUES, Value::Fixed64(v)) => {
+                                vals.push(f64::from_bits(v));
+                            }
+                            (schema::QUAD_VALUES, Value::Bytes(p)) => {
+                                vals.extend(crate::wire::packed_doubles(p)?);
+                            }
                             (schema::QUAD_LINEAR, Value::Bytes(l)) => linear_body = Some(l),
                             _ => {}
                         }
@@ -449,7 +488,9 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
                     if rows.len() != cols.len() || rows.len() != vals.len() {
                         return Err(ImportError::Malformed(format!(
                             "quadratic has {} rows, {} columns and {} values",
-                            rows.len(), cols.len(), vals.len()
+                            rows.len(),
+                            cols.len(),
+                            vals.len()
                         )));
                     }
                     for k in 0..rows.len() {
@@ -489,7 +530,9 @@ pub fn import(bytes: &[u8]) -> Result<(Graph, f64), ImportError> {
                         for g in fields(tb)? {
                             match (g.number, g.value) {
                                 (schema::TERM_ID, Value::Varint(v)) => id = v,
-                                (schema::TERM_COEFFICIENT, Value::Fixed64(v)) => c = f64::from_bits(v),
+                                (schema::TERM_COEFFICIENT, Value::Fixed64(v)) => {
+                                    c = f64::from_bits(v);
+                                }
                                 _ => {}
                             }
                         }
@@ -559,8 +602,13 @@ mod tests {
         // wrapped `end` sailed past the bounds check and the slice panicked -- and reached through
         // `ft_ommx_read` that is a non-unwinding panic, which ABORTS the caller's process. A parser
         // in a published library must not be able to kill the program that calls it.
-        let bytes = [0x0A, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01];
-        assert!(import(&bytes).is_err(), "malformed input must be an Err, never a panic");
+        let bytes = [
+            0x0A, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01,
+        ];
+        assert!(
+            import(&bytes).is_err(),
+            "malformed input must be an Err, never a panic"
+        );
     }
 
     #[test]
@@ -664,7 +712,11 @@ mod tests {
                 w => panic!("unexpected wire type {w}"),
             }
         }
-        assert_eq!(i, b.len(), "the message must consume exactly, with no trailing bytes");
+        assert_eq!(
+            i,
+            b.len(),
+            "the message must consume exactly, with no trailing bytes"
+        );
         assert_eq!(vars, g.n, "one decision variable per spin");
         assert!(saw_objective && saw_sense);
         assert_eq!(e.variables, g.n);
@@ -693,7 +745,9 @@ mod tests {
             let (back, constant) = import(&e.bytes).expect("our own export must import");
             assert_eq!(back.n, g.n);
             for mask in 0..(1u32 << g.n) {
-                let s: Vec<i8> = (0..g.n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 let want = g.energy(&s);
                 let got = back.energy(&s) + constant;
                 assert!(
@@ -752,10 +806,19 @@ mod tests {
             }
             match import(&inst) {
                 Err(ImportError::HasConstraints { count }) => {
-                    assert_eq!(count, n, "the error names how many, so a caller knows the shape");
+                    assert_eq!(
+                        count, n,
+                        "the error names how many, so a caller knows the shape"
+                    );
                     let msg = ImportError::HasConstraints { count }.to_string();
-                    assert!(msg.contains("penalty"), "must say WHY ferrotherm cannot take it: {msg}");
-                    assert!(msg.contains("RELAXATION"), "and what the old behaviour was: {msg}");
+                    assert!(
+                        msg.contains("penalty"),
+                        "must say WHY ferrotherm cannot take it: {msg}"
+                    );
+                    assert!(
+                        msg.contains("RELAXATION"),
+                        "and what the old behaviour was: {msg}"
+                    );
                 }
                 Err(e) => panic!("expected HasConstraints, got {e}"),
                 Ok(_) => panic!(
@@ -860,7 +923,9 @@ mod tests {
         let (from_unpacked, c2) = import(&unpacked).unwrap();
         assert_eq!(c1, c2);
         for mask in 0..(1u32 << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 })
+                .collect();
             assert!((from_packed.energy(&s) - from_unpacked.energy(&s)).abs() < 1e-12);
         }
     }
@@ -878,7 +943,9 @@ mod tests {
         let e = export(&g);
         let (back, leftover) = import(&e.bytes).unwrap();
         for mask in 0..(1u32 << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 })
+                .collect();
             let direct = g.energy(&s);
             let reimported = back.energy(&s) + leftover;
             assert!(

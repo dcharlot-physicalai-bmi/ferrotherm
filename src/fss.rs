@@ -192,13 +192,21 @@ impl Point {
         }
         for (index, &v) in m.iter().enumerate() {
             if !v.is_finite() {
-                return Err(Malformed::NotFinite { temperature, index, value: v });
+                return Err(Malformed::NotFinite {
+                    temperature,
+                    index,
+                    value: v,
+                });
             }
         }
         let n = m.len() as f64;
         let m2 = m.iter().map(|v| v * v).sum::<f64>() / n;
         let m4 = m.iter().map(|v| v * v * v * v).sum::<f64>() / n;
-        Ok(Point { temperature, m2, m4 })
+        Ok(Point {
+            temperature,
+            m2,
+            m4,
+        })
     }
 }
 
@@ -261,15 +269,28 @@ impl core::fmt::Display for Malformed {
                  no powers to take"
             ),
             Malformed::NoPoints { size } => {
-                write!(f, "the curve for L = {size} has no points on it, so it has no crossing with anything")
+                write!(
+                    f,
+                    "the curve for L = {size} has no points on it, so it has no crossing with anything"
+                )
             }
-            Malformed::OutOfOrder { size, index, previous, temperature } => write!(
+            Malformed::OutOfOrder {
+                size,
+                index,
+                previous,
+                temperature,
+            } => write!(
                 f,
                 "L = {size}: temperature {temperature} at index {index} does not exceed {previous} \
                  before it -- the crossing search and every interpolation walk this grid in order, \
                  and an unsorted grid answers for the wrong interval without saying so"
             ),
-            Malformed::NotAMoment { size, temperature, m2, m4 } => write!(
+            Malformed::NotAMoment {
+                size,
+                temperature,
+                m2,
+                m4,
+            } => write!(
                 f,
                 "L = {size} at T = {temperature}: <m^2> = {m2}, <m^4> = {m4}. Cauchy-Schwarz gives \
                  <m^4> >= <m^2>^2 for ANY distribution, and <m^2> > 0 for any non-degenerate one, \
@@ -277,9 +298,16 @@ impl core::fmt::Display for Malformed {
                  counts, or a fourth moment of something else"
             ),
             Malformed::NoDraws { temperature } => {
-                write!(f, "no draws at T = {temperature}, so there is nothing to take moments of")
+                write!(
+                    f,
+                    "no draws at T = {temperature}, so there is nothing to take moments of"
+                )
             }
-            Malformed::NotFinite { temperature, index, value } => write!(
+            Malformed::NotFinite {
+                temperature,
+                index,
+                value,
+            } => write!(
                 f,
                 "draw {index} at T = {temperature} has magnetisation {value}, which is not a \
                  finite number"
@@ -329,7 +357,11 @@ impl Curve {
                 return Err(Malformed::OutOfOrder {
                     size,
                     index,
-                    previous: if index > 0 { points[index - 1].temperature } else { f64::NAN },
+                    previous: if index > 0 {
+                        points[index - 1].temperature
+                    } else {
+                        f64::NAN
+                    },
                     temperature: p.temperature,
                 });
             }
@@ -354,7 +386,13 @@ impl Curve {
             u4.push(u);
             order.push(p.m2.sqrt());
         }
-        Ok(Curve { size, points, temps, u4, order })
+        Ok(Curve {
+            size,
+            points,
+            temps,
+            u4,
+            order,
+        })
     }
 
     /// The linear size `L`.
@@ -524,13 +562,22 @@ impl core::fmt::Display for NoCrossing {
                 "the windows {small:?} and {large:?} do not overlap, and a crossing outside both \
                  is a property of the straight line drawn past the last point"
             ),
-            NoCrossing::NeverCrosses { small, large, lowest, highest } => write!(
+            NoCrossing::NeverCrosses {
+                small,
+                large,
+                lowest,
+                highest,
+            } => write!(
                 f,
                 "U(L={large}) - U(L={small}) stays within [{lowest}, {highest}] across the shared \
                  window, all of one sign: these curves are ordered by size everywhere measured and \
                  do not meet. That is what a model with no finite-temperature transition looks like"
             ),
-            NoCrossing::Ambiguous { small, large, temperatures } => write!(
+            NoCrossing::Ambiguous {
+                small,
+                large,
+                temperatures,
+            } => write!(
                 f,
                 "U(L={large}) - U(L={small}) changes sign {} times, at {temperatures:?}: two curves \
                  meeting repeatedly in one window is noise or a grid too coarse to resolve it, and \
@@ -559,7 +606,10 @@ pub fn crossings(a: &Curve, b: &Curve) -> Result<Vec<Crossing>, NoCrossing> {
     let lo = slo.max(llo);
     let hi = shi.min(lhi);
     if !(hi > lo) {
-        return Err(NoCrossing::Disjoint { small: (slo, shi), large: (llo, lhi) });
+        return Err(NoCrossing::Disjoint {
+            small: (slo, shi),
+            large: (llo, lhi),
+        });
     }
 
     // Nodes: every breakpoint of either curve inside the window, plus the two ends. Between two
@@ -589,7 +639,12 @@ pub fn crossings(a: &Curve, b: &Curve) -> Result<Vec<Crossing>, NoCrossing> {
             // Unreachable: `t` is in `[lo, hi]`, which is inside both grids. A shared window that
             // an interpolant declines is a disjoint window, and is reported as one rather than
             // filled in with a number.
-            _ => return Err(NoCrossing::Disjoint { small: (slo, shi), large: (llo, lhi) }),
+            _ => {
+                return Err(NoCrossing::Disjoint {
+                    small: (slo, shi),
+                    large: (llo, lhi),
+                });
+            }
         }
     }
 
@@ -603,13 +658,18 @@ pub fn crossings(a: &Curve, b: &Curve) -> Result<Vec<Crossing>, NoCrossing> {
             // held against rounding, not a repair of an out-of-range answer.
             let f = (d0 / (d0 - d1)).clamp(0.0, 1.0);
             let t = nodes[k] + f * (nodes[k + 1] - nodes[k]);
-            let u = 0.5
-                * ((us[k] + f * (us[k + 1] - us[k])) + (ul[k] + f * (ul[k + 1] - ul[k])));
+            let u = 0.5 * ((us[k] + f * (us[k + 1] - us[k])) + (ul[k] + f * (ul[k + 1] - ul[k])));
             (t, u, (nodes[k], nodes[k + 1]))
         } else {
             continue;
         };
-        out.push(Crossing { small: small.size, large: large.size, temperature: t, u4, bracket });
+        out.push(Crossing {
+            small: small.size,
+            large: large.size,
+            temperature: t,
+            u4,
+            bracket,
+        });
     }
     let last = nodes.len() - 1;
     if ul[last] - us[last] == 0.0 {
@@ -686,7 +746,9 @@ pub struct Transition {
 /// here rather than a number.
 pub fn critical_temperature(curves: &[Curve]) -> Result<Transition, NoCrossing> {
     if curves.len() < 2 {
-        return Err(NoCrossing::TooFewSizes { sizes: curves.len() });
+        return Err(NoCrossing::TooFewSizes {
+            sizes: curves.len(),
+        });
     }
     let mut sizes: Vec<usize> = curves.iter().map(Curve::size).collect();
     sizes.sort_unstable();
@@ -725,7 +787,9 @@ pub fn critical_temperature(curves: &[Curve]) -> Result<Transition, NoCrossing> 
         // that is not in `pairs` is in `last_error`, so the `unwrap_or` arm is unreachable rather
         // than a default standing in for a missing reason. `order` runs smallest pair to largest,
         // so the error carried here is the LARGEST pair's, which is the informative one.
-        return Err(last_error.unwrap_or(NoCrossing::TooFewSizes { sizes: curves.len() }));
+        return Err(last_error.unwrap_or(NoCrossing::TooFewSizes {
+            sizes: curves.len(),
+        }));
     };
 
     let n = pairs.len() as f64;
@@ -734,9 +798,21 @@ pub fn critical_temperature(curves: &[Curve]) -> Result<Transition, NoCrossing> 
     let spread = if pairs.len() < 2 {
         0.0
     } else {
-        (pairs.iter().map(|c| (c.temperature - t_c).powi(2)).sum::<f64>() / (n - 1.0)).sqrt()
+        (pairs
+            .iter()
+            .map(|c| (c.temperature - t_c).powi(2))
+            .sum::<f64>()
+            / (n - 1.0))
+            .sqrt()
     };
-    Ok(Transition { t_c, spread, u_star, largest, pairs, uncrossed })
+    Ok(Transition {
+        t_c,
+        spread,
+        u_star,
+        largest,
+        pairs,
+        uncrossed,
+    })
 }
 
 /// The three numbers a collapse is a claim about.
@@ -756,7 +832,11 @@ impl Scaling {
     /// Onsager (1944) for `T_c` and `ν`; Yang (1952) for `β`.
     #[must_use]
     pub fn ising_2d() -> Scaling {
-        Scaling { t_c: ising_2d_tc(), nu: 1.0, beta: 0.125 }
+        Scaling {
+            t_c: ising_2d_tc(),
+            nu: 1.0,
+            beta: 0.125,
+        }
     }
 
     /// The susceptibility exponent `γ`, from `ν` and `β` by hyperscaling: `γ = d·ν − 2β`.
@@ -909,7 +989,11 @@ pub fn collapse(
     for c in curves {
         let (xs, ys) = axes(c, p, what);
         for (k, &t) in c.temps.iter().enumerate() {
-            out.push(Scaled { size: c.size, x: (t - p.t_c) * xs, y: ys[k] });
+            out.push(Scaled {
+                size: c.size,
+                x: (t - p.t_c) * xs,
+                y: ys[k],
+            });
         }
     }
     Ok(out)
@@ -935,7 +1019,9 @@ fn axes(c: &Curve, p: Scaling, what: Observable) -> (f64, Vec<f64>) {
 /// DISTINCT sizes, and three finite parameters with a positive `nu`.
 fn check(curves: &[Curve], p: Scaling) -> Result<(), CollapseError> {
     if curves.len() < 2 {
-        return Err(CollapseError::TooFewSizes { sizes: curves.len() });
+        return Err(CollapseError::TooFewSizes {
+            sizes: curves.len(),
+        });
     }
     let mut sizes: Vec<usize> = curves.iter().map(Curve::size).collect();
     sizes.sort_unstable();
@@ -945,7 +1031,11 @@ fn check(curves: &[Curve], p: Scaling) -> Result<(), CollapseError> {
         }
     }
     if !p.t_c.is_finite() || !p.nu.is_finite() || !p.beta.is_finite() {
-        return Err(CollapseError::NotFinite { t_c: p.t_c, nu: p.nu, beta: p.beta });
+        return Err(CollapseError::NotFinite {
+            t_c: p.t_c,
+            nu: p.nu,
+            beta: p.beta,
+        });
     }
     if !(p.nu > 0.0) {
         return Err(CollapseError::NonPositiveNu { nu: p.nu });
@@ -1030,9 +1120,15 @@ pub fn collapse_residual(
     let num = round::sum_up(&misfit);
     let den = round::sum_down(&spread);
     if !(den > 0.0) {
-        return Err(CollapseError::NoSpread { covered: used.len() });
+        return Err(CollapseError::NoSpread {
+            covered: used.len(),
+        });
     }
-    Ok(Quality { residual: num / den, covered: used.len(), skipped })
+    Ok(Quality {
+        residual: num / den,
+        covered: used.len(),
+        skipped,
+    })
 }
 
 /// How hard to look for the best collapse.
@@ -1152,7 +1248,11 @@ pub fn fit_collapse_with(
             return f64::INFINITY;
         }
         let nu = 1.0 / v[1];
-        let s = Scaling { t_c: v[0], nu, beta: v[2] * nu };
+        let s = Scaling {
+            t_c: v[0],
+            nu,
+            beta: v[2] * nu,
+        };
         collapse_residual(curves, s, what).map_or(f64::INFINITY, |q| q.residual)
     };
 
@@ -1238,7 +1338,11 @@ mod tests {
             m2 += w * m * m;
             m4 += w * m * m * m * m;
         }
-        Point { temperature: t, m2, m4 }
+        Point {
+            temperature: t,
+            m2,
+            m4,
+        }
     }
 
     /// Exact moments on the periodic `L × L` Ising lattice by ROW TRANSFER MATRIX, which reaches
@@ -1292,7 +1396,13 @@ mod tests {
         for a0 in 0..rows {
             cur.fill([0.0; 5]);
             let (m0, w0) = (mu[a0], w[a0] * scale);
-            cur[a0] = [w0, w0 * m0, w0 * m0 * m0, w0 * m0 * m0 * m0, w0 * m0 * m0 * m0 * m0];
+            cur[a0] = [
+                w0,
+                w0 * m0,
+                w0 * m0 * m0,
+                w0 * m0 * m0 * m0,
+                w0 * m0 * m0 * m0 * m0,
+            ];
             for _ in 1..l {
                 next.fill([0.0; 5]);
                 for c in 0..rows {
@@ -1327,7 +1437,11 @@ mod tests {
             }
         }
         let n = (l * l) as f64;
-        Point { temperature: t, m2: z2 / z / (n * n), m4: z4 / z / (n * n * n * n) }
+        Point {
+            temperature: t,
+            m2: z2 / z / (n * n),
+            m4: z4 / z / (n * n * n * n),
+        }
     }
 
     /// The temperature grid the exact curves are measured on: 21 points at 0.02 through the
@@ -1403,11 +1517,17 @@ mod tests {
                 .map(|mask| (2.0 * f64::from(mask.count_ones()) - n as f64) / n as f64)
                 .collect();
             let q = Point::from_magnetisations(1.234, &ms).unwrap();
-            assert!((binder(q.m2, q.m4).unwrap() - want).abs() < 1e-12, "N={n} from draws");
+            assert!(
+                (binder(q.m2, q.m4).unwrap() - want).abs() < 1e-12,
+                "N={n} from draws"
+            );
         }
         // Cauchy-Schwarz: no distribution whatever exceeds the ordered limit, and a two-valued
         // m attains it. <m^4> = <m^2>^2 is exactly the equality case.
-        assert!((binder(0.4, 0.16).unwrap() - 2.0 / 3.0).abs() < 1e-15, "two-valued m attains it");
+        assert!(
+            (binder(0.4, 0.16).unwrap() - 2.0 / 3.0).abs() < 1e-15,
+            "two-valued m attains it"
+        );
         // A degenerate second moment is an absent measurement, not a large cumulant.
         assert_eq!(binder(0.0, 0.0), None);
         assert_eq!(binder(-1.0, 1.0), None);
@@ -1448,10 +1568,16 @@ mod tests {
                 (ordered - 2.0 / 3.0).abs() < 2e-3,
                 "seed {seed}: ordered U_4 = {ordered}, limit 2/3"
             );
-            assert!(ordered <= 2.0 / 3.0, "seed {seed}: {ordered} is above the Cauchy-Schwarz cap");
+            assert!(
+                ordered <= 2.0 / 3.0,
+                "seed {seed}: {ordered} is above the Cauchy-Schwarz cap"
+            );
 
             let hot = run(6.0, seed);
-            assert!(hot > 0.0 && hot < 0.08, "seed {seed}: disordered U_4 = {hot}, limit 0");
+            assert!(
+                hot > 0.0 && hot < 0.08,
+                "seed {seed}: disordered U_4 = {hot}, limit 0"
+            );
             // ASYMMETRIC: the two limits must be told apart, not merely both be "close to
             // something". A sampler stuck in one phase would put both on the same side.
             assert!(
@@ -1489,7 +1615,10 @@ mod tests {
     fn the_binder_crossing_of_exact_lattices_converges_on_the_onsager_temperature() {
         let curves = exact_curves();
         let tc = ising_2d_tc();
-        assert!((tc - 2.269_185_314_213_022).abs() < 1e-14, "Onsager's own number: {tc}");
+        assert!(
+            (tc - 2.269_185_314_213_022).abs() < 1e-14,
+            "Onsager's own number: {tc}"
+        );
 
         let mut previous = f64::INFINITY;
         let mut previous_u = f64::INFINITY;
@@ -1497,8 +1626,19 @@ mod tests {
             let c = crossing(&curves[k], &curves[k + 1]).unwrap();
             let err = (c.temperature - tc) / tc;
             assert_eq!((c.small, c.large), (k + 3, k + 4));
-            assert!(err < 0.0, "({},{}) crossed ABOVE T_c at {}", c.small, c.large, c.temperature);
-            assert!(err.abs() < 0.05, "({},{}) is {err:+.4} from T_c", c.small, c.large);
+            assert!(
+                err < 0.0,
+                "({},{}) crossed ABOVE T_c at {}",
+                c.small,
+                c.large,
+                c.temperature
+            );
+            assert!(
+                err.abs() < 0.05,
+                "({},{}) is {err:+.4} from T_c",
+                c.small,
+                c.large
+            );
             assert!(
                 err.abs() < previous,
                 "({},{}) at {err:+.5} is no closer to T_c than the pair below it ({previous:+.5})",
@@ -1508,9 +1648,19 @@ mod tests {
             previous = err.abs();
             // The crossing is bracketed by two GRID points, and the interpolated value is inside.
             assert!(c.bracket.0 <= c.temperature && c.temperature <= c.bracket.1);
-            assert!(c.bracket.1 - c.bracket.0 <= 0.0201, "bracket {:?}", c.bracket);
+            assert!(
+                c.bracket.1 - c.bracket.0 <= 0.0201,
+                "bracket {:?}",
+                c.bracket
+            );
             // Universal U*, drifting DOWN onto 0.6107 and, like the temperature, monotonically.
-            assert!((c.u4 - 0.6107).abs() < 0.02, "({},{}) U* = {}", c.small, c.large, c.u4);
+            assert!(
+                (c.u4 - 0.6107).abs() < 0.02,
+                "({},{}) U* = {}",
+                c.small,
+                c.large,
+                c.u4
+            );
             assert!(
                 c.u4 > 0.6107 && c.u4 < previous_u,
                 "({},{}) U* = {} is not between 0.6107 and the pair below it ({previous_u})",
@@ -1520,18 +1670,37 @@ mod tests {
             );
             previous_u = c.u4;
         }
-        assert!(previous_u - 0.6107 < 0.009, "the largest pair's U* is {previous_u}");
-        assert!(previous < 0.012, "the largest pair is {previous:+.5} from T_c");
+        assert!(
+            previous_u - 0.6107 < 0.009,
+            "the largest pair's U* is {previous_u}"
+        );
+        assert!(
+            previous < 0.012,
+            "the largest pair is {previous:+.5} from T_c"
+        );
 
         let t = critical_temperature(curves).unwrap();
         assert_eq!(t.pairs.len(), 10, "every pair of five sizes");
         assert!(t.uncrossed.is_empty());
         assert_eq!((t.largest.small, t.largest.large), (6, 7));
-        assert!((t.largest.temperature - 2.244_747).abs() < 1e-5, "{:?}", t.largest);
+        assert!(
+            (t.largest.temperature - 2.244_747).abs() < 1e-5,
+            "{:?}",
+            t.largest
+        );
         // The mean over pairs is DRAGGED DOWN by the small ones, and the spread says so. This is
         // the number not to quote, and the field says so too.
-        assert!(t.t_c < t.largest.temperature, "{} against {}", t.t_c, t.largest.temperature);
-        assert!(t.spread > 0.02, "the pairs disagree by {}, which is the drift", t.spread);
+        assert!(
+            t.t_c < t.largest.temperature,
+            "{} against {}",
+            t.t_c,
+            t.largest.temperature
+        );
+        assert!(
+            t.spread > 0.02,
+            "the pairs disagree by {}, which is the drift",
+            t.spread
+        );
     }
 
     /// WHY THE TOLERANCES ARE WHAT THEY ARE, measured with no fitting in it at all.
@@ -1568,7 +1737,10 @@ mod tests {
             let u = binder(here.m2, here.m4).unwrap();
             let (up, dn) = (transfer_point(l, tc + d), transfer_point(l, tc - d));
             let slope = (binder(up.m2, up.m4).unwrap() - binder(dn.m2, dn.m4).unwrap()) / (2.0 * d);
-            assert!(slope < 0.0, "L={l}: U_4 must fall with temperature, not rise ({slope})");
+            assert!(
+                slope < 0.0,
+                "L={l}: U_4 must fall with temperature, not rise ({slope})"
+            );
             at_tc.push(u);
             if let Some((pl, pm, ps)) = previous {
                 let r = (l as f64 / pl).ln();
@@ -1591,10 +1763,16 @@ mod tests {
             assert!(w[1] < w[0], "U_4(T_c) must fall with size: {at_tc:?}");
         }
         let last = at_tc[at_tc.len() - 1];
-        assert!(last > 0.6107 && last - 0.6107 < 0.004, "U_4(T_c) at L = 7 is {last}");
+        assert!(
+            last > 0.6107 && last - 0.6107 < 0.004,
+            "U_4(T_c) at L = 7 is {last}"
+        );
         // ASYMMETRIC: the exponents are still MOVING, so a claim that L = 7 is converged is false.
         // The gap at 6 -> 7 must be a real fraction of the gap at 3 -> 4, not a rounding artefact.
-        assert!((0.125 - 0.1198f64).abs() > 0.003, "the L=7 data is not at the limit");
+        assert!(
+            (0.125 - 0.1198f64).abs() > 0.003,
+            "the L=7 data is not at the limit"
+        );
     }
 
     /// The exponents, against Onsager's `ν = 1` and Yang's `β = 1/8`, from lattices of side 4 to 7.
@@ -1617,15 +1795,28 @@ mod tests {
     #[test]
     fn the_exponents_come_out_near_onsagers_from_exact_lattices_of_side_four_to_seven() {
         let curves: Vec<Curve> = exact_curves()[1..].to_vec();
-        assert_eq!(curves.iter().map(Curve::size).collect::<Vec<_>>(), vec![4, 5, 6, 7]);
+        assert_eq!(
+            curves.iter().map(Curve::size).collect::<Vec<_>>(),
+            vec![4, 5, 6, 7]
+        );
 
         // Stage one: T_c and nu, from a collapse that contains nothing else.
-        let start = Scaling { t_c: 2.24, nu: 1.3, beta: 0.0 };
+        let start = Scaling {
+            t_c: 2.24,
+            nu: 1.3,
+            beta: 0.0,
+        };
         let cum = fit_collapse(&curves, start, Observable::Cumulant).unwrap();
         assert!(cum.converged);
         assert_eq!(cum.observable, Observable::Cumulant);
-        assert_eq!(cum.scaling.beta, 0.0, "the cumulant collapse must not touch beta");
-        assert!(cum.residual < cum.start_residual, "the fit must go somewhere");
+        assert_eq!(
+            cum.scaling.beta, 0.0,
+            "the cumulant collapse must not touch beta"
+        );
+        assert!(
+            cum.residual < cum.start_residual,
+            "the fit must go somewhere"
+        );
         assert!(
             (cum.scaling.nu - 1.0).abs() < 0.08,
             "nu = {} against Onsager's 1",
@@ -1638,15 +1829,27 @@ mod tests {
         );
 
         // Stage two: beta alone, at the EXACT T_c and nu, which is what the tolerance is about.
-        let pinned = FitOptions { step_t_c: 0.0, step_inv_nu: 0.0, ..FitOptions::default() };
+        let pinned = FitOptions {
+            step_t_c: 0.0,
+            step_inv_nu: 0.0,
+            ..FitOptions::default()
+        };
         let b = fit_collapse_with(
             &curves,
-            Scaling { t_c: ising_2d_tc(), nu: 1.0, beta: 0.3 },
+            Scaling {
+                t_c: ising_2d_tc(),
+                nu: 1.0,
+                beta: 0.3,
+            },
             Observable::OrderParameter,
             pinned,
         )
         .unwrap();
-        assert_eq!(b.scaling.t_c, ising_2d_tc(), "a zero step pins its coordinate");
+        assert_eq!(
+            b.scaling.t_c,
+            ising_2d_tc(),
+            "a zero step pins its coordinate"
+        );
         assert_eq!(b.scaling.nu, 1.0);
         assert!(
             (b.scaling.beta - 0.125).abs() < 0.125 * 0.08,
@@ -1654,7 +1857,12 @@ mod tests {
             b.scaling.beta
         );
         // And it is a real minimum rather than the start: 0.3 was a long way off.
-        assert!(b.residual < 0.2 * b.start_residual, "{} against {}", b.residual, b.start_residual);
+        assert!(
+            b.residual < 0.2 * b.start_residual,
+            "{} against {}",
+            b.residual,
+            b.start_residual
+        );
     }
 
     /// ASYMMETRIC, and the finding is that ONE of these two collapses works at this size.
@@ -1675,11 +1883,19 @@ mod tests {
     #[test]
     fn the_cumulant_collapse_recovers_nu_where_the_order_parameter_collapse_cannot() {
         let curves: Vec<Curve> = exact_curves()[1..].to_vec();
-        let start = Scaling { t_c: ising_2d_tc(), nu: 1.0, beta: 0.125 };
+        let start = Scaling {
+            t_c: ising_2d_tc(),
+            nu: 1.0,
+            beta: 0.125,
+        };
         let cum = fit_collapse(&curves, start, Observable::Cumulant).unwrap();
         let ord = fit_collapse(&curves, start, Observable::OrderParameter).unwrap();
 
-        assert!((cum.scaling.nu - 1.0).abs() < 0.08, "cumulant nu = {}", cum.scaling.nu);
+        assert!(
+            (cum.scaling.nu - 1.0).abs() < 0.08,
+            "cumulant nu = {}",
+            cum.scaling.nu
+        );
         assert!(
             (ord.scaling.nu - 1.0).abs() > 0.15,
             "the order-parameter fit is supposed to MISS here; it gave nu = {}",
@@ -1687,10 +1903,9 @@ mod tests {
         );
         // Same objective, two parameter sets: the fit's is far better than Onsager's own, which is
         // what says the search did its job and the DATA prefers the wrong exponent.
-        let at_exact =
-            collapse_residual(&curves, Scaling::ising_2d(), Observable::OrderParameter)
-                .unwrap()
-                .residual;
+        let at_exact = collapse_residual(&curves, Scaling::ising_2d(), Observable::OrderParameter)
+            .unwrap()
+            .residual;
         assert!(
             ord.residual < 0.1 * at_exact,
             "the miss must be the data's and not the search's: S = {} at nu = {}, and {at_exact} \
@@ -1700,13 +1915,26 @@ mod tests {
         );
         // The cumulant fit beats Onsager's exponents on ITS objective too -- same corrections to
         // scaling, one tenth the damage.
-        let cum_at_exact =
-            collapse_residual(&curves, Scaling::ising_2d(), Observable::Cumulant).unwrap().residual;
-        assert!(cum.residual < 0.1 * cum_at_exact, "{} against {cum_at_exact}", cum.residual);
+        let cum_at_exact = collapse_residual(&curves, Scaling::ising_2d(), Observable::Cumulant)
+            .unwrap()
+            .residual;
+        assert!(
+            cum.residual < 0.1 * cum_at_exact,
+            "{} against {cum_at_exact}",
+            cum.residual
+        );
         // Robust to where it starts: the cumulant basin is one basin.
         for far in [
-            Scaling { t_c: 2.10, nu: 0.6, beta: 0.4 },
-            Scaling { t_c: 2.40, nu: 1.6, beta: 0.05 },
+            Scaling {
+                t_c: 2.10,
+                nu: 0.6,
+                beta: 0.4,
+            },
+            Scaling {
+                t_c: 2.40,
+                nu: 1.6,
+                beta: 0.05,
+            },
         ] {
             let again = fit_collapse(&curves, far, Observable::Cumulant).unwrap();
             assert!(
@@ -1741,9 +1969,17 @@ mod tests {
             .collect();
 
         match crossing(&chains[0], &chains[2]) {
-            Err(NoCrossing::NeverCrosses { small, large, lowest, highest }) => {
+            Err(NoCrossing::NeverCrosses {
+                small,
+                large,
+                lowest,
+                highest,
+            }) => {
                 assert_eq!((small, large), (8, 16));
-                assert!(highest < 0.0, "the difference must keep ONE sign: [{lowest}, {highest}]");
+                assert!(
+                    highest < 0.0,
+                    "the difference must keep ONE sign: [{lowest}, {highest}]"
+                );
                 assert!(lowest > -0.25, "[{lowest}, {highest}]");
             }
             other => panic!("a chain has no finite-temperature transition, but: {other:?}"),
@@ -1754,7 +1990,9 @@ mod tests {
             "the aggregate must refuse too, not average nothing: {refused:?}"
         );
         assert!(
-            refused.to_string().contains("no finite-temperature transition"),
+            refused
+                .to_string()
+                .contains("no finite-temperature transition"),
             "{refused}"
         );
 
@@ -1778,7 +2016,11 @@ mod tests {
     /// `ν' = ν`.
     #[test]
     fn an_affine_master_curve_collapses_exactly_and_the_fit_recovers_its_parameters() {
-        let truth = Scaling { t_c: 2.0, nu: 0.8, beta: 0.2 };
+        let truth = Scaling {
+            t_c: 2.0,
+            nu: 0.8,
+            beta: 0.2,
+        };
         let (a, c) = (0.5f64, -0.15f64);
         let build = |l: usize, xs: &[f64]| -> Curve {
             let lf = l as f64;
@@ -1797,37 +2039,84 @@ mod tests {
             Curve::new(l, pts).unwrap()
         };
         let curves = vec![
-            build(4, &(0..11).map(|k| -1.0 + 0.2 * k as f64).collect::<Vec<f64>>()),
-            build(6, &(0..11).map(|k| -0.95 + 0.19 * k as f64).collect::<Vec<f64>>()),
-            build(9, &(0..13).map(|k| -0.9 + 0.15 * k as f64).collect::<Vec<f64>>()),
+            build(
+                4,
+                &(0..11).map(|k| -1.0 + 0.2 * k as f64).collect::<Vec<f64>>(),
+            ),
+            build(
+                6,
+                &(0..11)
+                    .map(|k| -0.95 + 0.19 * k as f64)
+                    .collect::<Vec<f64>>(),
+            ),
+            build(
+                9,
+                &(0..13)
+                    .map(|k| -0.9 + 0.15 * k as f64)
+                    .collect::<Vec<f64>>(),
+            ),
         ];
 
         let q = collapse_residual(&curves, truth, Observable::OrderParameter).unwrap();
-        assert!(q.residual < 1e-24, "an affine master curve must collapse exactly: S = {}", q.residual);
-        assert!(q.residual >= 0.0, "a sum of squares over a spread is never negative");
+        assert!(
+            q.residual < 1e-24,
+            "an affine master curve must collapse exactly: S = {}",
+            q.residual
+        );
+        assert!(
+            q.residual >= 0.0,
+            "a sum of squares over a spread is never negative"
+        );
         assert!(q.covered >= 30 && q.skipped <= 5, "{q:?}");
 
         // ASYMMETRIC: every single-parameter perturbation is strictly worse, by orders.
         for (name, p) in [
             ("T_c", Scaling { t_c: 2.01, ..truth }),
             ("nu", Scaling { nu: 0.84, ..truth }),
-            ("beta", Scaling { beta: 0.24, ..truth }),
+            (
+                "beta",
+                Scaling {
+                    beta: 0.24,
+                    ..truth
+                },
+            ),
         ] {
-            let s = collapse_residual(&curves, p, Observable::OrderParameter).unwrap().residual;
-            assert!(s > 1e-8, "moving {name} left S at {s}, which is no penalty at all");
+            let s = collapse_residual(&curves, p, Observable::OrderParameter)
+                .unwrap()
+                .residual;
+            assert!(
+                s > 1e-8,
+                "moving {name} left S at {s}, which is no penalty at all"
+            );
         }
 
         // And the search finds its way back from a start that is wrong in all three.
         let fit = fit_collapse(
             &curves,
-            Scaling { t_c: 2.06, nu: 1.05, beta: 0.35 },
+            Scaling {
+                t_c: 2.06,
+                nu: 1.05,
+                beta: 0.35,
+            },
             Observable::OrderParameter,
         )
         .unwrap();
         assert!(fit.converged, "{fit:?}");
-        assert!((fit.scaling.t_c - 2.0).abs() < 1e-4, "T_c = {}", fit.scaling.t_c);
-        assert!((fit.scaling.nu - 0.8).abs() < 1e-3, "nu = {}", fit.scaling.nu);
-        assert!((fit.scaling.beta - 0.2).abs() < 1e-3, "beta = {}", fit.scaling.beta);
+        assert!(
+            (fit.scaling.t_c - 2.0).abs() < 1e-4,
+            "T_c = {}",
+            fit.scaling.t_c
+        );
+        assert!(
+            (fit.scaling.nu - 0.8).abs() < 1e-3,
+            "nu = {}",
+            fit.scaling.nu
+        );
+        assert!(
+            (fit.scaling.beta - 0.2).abs() < 1e-3,
+            "beta = {}",
+            fit.scaling.beta
+        );
         assert!(fit.residual < 1e-12, "S = {}", fit.residual);
     }
 
@@ -1843,7 +2132,10 @@ mod tests {
     fn the_normalised_residual_refuses_the_runaway_that_flattens_the_data() {
         let curves = exact_curves();
         let truth = Scaling::ising_2d();
-        let runaway = Scaling { beta: -5.0, ..truth };
+        let runaway = Scaling {
+            beta: -5.0,
+            ..truth
+        };
 
         let peak = |p: Scaling| {
             collapse(curves, p, Observable::OrderParameter)
@@ -1858,9 +2150,12 @@ mod tests {
             "the runaway must actually flatten the data: peak {small} against {big}"
         );
 
-        let s_true = collapse_residual(curves, truth, Observable::OrderParameter).unwrap().residual;
-        let s_away =
-            collapse_residual(curves, runaway, Observable::OrderParameter).unwrap().residual;
+        let s_true = collapse_residual(curves, truth, Observable::OrderParameter)
+            .unwrap()
+            .residual;
+        let s_away = collapse_residual(curves, runaway, Observable::OrderParameter)
+            .unwrap()
+            .residual;
         assert!(
             s_away > 10.0 * s_true,
             "the normalised residual must PUNISH the flattening: {s_away} against {s_true}"
@@ -1873,29 +2168,75 @@ mod tests {
     /// Moments no single sample can produce are refused, by name and with the numbers.
     #[test]
     fn malformed_curves_are_refused_by_name() {
-        let ok = Point { temperature: 1.0, m2: 0.5, m4: 0.3 };
+        let ok = Point {
+            temperature: 1.0,
+            m2: 0.5,
+            m4: 0.3,
+        };
         assert_eq!(Curve::new(0, vec![ok]).unwrap_err(), Malformed::ZeroSize);
-        assert_eq!(Curve::new(4, vec![]).unwrap_err(), Malformed::NoPoints { size: 4 });
+        assert_eq!(
+            Curve::new(4, vec![]).unwrap_err(),
+            Malformed::NoPoints { size: 4 }
+        );
 
         // Cauchy-Schwarz: <m^4> >= <m^2>^2 for ANY distribution. 0.2 < 0.25 is impossible.
-        let bad = Curve::new(4, vec![Point { temperature: 1.0, m2: 0.5, m4: 0.2 }]).unwrap_err();
-        assert_eq!(bad, Malformed::NotAMoment { size: 4, temperature: 1.0, m2: 0.5, m4: 0.2 });
+        let bad = Curve::new(
+            4,
+            vec![Point {
+                temperature: 1.0,
+                m2: 0.5,
+                m4: 0.2,
+            }],
+        )
+        .unwrap_err();
+        assert_eq!(
+            bad,
+            Malformed::NotAMoment {
+                size: 4,
+                temperature: 1.0,
+                m2: 0.5,
+                m4: 0.2
+            }
+        );
         assert!(bad.to_string().contains("Cauchy-Schwarz"), "{bad}");
         // A hair inside the slack is accepted; a real violation is not.
-        assert!(Curve::new(4, vec![Point { temperature: 1.0, m2: 0.5, m4: 0.25 - 1e-17 }]).is_ok());
+        assert!(
+            Curve::new(
+                4,
+                vec![Point {
+                    temperature: 1.0,
+                    m2: 0.5,
+                    m4: 0.25 - 1e-17
+                }]
+            )
+            .is_ok()
+        );
 
         // A grid that does not strictly increase.
         let flat = Curve::new(
             4,
             vec![
-                Point { temperature: 1.0, m2: 0.5, m4: 0.3 },
-                Point { temperature: 1.0, m2: 0.5, m4: 0.3 },
+                Point {
+                    temperature: 1.0,
+                    m2: 0.5,
+                    m4: 0.3,
+                },
+                Point {
+                    temperature: 1.0,
+                    m2: 0.5,
+                    m4: 0.3,
+                },
             ],
         )
         .unwrap_err();
         assert_eq!(
             flat,
-            Malformed::OutOfOrder { size: 4, index: 1, previous: 1.0, temperature: 1.0 }
+            Malformed::OutOfOrder {
+                size: 4,
+                index: 1,
+                previous: 1.0,
+                temperature: 1.0
+            }
         );
         assert!(flat.to_string().contains("wrong interval"), "{flat}");
 
@@ -1904,7 +2245,10 @@ mod tests {
             Malformed::NoDraws { temperature: 2.0 }
         );
         let nf = Point::from_magnetisations(2.0, &[0.1, f64::NAN]).unwrap_err();
-        assert!(matches!(nf, Malformed::NotFinite { index: 1, .. }), "{nf:?}");
+        assert!(
+            matches!(nf, Malformed::NotFinite { index: 1, .. }),
+            "{nf:?}"
+        );
         // Every variant is an error and prints something with the numbers in it.
         for e in [bad, flat, nf] {
             let _: &dyn core::error::Error = &e;
@@ -1921,7 +2265,11 @@ mod tests {
                 .zip(u)
                 .map(|(&t, &uu)| {
                     let m2 = 0.5;
-                    Point { temperature: t, m2, m4: 3.0 * m2 * m2 * (1.0 - uu) }
+                    Point {
+                        temperature: t,
+                        m2,
+                        m4: 3.0 * m2 * m2 * (1.0 - uu),
+                    }
                 })
                 .collect()
         };
@@ -1935,7 +2283,11 @@ mod tests {
         // interpolants read 0.55 there. Worked by hand, which is the point of a fixture this small.
         assert!((c.temperature - 1.5).abs() < 1e-12, "{c:?}");
         assert!((c.u4 - 0.55).abs() < 1e-12, "{c:?}");
-        assert_eq!(c.bracket, (1.0, 2.0), "the honest resolution is the grid interval");
+        assert_eq!(
+            c.bracket,
+            (1.0, 2.0),
+            "the honest resolution is the grid interval"
+        );
         // Order of the arguments does not change the answer.
         assert_eq!(crossing(&b, &a).unwrap(), c);
 
@@ -1944,7 +2296,10 @@ mod tests {
             NoCrossing::SameSize { size: 4 }
         );
         let far = Curve::new(8, pts(&[9.0, 10.0, 11.0], &[0.6, 0.5, 0.4])).unwrap();
-        assert!(matches!(crossing(&a, &far).unwrap_err(), NoCrossing::Disjoint { .. }));
+        assert!(matches!(
+            crossing(&a, &far).unwrap_err(),
+            NoCrossing::Disjoint { .. }
+        ));
 
         // Two sign changes in one window: a number would be a lie about the resolution.
         let wiggle = Curve::new(
@@ -1968,7 +2323,10 @@ mod tests {
             critical_temperature(&[a.clone(), b.clone(), a.clone()]).unwrap_err(),
             NoCrossing::DuplicateSize { size: 4 }
         );
-        for e in [NoCrossing::SameSize { size: 4 }, NoCrossing::TooFewSizes { sizes: 1 }] {
+        for e in [
+            NoCrossing::SameSize { size: 4 },
+            NoCrossing::TooFewSizes { sizes: 1 },
+        ] {
             let _: &dyn core::error::Error = &e;
             assert!(e.to_string().len() > 40, "{e}");
         }
@@ -1992,7 +2350,11 @@ mod tests {
             )
             .unwrap()
         };
-        let ok = Scaling { t_c: 2.0, nu: 1.0, beta: 0.1 };
+        let ok = Scaling {
+            t_c: 2.0,
+            nu: 1.0,
+            beta: 0.1,
+        };
         let cs = vec![flat(4, 0.4), flat(8, 0.4)];
 
         assert_eq!(
@@ -2000,8 +2362,12 @@ mod tests {
             CollapseError::TooFewSizes { sizes: 1 }
         );
         assert_eq!(
-            collapse_residual(&[flat(4, 0.4), flat(4, 0.3)], ok, Observable::OrderParameter)
-                .unwrap_err(),
+            collapse_residual(
+                &[flat(4, 0.4), flat(4, 0.3)],
+                ok,
+                Observable::OrderParameter
+            )
+            .unwrap_err(),
             CollapseError::DuplicateSize { size: 4 }
         );
         let neg = collapse_residual(&cs, Scaling { nu: -1.0, ..ok }, Observable::OrderParameter)
@@ -2009,14 +2375,21 @@ mod tests {
         assert_eq!(neg, CollapseError::NonPositiveNu { nu: -1.0 });
         assert!(neg.to_string().contains("wrong interval"), "{neg}");
         assert!(matches!(
-            collapse_residual(&cs, Scaling { t_c: f64::NAN, ..ok }, Observable::OrderParameter),
+            collapse_residual(
+                &cs,
+                Scaling {
+                    t_c: f64::NAN,
+                    ..ok
+                },
+                Observable::OrderParameter
+            ),
             Err(CollapseError::NotFinite { .. })
         ));
 
         // A flat order parameter with beta = 0 gives every point the same y: no spread, no
         // denominator, and NOT a perfect collapse.
-        let none = collapse_residual(&cs, Scaling { beta: 0.0, ..ok }, Observable::Cumulant)
-            .unwrap_err();
+        let none =
+            collapse_residual(&cs, Scaling { beta: 0.0, ..ok }, Observable::Cumulant).unwrap_err();
         assert!(matches!(none, CollapseError::NoSpread { .. }), "{none:?}");
         assert!(none.to_string().contains("empty data set"), "{none}");
 
@@ -2024,23 +2397,39 @@ mod tests {
         let near = Curve::new(
             4,
             (0..5)
-                .map(|k| Point { temperature: 1.0 + 0.1 * f64::from(k), m2: 0.4, m4: 0.3 })
+                .map(|k| Point {
+                    temperature: 1.0 + 0.1 * f64::from(k),
+                    m2: 0.4,
+                    m4: 0.3,
+                })
                 .collect(),
         )
         .unwrap();
         let far = Curve::new(
             8,
             (0..5)
-                .map(|k| Point { temperature: 9.0 + 0.1 * f64::from(k), m2: 0.4, m4: 0.3 })
+                .map(|k| Point {
+                    temperature: 9.0 + 0.1 * f64::from(k),
+                    m2: 0.4,
+                    m4: 0.3,
+                })
                 .collect(),
         )
         .unwrap();
         let apart = collapse_residual(
             &[near, far],
-            Scaling { t_c: 0.0, nu: 1.0, beta: 0.1 },
+            Scaling {
+                t_c: 0.0,
+                nu: 1.0,
+                beta: 0.1,
+            },
             Observable::OrderParameter,
         );
-        assert_eq!(apart, Err(CollapseError::NoOverlap { points: 10 }), "{apart:?}");
+        assert_eq!(
+            apart,
+            Err(CollapseError::NoOverlap { points: 10 }),
+            "{apart:?}"
+        );
         for e in [neg, none] {
             let _: &dyn core::error::Error = &e;
         }
@@ -2054,28 +2443,51 @@ mod tests {
     #[test]
     fn a_frozen_step_pins_its_coordinate_and_the_cumulant_never_moves_beta() {
         let curves: Vec<Curve> = exact_curves()[1..].to_vec();
-        let start = Scaling { t_c: 2.2, nu: 1.2, beta: 0.4 };
+        let start = Scaling {
+            t_c: 2.2,
+            nu: 1.2,
+            beta: 0.4,
+        };
 
-        let shouted = FitOptions { step_beta_nu: 5.0, ..FitOptions::default() };
+        let shouted = FitOptions {
+            step_beta_nu: 5.0,
+            ..FitOptions::default()
+        };
         let cum = fit_collapse_with(&curves, start, Observable::Cumulant, shouted).unwrap();
-        assert_eq!(cum.scaling.beta, 0.4, "the cumulant collapse has no beta to fit");
+        assert_eq!(
+            cum.scaling.beta, 0.4,
+            "the cumulant collapse has no beta to fit"
+        );
         assert_eq!(cum.observable, Observable::Cumulant);
-        assert!(cum.scaling.nu != start.nu && cum.scaling.t_c != start.t_c, "{:?}", cum.scaling);
+        assert!(
+            cum.scaling.nu != start.nu && cum.scaling.t_c != start.t_c,
+            "{:?}",
+            cum.scaling
+        );
         // Identical to the run that never mentioned a beta step: the axis really is unused.
-        let quiet = FitOptions { step_beta_nu: 0.0, ..FitOptions::default() };
+        let quiet = FitOptions {
+            step_beta_nu: 0.0,
+            ..FitOptions::default()
+        };
         let same = fit_collapse_with(&curves, start, Observable::Cumulant, quiet).unwrap();
         assert_eq!(same.scaling, cum.scaling);
         assert_eq!(same.evaluations, cum.evaluations);
 
         // A zero step on the order parameter pins that coordinate and nothing else.
-        let pinned = FitOptions { step_t_c: 0.0, ..FitOptions::default() };
+        let pinned = FitOptions {
+            step_t_c: 0.0,
+            ..FitOptions::default()
+        };
         let f = fit_collapse_with(&curves, start, Observable::OrderParameter, pinned).unwrap();
         assert_eq!(f.scaling.t_c, 2.2);
         assert!(f.scaling.nu != start.nu, "{:?}", f.scaling);
         assert!(f.residual <= f.start_residual);
 
         // An evaluation cap is reported, not silently treated as convergence.
-        let capped = FitOptions { max_evaluations: 12, ..FitOptions::default() };
+        let capped = FitOptions {
+            max_evaluations: 12,
+            ..FitOptions::default()
+        };
         let short = fit_collapse_with(&curves, start, Observable::Cumulant, capped).unwrap();
         assert!(!short.converged, "{short:?}");
         assert!(short.evaluations <= 12 + 6, "{}", short.evaluations);
@@ -2107,13 +2519,24 @@ mod tests {
         let s = Scaling::ising_2d();
         assert_eq!(s.gamma(2) / s.nu, 2.0 - 2.0 * s.beta / s.nu);
         // Mean field (nu = 1/2, beta = 1/2) at its own upper critical dimension gives gamma = 1.
-        assert_eq!(Scaling { t_c: 1.0, nu: 0.5, beta: 0.5 }.gamma(4), 1.0);
+        assert_eq!(
+            Scaling {
+                t_c: 1.0,
+                nu: 0.5,
+                beta: 0.5
+            }
+            .gamma(4),
+            1.0
+        );
 
         // And through the two-stage fit of the exact lattices.
         let curves: Vec<Curve> = exact_curves()[1..].to_vec();
-        let cum =
-            fit_collapse(&curves, Scaling::ising_2d(), Observable::Cumulant).unwrap();
-        let pinned = FitOptions { step_t_c: 0.0, step_inv_nu: 0.0, ..FitOptions::default() };
+        let cum = fit_collapse(&curves, Scaling::ising_2d(), Observable::Cumulant).unwrap();
+        let pinned = FitOptions {
+            step_t_c: 0.0,
+            step_inv_nu: 0.0,
+            ..FitOptions::default()
+        };
         let both =
             fit_collapse_with(&curves, cum.scaling, Observable::OrderParameter, pinned).unwrap();
         let g = both.scaling.gamma(2);
@@ -2126,7 +2549,10 @@ mod tests {
         // The errors ADD in absolute terms -- an identity, since gamma is linear in both -- and
         // here they push the same way rather than cancelling.
         let (d_nu, d_beta) = (both.scaling.nu - 1.0, both.scaling.beta - 0.125);
-        assert!(d_nu > 0.0 && d_beta < 0.0, "both push gamma up: {d_nu}, {d_beta}");
+        assert!(
+            d_nu > 0.0 && d_beta < 0.0,
+            "both push gamma up: {d_nu}, {d_beta}"
+        );
         assert!(
             ((g - 1.75) - (2.0 * d_nu - 2.0 * d_beta)).abs() < 1e-12,
             "gamma - 7/4 must be exactly 2(nu-1) - 2(beta-1/8): {} against {}",
@@ -2139,8 +2565,14 @@ mod tests {
         // small absolute one. A relative error is not a quantity that propagates.
         let e_gamma = (g - 1.75).abs() / 1.75;
         let (e_nu, e_beta) = (d_nu.abs(), d_beta.abs() / 0.125);
-        assert!(e_gamma > e_nu, "gamma {e_gamma} should be worse than nu {e_nu}");
-        assert!(e_gamma < e_beta, "gamma {e_gamma} should be better than beta {e_beta}");
+        assert!(
+            e_gamma > e_nu,
+            "gamma {e_gamma} should be worse than nu {e_nu}"
+        );
+        assert!(
+            e_gamma < e_beta,
+            "gamma {e_gamma} should be better than beta {e_beta}"
+        );
     }
 
     /// The scaled coordinates themselves: `x = 0` at `T_c` for every size whatever `ν` is, and the
@@ -2159,7 +2591,11 @@ mod tests {
                 Curve::new(
                     l,
                     g.iter()
-                        .map(|&t| Point { temperature: t, m2: 0.4, m4: 0.3 })
+                        .map(|&t| Point {
+                            temperature: t,
+                            m2: 0.4,
+                            m4: 0.3,
+                        })
                         .collect(),
                 )
                 .unwrap()
@@ -2170,7 +2606,10 @@ mod tests {
         assert_eq!(pts.len(), 6);
         for p in pts.iter().filter(|p| p.size == 4) {
             // y = sqrt(0.4) * 4^(1/8) for every point of this size.
-            assert!((p.y - 0.4f64.sqrt() * 4f64.powf(0.125)).abs() < 1e-15, "{p:?}");
+            assert!(
+                (p.y - 0.4f64.sqrt() * 4f64.powf(0.125)).abs() < 1e-15,
+                "{p:?}"
+            );
         }
         let at_tc: Vec<&Scaled> = pts.iter().filter(|p| p.x.abs() < 1e-15).collect();
         assert_eq!(at_tc.len(), 2, "both sizes sit at x = 0 when T = T_c");
@@ -2178,11 +2617,18 @@ mod tests {
 
         // The cumulant carries no power of L at all, so the two sizes land on top of each other.
         let cu = collapse(&curves, exact, Observable::Cumulant).unwrap();
-        let tops: Vec<f64> = cu.iter().filter(|p| p.x.abs() < 1e-15).map(|p| p.y).collect();
+        let tops: Vec<f64> = cu
+            .iter()
+            .filter(|p| p.x.abs() < 1e-15)
+            .map(|p| p.y)
+            .collect();
         assert_eq!(tops[0], tops[1], "the cumulant is dimensionless");
         // And x stretches with L^(1/nu): at nu = 1 the ratio of the two sizes' x is 9/4.
         let far = |size: usize, v: &[Scaled]| {
-            v.iter().filter(|p| p.size == size).map(|p| p.x).fold(0.0f64, f64::max)
+            v.iter()
+                .filter(|p| p.size == size)
+                .map(|p| p.x)
+                .fold(0.0f64, f64::max)
         };
         assert!((far(9, &cu) / far(4, &cu) - 9.0 / 4.0).abs() < 1e-12);
     }
@@ -2194,15 +2640,30 @@ mod tests {
         let c = Curve::new(
             4,
             vec![
-                Point { temperature: 1.0, m2: 0.5, m4: 3.0 * 0.25 * 0.4 },
-                Point { temperature: 2.0, m2: 0.5, m4: 3.0 * 0.25 * 0.8 },
+                Point {
+                    temperature: 1.0,
+                    m2: 0.5,
+                    m4: 3.0 * 0.25 * 0.4,
+                },
+                Point {
+                    temperature: 2.0,
+                    m2: 0.5,
+                    m4: 3.0 * 0.25 * 0.8,
+                },
             ],
         )
         .unwrap();
         assert!((c.binder()[0] - 0.6).abs() < 1e-15);
         assert!((c.binder()[1] - 0.2).abs() < 1e-15);
-        assert!((c.binder_at(1.5).unwrap() - 0.4).abs() < 1e-15, "the midpoint of a straight line");
-        assert_eq!(c.binder_at(1.0), Some(c.binder()[0]), "a grid point returns its own value");
+        assert!(
+            (c.binder_at(1.5).unwrap() - 0.4).abs() < 1e-15,
+            "the midpoint of a straight line"
+        );
+        assert_eq!(
+            c.binder_at(1.0),
+            Some(c.binder()[0]),
+            "a grid point returns its own value"
+        );
         assert_eq!(c.binder_at(2.0), Some(c.binder()[1]));
         assert_eq!(c.binder_at(0.999), None);
         assert_eq!(c.binder_at(2.001), None);

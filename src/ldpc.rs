@@ -132,10 +132,16 @@ impl core::fmt::Display for Error {
                  has no penalty that outbids it"
             ),
             Error::BadChannel => {
-                write!(f, "the channel parameter is outside the range its formula is defined on")
+                write!(
+                    f,
+                    "the channel parameter is outside the range its formula is defined on"
+                )
             }
             Error::TooLongToEnumerate { bits, limit } => {
-                write!(f, "enumerating a {bits}-bit code means 2^{bits} words, over the 2^{limit} limit")
+                write!(
+                    f,
+                    "enumerating a {bits}-bit code means 2^{bits} words, over the 2^{limit} limit"
+                )
             }
             Error::Reduce(e) => write!(f, "lowering to pairwise failed: {e}"),
             Error::Width(e) => write!(f, "exact decoding declined this code: {e}"),
@@ -157,7 +163,10 @@ impl Code {
     /// A code of `bits` bits with no checks yet — every word is a codeword until one is added.
     #[must_use]
     pub fn new(bits: usize) -> Code {
-        Code { bits, checks: Vec::new() }
+        Code {
+            bits,
+            checks: Vec::new(),
+        }
     }
 
     /// The code's length in bits.
@@ -190,7 +199,10 @@ impl Code {
             return Err(Error::EmptyCheck);
         }
         if bits.len() > MAX_CHECK {
-            return Err(Error::CheckTooWide { arity: bits.len(), limit: MAX_CHECK });
+            return Err(Error::CheckTooWide {
+                arity: bits.len(),
+                limit: MAX_CHECK,
+            });
         }
         let mut sorted = bits.to_vec();
         sorted.sort_unstable();
@@ -202,7 +214,10 @@ impl Code {
         if let Some(&b) = sorted.last()
             && b >= self.bits
         {
-            return Err(Error::UnknownBit { bit: b, bits: self.bits });
+            return Err(Error::UnknownBit {
+                bit: b,
+                bits: self.bits,
+            });
         }
         self.checks.push(sorted);
         Ok(())
@@ -267,7 +282,9 @@ impl Code {
     #[must_use]
     pub fn state(&self, word: &[u8]) -> Vec<i8> {
         assert!(word.len() >= self.bits, "a word must cover the code's bits");
-        (0..self.bits).map(|i| if word[i] & 1 == 1 { -1i8 } else { 1 }).collect()
+        (0..self.bits)
+            .map(|i| if word[i] & 1 == 1 { -1i8 } else { 1 })
+            .collect()
     }
 
     /// Every codeword, by enumeration.
@@ -277,7 +294,10 @@ impl Code {
     /// [`Error::TooLongToEnumerate`] past [`MAX_ENUM`] bits.
     pub fn codewords(&self) -> Result<Vec<Vec<u8>>, Error> {
         if self.bits > MAX_ENUM {
-            return Err(Error::TooLongToEnumerate { bits: self.bits, limit: MAX_ENUM });
+            return Err(Error::TooLongToEnumerate {
+                bits: self.bits,
+                limit: MAX_ENUM,
+            });
         }
         let mut out = Vec::new();
         let mut w = vec![0u8; self.bits];
@@ -319,7 +339,10 @@ impl Code {
     /// not a number.
     pub fn penalty(&self, llr: &[f64]) -> Result<f64, Error> {
         if llr.len() != self.bits {
-            return Err(Error::LlrLen { got: llr.len(), want: self.bits });
+            return Err(Error::LlrLen {
+                got: llr.len(),
+                want: self.bits,
+            });
         }
         for (i, &l) in llr.iter().enumerate() {
             if !l.is_finite() {
@@ -342,7 +365,11 @@ impl Code {
     pub fn channel_energy(&self, llr: &[f64], s: &[i8]) -> Result<f64, Error> {
         self.penalty(llr)?;
         assert!(s.len() >= self.bits, "a state must cover the code's bits");
-        Ok(-llr.iter().enumerate().map(|(i, l)| l * f64::from(s[i]) / 2.0).sum::<f64>())
+        Ok(-llr
+            .iter()
+            .enumerate()
+            .map(|(i, l)| l * f64::from(s[i]) / 2.0)
+            .sum::<f64>())
     }
 
     /// The decoding objective as a program of k-body factors, with the penalty [`Code::penalty`]
@@ -430,7 +457,10 @@ impl Code {
     pub fn to_graph(&self, llr: &[f64]) -> Result<(Graph, Reduction), Error> {
         let (p, _) = self.to_program(llr)?;
         let red = to_pairwise_exact(&p).map_err(Error::Reduce)?;
-        let g = red.program.to_graph().expect("the reduction returns a pairwise program");
+        let g = red
+            .program
+            .to_graph()
+            .expect("the reduction returns a pairwise program");
         Ok((g, red))
     }
 
@@ -457,11 +487,20 @@ impl Code {
         let lambda = self.penalty(llr)?;
         let (g, red) = self.to_graph(llr)?;
         let ex: Exact = e.ground_state(&g).map_err(Error::Width)?;
-        let s = ex.ground_state.expect("min-sum was run, so it reports a ground state");
+        let s = ex
+            .ground_state
+            .expect("min-sum was run, so it reports a ground state");
         let word = self.word(red.project(&s));
         let violations = self.violations(&s);
         let energy = lambda * violations as f64 + self.channel_energy(llr, &s)?;
-        Ok(Decoded { word, violations, energy, penalty: lambda, ancillas: red.ancillas, width: ex.width })
+        Ok(Decoded {
+            word,
+            violations,
+            energy,
+            penalty: lambda,
+            ancillas: red.ancillas,
+            width: ex.width,
+        })
     }
 }
 
@@ -495,7 +534,8 @@ pub struct Decoded {
 pub fn hamming74() -> Code {
     let mut c = Code::new(7);
     for row in [[0usize, 1, 2, 4], [0, 1, 3, 5], [0, 2, 3, 6]] {
-        c.check(&row).expect("a fixed weight-four row over seven bits");
+        c.check(&row)
+            .expect("a fixed weight-four row over seven bits");
     }
     c
 }
@@ -528,7 +568,10 @@ pub fn bsc_llr(received: &[u8], p: f64) -> Result<Vec<f64>, Error> {
         return Err(Error::BadChannel);
     }
     let l = ((1.0 - p) / p).ln();
-    Ok(received.iter().map(|&y| if y & 1 == 1 { -l } else { l }).collect())
+    Ok(received
+        .iter()
+        .map(|&y| if y & 1 == 1 { -l } else { l })
+        .collect())
 }
 
 /// Log-likelihood ratios for `BPSK` over an additive white Gaussian noise channel of variance
@@ -593,8 +636,16 @@ mod tests {
         let c = hamming74();
         assert_eq!(c.bits(), 7);
         assert_eq!(c.checks(), 3);
-        assert_eq!(c.codewords().unwrap().len(), 16, "a [7,4] code has 2^4 codewords");
-        assert_eq!(c.min_distance().unwrap(), Some(3), "the Hamming code's distance is 3");
+        assert_eq!(
+            c.codewords().unwrap().len(),
+            16,
+            "a [7,4] code has 2^4 codewords"
+        );
+        assert_eq!(
+            c.min_distance().unwrap(),
+            Some(3),
+            "the Hamming code's distance is 3"
+        );
 
         // Perfect: the seven single-bit error syndromes are distinct and non-zero, so with the zero
         // syndrome they are all eight of 2^3.
@@ -604,7 +655,10 @@ mod tests {
             w[i] = 1;
             let s = c.syndrome(&w);
             assert!(s.contains(&1), "bit {i} has a zero syndrome");
-            assert!(!seen.contains(&s), "bit {i} shares a syndrome with an earlier error");
+            assert!(
+                !seen.contains(&s),
+                "bit {i} shares a syndrome with an earlier error"
+            );
             seen.push(s);
         }
         assert_eq!(seen.len(), 8);
@@ -641,9 +695,11 @@ mod tests {
         for w in words(7) {
             let s = c.state(&w);
             let got = energy(&p, &s) + offset;
-            let want =
-                lambda * c.violations(&s) as f64 + c.channel_energy(&llr, &s).unwrap();
-            assert!((got - want).abs() < 1e-9, "word {w:?}: {got} against {want}");
+            let want = lambda * c.violations(&s) as f64 + c.channel_energy(&llr, &s).unwrap();
+            assert!(
+                (got - want).abs() < 1e-9,
+                "word {w:?}: {got} against {want}"
+            );
         }
     }
 
@@ -659,7 +715,10 @@ mod tests {
         ] {
             let span: f64 = llr.iter().map(|l| l.abs()).sum();
             let lambda = c.penalty(&llr).unwrap();
-            assert!(lambda > span, "penalty {lambda} does not clear the span {span}");
+            assert!(
+                lambda > span,
+                "penalty {lambda} does not clear the span {span}"
+            );
         }
     }
 
@@ -677,8 +736,14 @@ mod tests {
         let llr = [1.5, -0.5, 0.25, 2.0, -1.0];
         let (p, _) = c.to_program(&llr).unwrap();
         let (g, red) = c.to_graph(&llr).unwrap();
-        assert_eq!(red.penalty, 0.0, "the lowering must carry no penalty of its own");
-        assert!(red.ancillas > 0, "two weight-4 checks cannot lower for free");
+        assert_eq!(
+            red.penalty, 0.0,
+            "the lowering must carry no penalty of its own"
+        );
+        assert!(
+            red.ancillas > 0,
+            "two weight-4 checks cannot lower for free"
+        );
 
         let k = red.ancillas;
         for w in words(5) {
@@ -724,12 +789,22 @@ mod tests {
 
                 let llr = bsc_llr(&y, 0.1).unwrap();
                 let d = c.decode(&llr).unwrap();
-                assert!(d.ancillas > 0, "weight-four checks cannot have lowered for free");
+                assert!(
+                    d.ancillas > 0,
+                    "weight-four checks cannot have lowered for free"
+                );
                 assert_eq!(d.violations, 0, "decoded {:?} is not a codeword", d.word);
-                assert_eq!(&d.word, cw, "received {y:?} decoded away from the sent word");
+                assert_eq!(
+                    &d.word, cw,
+                    "received {y:?} decoded away from the sent word"
+                );
             }
         }
-        assert_eq!(seen.len(), 128, "the sweep must cover every received word once");
+        assert_eq!(
+            seen.len(),
+            128,
+            "the sweep must cover every received word once"
+        );
     }
 
     /// The decoder attains the LIKELIHOOD OPTIMUM even where the error is not correctable.
@@ -744,7 +819,11 @@ mod tests {
         c.check(&[0, 1, 2]).unwrap();
         c.check(&[1, 2, 3]).unwrap();
         let code = c.codewords().unwrap();
-        assert_eq!(c.min_distance().unwrap(), Some(2), "this code must have ties to be worth using");
+        assert_eq!(
+            c.min_distance().unwrap(),
+            Some(2),
+            "this code must have ties to be worth using"
+        );
 
         for y in words(4) {
             let llr = bsc_llr(&y, 0.2).unwrap();
@@ -776,7 +855,10 @@ mod tests {
         assert!(!c.is_codeword(&y));
 
         let sound = c.decode(&llr).unwrap();
-        assert_eq!(sound.violations, 0, "the derived penalty must land on the code");
+        assert_eq!(
+            sound.violations, 0,
+            "the derived penalty must land on the code"
+        );
 
         let (p, _) = c.to_program_with(&llr, 1e-6).unwrap();
         let red = to_pairwise_exact(&p).unwrap();
@@ -817,14 +899,22 @@ mod tests {
     fn the_repetition_code_decodes_by_majority() {
         for n in [3usize, 5] {
             let c = repetition(n);
-            assert_eq!(c.codewords().unwrap().len(), 2, "a repetition code has two codewords");
+            assert_eq!(
+                c.codewords().unwrap().len(),
+                2,
+                "a repetition code has two codewords"
+            );
             assert_eq!(c.min_distance().unwrap(), Some(n));
             for y in words(n) {
                 let ones = y.iter().filter(|&&b| b == 1).count();
                 let llr = bsc_llr(&y, 0.25).unwrap();
                 let d = c.decode(&llr).unwrap();
                 let want = u8::from(ones * 2 > n);
-                assert!(d.word.iter().all(|&b| b == want), "{y:?} decoded to {:?}", d.word);
+                assert!(
+                    d.word.iter().all(|&b| b == want),
+                    "{y:?} decoded to {:?}",
+                    d.word
+                );
             }
         }
     }
@@ -839,7 +929,10 @@ mod tests {
         let wide: Vec<usize> = (0..MAX_CHECK + 1).collect();
         assert_eq!(
             c.check(&wide),
-            Err(Error::CheckTooWide { arity: MAX_CHECK + 1, limit: MAX_CHECK })
+            Err(Error::CheckTooWide {
+                arity: MAX_CHECK + 1,
+                limit: MAX_CHECK
+            })
         );
         c.check(&[0, 1, 2]).unwrap();
         assert_eq!(c.penalty(&[1.0]), Err(Error::LlrLen { got: 1, want: 4 }));

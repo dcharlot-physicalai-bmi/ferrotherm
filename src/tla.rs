@@ -68,7 +68,10 @@ impl Spd {
         // can check it; the OU dynamics simply diverge if violated, which the estimator reports).
         for i in 0..n {
             for j in 0..n {
-                assert!((a[i * n + j] - a[j * n + i]).abs() < 1e-9, "A must be symmetric");
+                assert!(
+                    (a[i * n + j] - a[j * n + i]).abs() < 1e-9,
+                    "A must be symmetric"
+                );
             }
         }
         Spd { n, a, b }
@@ -98,7 +101,14 @@ pub struct TlaResult {
 /// Simulate the OU network and return the thermodynamic solve. `dt` must satisfy
 /// dt < 2 / `lambda_max(A)` for stability; `burn` steps equilibrate, `measure` steps average.
 #[must_use]
-pub fn solve_spd(sys: &Spd, beta: f64, dt: f64, burn: usize, measure: usize, seed: u64) -> TlaResult {
+pub fn solve_spd(
+    sys: &Spd,
+    beta: f64,
+    dt: f64,
+    burn: usize,
+    measure: usize,
+    seed: u64,
+) -> TlaResult {
     let n = sys.n;
     let mut rng = Pcg::new(seed, 0x71A);
     let mut x = vec![0.0; n];
@@ -136,7 +146,11 @@ pub fn solve_spd(sys: &Spd, beta: f64, dt: f64, burn: usize, measure: usize, see
             a_inv[i * n + j] = beta * (cov[i * n + j] / m - mean[i] * mean[j]);
         }
     }
-    TlaResult { x: mean, a_inv, steps: (burn + measure) as u64 }
+    TlaResult {
+        x: mean,
+        a_inv,
+        steps: (burn + measure) as u64,
+    }
 }
 
 /// Exact Ornstein-Uhlenbeck transition sampling — the bias-free integrator.
@@ -226,13 +240,19 @@ pub fn solve_spd_exact_ou(
             let mut s = 0.0;
             for a in 0..n {
                 for bq in 0..n {
-                    s += v[i * n + a] * (cov_y[a * n + bq] / m - ymean[a] * ymean[bq]) * v[j * n + bq];
+                    s += v[i * n + a]
+                        * (cov_y[a * n + bq] / m - ymean[a] * ymean[bq])
+                        * v[j * n + bq];
                 }
             }
             a_inv[i * n + j] = beta * s;
         }
     }
-    TlaResult { x: mean, a_inv, steps: (burn_strides + samples) as u64 }
+    TlaResult {
+        x: mean,
+        a_inv,
+        steps: (burn_strides + samples) as u64,
+    }
 }
 
 /// Exact reference solve by Gaussian elimination with partial pivoting (for verification).
@@ -281,10 +301,7 @@ mod tests {
         Spd::new(
             4,
             vec![
-                4.0, 1.0, 0.5, 0.0,
-                1.0, 3.0, 0.7, 0.2,
-                0.5, 0.7, 3.5, 1.0,
-                0.0, 0.2, 1.0, 2.5,
+                4.0, 1.0, 0.5, 0.0, 1.0, 3.0, 0.7, 0.2, 0.5, 0.7, 3.5, 1.0, 0.0, 0.2, 1.0, 2.5,
             ],
             vec![1.0, -2.0, 0.5, 3.0],
         )
@@ -334,7 +351,12 @@ mod tests {
         let r = solve_spd_exact_ou(&sys, beta, 2.0, 100, 400_000, 0xE0A7);
         let exact = solve_exact(&sys);
         for i in 0..2 {
-            assert!((r.x[i] - exact[i]).abs() < 0.01, "mean[{i}] {} vs {}", r.x[i], exact[i]);
+            assert!(
+                (r.x[i] - exact[i]).abs() < 0.01,
+                "mean[{i}] {} vs {}",
+                r.x[i],
+                exact[i]
+            );
         }
         for (mode, alpha) in [(0usize, 1.0f64), (1, 4.0)] {
             let want = 1.0 / (beta * alpha);
@@ -412,7 +434,9 @@ mod dominance {
     /// integrator spends per step, which is what makes the comparison below a fair one.
     fn cg(a: &[f64], b: &[f64], n: usize, iters: usize) -> Vec<f64> {
         let mv = |x: &[f64]| -> Vec<f64> {
-            (0..n).map(|i| (0..n).map(|j| a[i * n + j] * x[j]).sum()).collect()
+            (0..n)
+                .map(|i| (0..n).map(|j| a[i * n + j] * x[j]).sum())
+                .collect()
         };
         let mut x = vec![0.0; n];
         let mut r = b.to_vec();
@@ -443,7 +467,12 @@ mod dominance {
     }
 
     fn rel(x: &[f64], truth: &[f64]) -> f64 {
-        let num: f64 = x.iter().zip(truth).map(|(a, t)| (a - t) * (a - t)).sum::<f64>().sqrt();
+        let num: f64 = x
+            .iter()
+            .zip(truth)
+            .map(|(a, t)| (a - t) * (a - t))
+            .sum::<f64>()
+            .sqrt();
         let den: f64 = truth.iter().map(|t| t * t).sum::<f64>().sqrt();
         num / den
     }
@@ -471,7 +500,10 @@ mod dominance {
             // Deterministic: 40 matvecs, which is n and therefore no more than one dense solve.
             let x = cg(&a, &sys.b, n, 40);
             let e_cg = rel(&x, &truth);
-            assert!(e_cg < 1e-12, "cond {cond}: CG should reach machine precision in n matvecs, got {e_cg:e}");
+            assert!(
+                e_cg < 1e-12,
+                "cond {cond}: CG should reach machine precision in n matvecs, got {e_cg:e}"
+            );
 
             // Sampled: 250x the work, on a dt at the edge of stability so it is given its best case.
             let r = solve_spd(&sys, 1.0, 0.9 / cond, 5_000, 10_000, 0xC0DE);
@@ -479,8 +511,15 @@ mod dominance {
             // rigged -- starve the sampler and the gap widens, which the assertions below would
             // happily report as a finding. A mutant that gave the OU chain 10 steps instead of
             // 15,000 passed every other check here.
-            assert_eq!(r.steps, 15_000, "the sampled side must actually spend the work it is credited with");
-            assert!(r.steps > 300 * 40, "and it must be given FAR more work than the {} matvecs CG used", 40);
+            assert_eq!(
+                r.steps, 15_000,
+                "the sampled side must actually spend the work it is credited with"
+            );
+            assert!(
+                r.steps > 300 * 40,
+                "and it must be given FAR more work than the {} matvecs CG used",
+                40
+            );
             let e_ou = rel(&r.x, &truth);
             assert!(
                 e_ou > 1e-2,
@@ -536,7 +575,9 @@ mod dominance {
         }
         let exact: Vec<f64> = (0..n).map(|i| aug[i * 2 * n + n + i]).collect();
         let worst = |d: &[f64]| {
-            (0..n).map(|i| (d[i] - exact[i]).abs() / exact[i].abs()).fold(0.0f64, f64::max)
+            (0..n)
+                .map(|i| (d[i] - exact[i]).abs() / exact[i].abs())
+                .fold(0.0f64, f64::max)
         };
 
         // The cheap integrator, given 200,000 matvecs AND ITS BEST dt -- the sampler is handed
@@ -552,8 +593,14 @@ mod dominance {
         // The sweep has to MATTER, or "its best dt" is a claim about nothing -- and `best` has to
         // be the minimum rather than the maximum, which a mutant swapping them made clear was
         // untested.
-        assert!(worst_dt > 3.0 * best, "the dt sweep barely moved the error: {errs:?}");
-        assert!(best <= errs[0] && best <= errs[errs.len() - 1], "best is not the best of the sweep");
+        assert!(
+            worst_dt > 3.0 * best,
+            "the dt sweep barely moved the error: {errs:?}"
+        );
+        assert!(
+            best <= errs[0] && best <= errs[errs.len() - 1],
+            "best is not the best of the sweep"
+        );
         assert!(
             (0.02..0.5).contains(&best),
             "the cheap integrator's best covariance error over 200,000 matvecs is {best:e}, outside \
@@ -568,7 +615,13 @@ mod dominance {
             worst(&(0..n).map(|i| a1.a_inv[i * n + i]).collect::<Vec<_>>()),
             worst(&(0..n).map(|i| a2.a_inv[i * n + i]).collect::<Vec<_>>()),
         );
-        assert!(e1 > e2 * 3.0, "the unbiased sampler should converge: {e1:e} -> {e2:e}");
-        assert!(e2 > 1e-3, "and 100x the samples still leaves {e2:e}, against an exact 0");
+        assert!(
+            e1 > e2 * 3.0,
+            "the unbiased sampler should converge: {e1:e} -> {e2:e}"
+        );
+        assert!(
+            e2 > 1e-3,
+            "and 100x the samples still leaves {e2:e}, against an exact 0"
+        );
     }
 }

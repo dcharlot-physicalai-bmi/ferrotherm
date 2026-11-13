@@ -81,7 +81,9 @@ impl Solver for SteepestDescent {
         let mut best = vec![1i8; g.n];
         let mut best_e = f64::INFINITY;
         for _ in 0..self.restarts.max(1) {
-            let mut s: Vec<i8> = (0..g.n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+            let mut s: Vec<i8> = (0..g.n)
+                .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+                .collect();
             loop {
                 // flipping i changes the energy by 2 * f_i * s_i
                 let mut best_gain = 0.0;
@@ -127,7 +129,9 @@ impl Solver for RandomGuess {
         let mut best = vec![1i8; g.n];
         let mut best_e = f64::INFINITY;
         for _ in 0..self.tries.max(1) {
-            let s: Vec<i8> = (0..g.n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+                .collect();
             let e = g.energy(&s);
             if e < best_e {
                 best_e = e;
@@ -175,20 +179,39 @@ mod tests {
             b.couple(i, (i + 1) % 5, -1.0);
         }
         let (_s, e) = Exhaustive.solve(&b.build());
-        assert_eq!(e, -3.0, "an odd antiferromagnetic ring cannot do better than -3");
+        assert_eq!(
+            e, -3.0,
+            "an odd antiferromagnetic ring cannot do better than -3"
+        );
     }
 
     #[test]
     fn the_noise_oracle_loses_to_everything() {
         // The point of it. If this ever ties a real solver, the instance is not discriminating.
         let g = crate::ising::lattice2d(8, 1.0);
-        let noise = RandomGuess { tries: 2000, seed: 1 }.solve(&g).1;
-        let greedy = SteepestDescent { restarts: 20, seed: 1 }.solve(&g).1;
-        let annealed = Annealer { schedule: Schedule::geometric(0.05, 4.0, 60, 20), seed: 1 }
-            .solve(&g)
-            .1;
+        let noise = RandomGuess {
+            tries: 2000,
+            seed: 1,
+        }
+        .solve(&g)
+        .1;
+        let greedy = SteepestDescent {
+            restarts: 20,
+            seed: 1,
+        }
+        .solve(&g)
+        .1;
+        let annealed = Annealer {
+            schedule: Schedule::geometric(0.05, 4.0, 60, 20),
+            seed: 1,
+        }
+        .solve(&g)
+        .1;
         assert!(greedy < noise, "greedy {greedy} should beat noise {noise}");
-        assert!(annealed <= greedy, "annealing {annealed} should be at least greedy {greedy}");
+        assert!(
+            annealed <= greedy,
+            "annealing {annealed} should be at least greedy {greedy}"
+        );
         assert!(annealed < noise);
     }
 
@@ -197,7 +220,11 @@ mod tests {
         // If a single flip still improves it, the descent stopped early and the baseline is weaker
         // than advertised -- which would flatter everything measured against it.
         let g = crate::ising::lattice2d(6, 1.0);
-        let (s, _e) = SteepestDescent { restarts: 5, seed: 3 }.solve(&g);
+        let (s, _e) = SteepestDescent {
+            restarts: 5,
+            seed: 3,
+        }
+        .solve(&g);
         for i in 0..g.n {
             assert!(
                 crate::kernel::delta_e(g.field(i, &s), s[i]) >= -1e-12,
@@ -210,8 +237,21 @@ mod tests {
     fn restarts_are_a_real_knob() {
         // Documenting that the baseline can be tuned, so "we beat greedy" has to say which greedy.
         let g = crate::planted::frustrated_loops(6, 40, 7);
-        let one = SteepestDescent { restarts: 1, seed: 5 }.solve(&g.graph).1;
-        let many = SteepestDescent { restarts: 200, seed: 5 }.solve(&g.graph).1;
-        assert!(many <= one, "more restarts must not do worse: {many} vs {one}");
+        let one = SteepestDescent {
+            restarts: 1,
+            seed: 5,
+        }
+        .solve(&g.graph)
+        .1;
+        let many = SteepestDescent {
+            restarts: 200,
+            seed: 5,
+        }
+        .solve(&g.graph)
+        .1;
+        assert!(
+            many <= one,
+            "more restarts must not do worse: {many} vs {one}"
+        );
     }
 }

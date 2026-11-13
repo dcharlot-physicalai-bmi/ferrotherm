@@ -156,13 +156,22 @@ impl core::fmt::Display for Refused {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Refused::MatrixShape { got, want } => {
-                write!(f, "the coupling matrix has {got} entries and this network needs {want}")
+                write!(
+                    f,
+                    "the coupling matrix has {got} entries and this network needs {want}"
+                )
             }
             Refused::BiasShape { got, want } => {
-                write!(f, "the input-current vector has {got} entries and this network needs {want}")
+                write!(
+                    f,
+                    "the input-current vector has {got} entries and this network needs {want}"
+                )
             }
             Refused::NotFinite { index, value } => {
-                write!(f, "entry {index} is {value}, and a non-finite entry poisons every field in one step")
+                write!(
+                    f,
+                    "entry {index} is {value}, and a non-finite entry poisons every field in one step"
+                )
             }
             Refused::BadGain { gain } => write!(
                 f,
@@ -180,7 +189,10 @@ impl core::fmt::Display for Refused {
                  non-positive step does not integrate it"
             ),
             Refused::CityShape { got, want } => {
-                write!(f, "the distance matrix has {got} entries and {want} are needed for this many cities")
+                write!(
+                    f,
+                    "the distance matrix has {got} entries and {want} are needed for this many cities"
+                )
             }
             Refused::SelfDistance { city, value } => write!(
                 f,
@@ -311,10 +323,16 @@ impl AnalogNet {
     /// [`Refused::MatrixShape`], [`Refused::BiasShape`] or [`Refused::NotFinite`].
     pub fn new(n: usize, t: Vec<f64>, i_ext: Vec<f64>) -> Result<Self, Refused> {
         if t.len() != n * n {
-            return Err(Refused::MatrixShape { got: t.len(), want: n * n });
+            return Err(Refused::MatrixShape {
+                got: t.len(),
+                want: n * n,
+            });
         }
         if i_ext.len() != n {
-            return Err(Refused::BiasShape { got: i_ext.len(), want: n });
+            return Err(Refused::BiasShape {
+                got: i_ext.len(),
+                want: n,
+            });
         }
         for (k, &v) in t.iter().enumerate() {
             if !v.is_finite() {
@@ -342,7 +360,11 @@ impl AnalogNet {
     /// If either index is at or past [`AnalogNet::n`].
     #[must_use]
     pub fn t(&self, i: usize, j: usize) -> f64 {
-        assert!(i < self.n && j < self.n, "({i},{j}) outside a {}-neuron network", self.n);
+        assert!(
+            i < self.n && j < self.n,
+            "({i},{j}) outside a {}-neuron network",
+            self.n
+        );
         self.t[i * self.n + j]
     }
 
@@ -376,7 +398,9 @@ impl AnalogNet {
     /// which is one of the reasons its answers are not always corners.
     #[must_use]
     pub fn max_diagonal(&self) -> f64 {
-        (0..self.n).map(|i| self.t[i * self.n + i].abs()).fold(0.0f64, f64::max)
+        (0..self.n)
+            .map(|i| self.t[i * self.n + i].abs())
+            .fold(0.0f64, f64::max)
     }
 
     /// The total input to neuron `i`: `Σ_j T_ij V_j + I_i`.
@@ -472,7 +496,13 @@ impl AnalogNet {
             }
         }
         let v = self.activations(d, u);
-        Relaxation { energy: self.lyapunov(d, &v), v, steps, rate, converged: rate < tol }
+        Relaxation {
+            energy: self.lyapunov(d, &v),
+            v,
+            steps,
+            rate,
+            converged: rate < tol,
+        }
     }
 }
 
@@ -495,7 +525,10 @@ impl Relaxation {
     /// `max_i min(V_i, 1 − V_i)`: how far the worst neuron is from a corner of the hypercube.
     #[must_use]
     pub fn corner_distance(&self) -> f64 {
-        self.v.iter().map(|&x| x.min(1.0 - x)).fold(0.0f64, f64::max)
+        self.v
+            .iter()
+            .map(|&x| x.min(1.0 - x))
+            .fold(0.0f64, f64::max)
     }
 
     /// The activations rounded to the nearest corner, as `0`/`1` bits.
@@ -507,7 +540,10 @@ impl Relaxation {
     /// The activations rounded to spins, `V > ½ ↦ +1`.
     #[must_use]
     pub fn spins(&self) -> Vec<i8> {
-        self.v.iter().map(|&x| if x > 0.5 { 1i8 } else { -1 }).collect()
+        self.v
+            .iter()
+            .map(|&x| if x > 0.5 { 1i8 } else { -1 })
+            .collect()
     }
 }
 
@@ -646,7 +682,12 @@ pub struct Penalties {
 
 /// Hopfield & Tank 1985's published values for their 10-city problem: `A = B = D = 500`,
 /// `C = 200`.
-pub const HOPFIELD_TANK_1985: Penalties = Penalties { a: 500.0, b: 500.0, c: 200.0, d: 500.0 };
+pub const HOPFIELD_TANK_1985: Penalties = Penalties {
+    a: 500.0,
+    b: 500.0,
+    c: 200.0,
+    d: 500.0,
+};
 
 /// A symmetric travelling-salesman instance: `cities × cities` distances, zero diagonal.
 #[derive(Clone, Debug, PartialEq)]
@@ -664,7 +705,10 @@ impl Tsp {
     /// NaN or infinite distance, [`Refused::SelfDistance`] for a non-zero diagonal.
     pub fn new(cities: usize, d: Vec<f64>) -> Result<Self, Refused> {
         if d.len() != cities * cities {
-            return Err(Refused::CityShape { got: d.len(), want: cities * cities });
+            return Err(Refused::CityShape {
+                got: d.len(),
+                want: cities * cities,
+            });
         }
         for (k, &v) in d.iter().enumerate() {
             if !v.is_finite() {
@@ -716,7 +760,11 @@ impl Tsp {
     /// If either index is at or past [`Tsp::cities`].
     #[must_use]
     pub fn distance(&self, x: usize, y: usize) -> f64 {
-        assert!(x < self.cities && y < self.cities, "city ({x},{y}) of {}", self.cities);
+        assert!(
+            x < self.cities && y < self.cities,
+            "city ({x},{y}) of {}",
+            self.cities
+        );
         self.d[x * self.cities + y]
     }
 
@@ -797,7 +845,9 @@ impl Tsp {
         let n = self.cities * self.cities;
         let u0 = g_inverse(d.gain(), 1.0 / self.cities as f64);
         let mut rng = Pcg::new(seed, 0x717);
-        (0..n).map(|_| u0 + jitter * (2.0 * rng.f64() - 1.0)).collect()
+        (0..n)
+            .map(|_| u0 + jitter * (2.0 * rng.f64() - 1.0))
+            .collect()
     }
 
     /// Decode activations into a tour, or say precisely why they are not one.
@@ -820,14 +870,20 @@ impl Tsp {
         for x in 0..c {
             let count = (0..c).filter(|&i| on(x, i)).count();
             if count != 1 {
-                return Err(TourFault::CityCount { city: x, active: count });
+                return Err(TourFault::CityCount {
+                    city: x,
+                    active: count,
+                });
             }
         }
         let mut tour = vec![usize::MAX; c];
         for i in 0..c {
             let count = (0..c).filter(|&x| on(x, i)).count();
             if count != 1 {
-                return Err(TourFault::SlotCount { slot: i, active: count });
+                return Err(TourFault::SlotCount {
+                    slot: i,
+                    active: count,
+                });
             }
             tour[i] = (0..c).find(|&x| on(x, i)).expect("count is one");
         }
@@ -843,7 +899,9 @@ impl Tsp {
     pub fn length(&self, tour: &[usize]) -> f64 {
         let c = self.cities;
         assert_eq!(tour.len(), c, "tour length");
-        (0..c).map(|i| self.distance(tour[i], tour[(i + 1) % c])).sum()
+        (0..c)
+            .map(|i| self.distance(tour[i], tour[(i + 1) % c]))
+            .sum()
     }
 }
 
@@ -875,10 +933,16 @@ impl core::fmt::Display for TourFault {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             TourFault::CityCount { city, active } => {
-                write!(f, "city {city} is in {active} tour slots, and a tour puts it in exactly one")
+                write!(
+                    f,
+                    "city {city} is in {active} tour slots, and a tour puts it in exactly one"
+                )
             }
             TourFault::SlotCount { slot, active } => {
-                write!(f, "tour slot {slot} holds {active} cities, and a tour puts exactly one there")
+                write!(
+                    f,
+                    "tour slot {slot} holds {active} cities, and a tour puts exactly one there"
+                )
             }
         }
     }
@@ -912,7 +976,11 @@ impl ValidFraction {
     /// Valid runs as a fraction of runs attempted.
     #[must_use]
     pub fn fraction(&self) -> f64 {
-        if self.runs == 0 { 0.0 } else { self.valid as f64 / self.runs as f64 }
+        if self.runs == 0 {
+            0.0
+        } else {
+            self.valid as f64 / self.runs as f64
+        }
     }
 }
 
@@ -951,8 +1019,18 @@ pub fn valid_fraction(
         }
     }
     let mean_length = (valid > 0).then(|| total / valid as f64);
-    let mean_active = if runs == 0 { 0.0 } else { active as f64 / runs as f64 };
-    ValidFraction { runs, valid, unconverged, mean_length, mean_active }
+    let mean_active = if runs == 0 {
+        0.0
+    } else {
+        active as f64 / runs as f64
+    };
+    ValidFraction {
+        runs,
+        valid,
+        unconverged,
+        mean_length,
+        mean_active,
+    }
 }
 
 #[cfg(test)]
@@ -1041,8 +1119,14 @@ mod tests {
         }
         let q = acc * h / 3.0;
         let got = integral_g_inverse(beta, b) - integral_g_inverse(beta, a);
-        assert!(q.abs() > 1e-3, "the interior reference must not be a symmetric zero: {q:e}");
-        assert!((got - q).abs() < 1e-12, "interior: closed {got:e} vs quadrature {q:e}");
+        assert!(
+            q.abs() > 1e-3,
+            "the interior reference must not be a symmetric zero: {q:e}"
+        );
+        assert!(
+            (got - q).abs() < 1e-12,
+            "interior: closed {got:e} vs quadrature {q:e}"
+        );
 
         // Endpoints are exactly zero, which is what makes the corner identity in `from_ising` hold.
         assert_eq!(integral_g_inverse(beta, 0.0), 0.0);
@@ -1065,7 +1149,11 @@ mod tests {
         for seed in 0..6u64 {
             let gr = random_graph(10, seed);
             let (net, offset) = from_ising(&gr);
-            assert_eq!(net.max_diagonal(), 0.0, "the Ising relaxation has no diagonal");
+            assert_eq!(
+                net.max_diagonal(),
+                0.0,
+                "the Ising relaxation has no diagonal"
+            );
             assert_eq!(net.asymmetry(), 0.0, "J is symmetric, so T must be");
             let d = Dynamics::new(1.0, 1.0, 1e-3).expect("dynamics");
             let mut worst = 0.0f64;
@@ -1107,7 +1195,10 @@ mod tests {
             );
             prev = e;
         }
-        assert!(first - prev > 0.05, "the run must actually descend, not merely not rise");
+        assert!(
+            first - prev > 0.05,
+            "the run must actually descend, not merely not rise"
+        );
 
         // Same symmetric part, plus a strong antisymmetric circulation.
         let mut t = vec![0.0f64; n * n];
@@ -1122,7 +1213,10 @@ mod tests {
             t[j * n + i] -= 3.0;
         }
         let asym = AnalogNet::new(n, t, (0..n).map(|i| sym.current(i)).collect()).expect("shapes");
-        assert!(asym.asymmetry() > 5.0, "the counterexample must actually be asymmetric");
+        assert!(
+            asym.asymmetry() > 5.0,
+            "the counterexample must actually be asymmetric"
+        );
 
         let mut u = u_start;
         let mut prev = asym.lyapunov(&d, &asym.activations(&d, &u));
@@ -1173,11 +1267,17 @@ mod tests {
         };
         for &dt in &[0.002, 0.05, 0.2, 0.5, 0.8] {
             let w = worst_rise(dt);
-            assert!(w < 1e-12, "dt={dt} must descend to rounding; worst rise {w:e}");
+            assert!(
+                w < 1e-12,
+                "dt={dt} must descend to rounding; worst rise {w:e}"
+            );
         }
         for &dt in &[1.0, 2.0, 4.0] {
             let w = worst_rise(dt);
-            assert!(w > 0.1, "dt={dt} must overshoot and RISE; worst rise was only {w:e}");
+            assert!(
+                w > 0.1,
+                "dt={dt} must overshoot and RISE; worst rise was only {w:e}"
+            );
         }
     }
 
@@ -1196,9 +1296,16 @@ mod tests {
         let mut rng = Pcg::new(7, 1);
         let mut u: Vec<f64> = (0..gr.n).map(|_| 0.02 * (2.0 * rng.f64() - 1.0)).collect();
         let out = net.relax(&hot, &mut u, 200_000, 1e-9);
-        assert!(out.converged, "high-gain run did not settle: rate {}", out.rate);
+        assert!(
+            out.converged,
+            "high-gain run did not settle: rate {}",
+            out.rate
+        );
         let bound = corner_bound(&net, &hot, &out.v);
-        assert!(bound < 1e-6, "the bound itself must be tight at beta=50, got {bound}");
+        assert!(
+            bound < 1e-6,
+            "the bound itself must be tight at beta=50, got {bound}"
+        );
         assert!(
             out.corner_distance() <= bound,
             "corner distance {} exceeds its own bound {bound}",
@@ -1212,13 +1319,25 @@ mod tests {
         let flat = AnalogNet::new(2, vec![0.0; 4], vec![0.0; 2]).expect("shapes");
         let mut u = vec![0.0, 0.0];
         let out = flat.relax(&hot, &mut u, 100, 1e-12);
-        assert_eq!(out.v, vec![0.5, 0.5], "a zero field holds V at 1/2 at any gain");
-        assert_eq!(corner_bound(&flat, &hot, &out.v), 0.5, "a vanishing field bounds nothing");
+        assert_eq!(
+            out.v,
+            vec![0.5, 0.5],
+            "a zero field holds V at 1/2 at any gain"
+        );
+        assert_eq!(
+            corner_bound(&flat, &hot, &out.v),
+            0.5,
+            "a vanishing field bounds nothing"
+        );
 
         let cold = Dynamics::new(0.02, 1.0, 2e-3).expect("dynamics");
         let mut u: Vec<f64> = (0..gr.n).map(|_| 0.02 * (2.0 * rng.f64() - 1.0)).collect();
         let out = net.relax(&cold, &mut u, 200_000, 1e-9);
-        assert!(out.converged, "low-gain run did not settle: rate {}", out.rate);
+        assert!(
+            out.converged,
+            "low-gain run did not settle: rate {}",
+            out.rate
+        );
         assert!(
             out.corner_distance() > 0.4,
             "at beta=0.02 the fixed point must be INTERIOR, not a corner; distance {}",
@@ -1243,7 +1362,9 @@ mod tests {
     #[test]
     fn restarts_reach_the_elimination_ground_state_and_single_runs_do_not() {
         let gr = random_graph(14, 4);
-        let exact = Elimination::default().ground_state(&gr).expect("14 spins eliminate");
+        let exact = Elimination::default()
+            .ground_state(&gr)
+            .expect("14 spins eliminate");
         let e0 = exact.ground_energy.expect("ground energy");
         let (net, offset) = from_ising(&gr);
         let d = Dynamics::new(100.0, 1.0, 3e-4).expect("dynamics");
@@ -1257,7 +1378,10 @@ mod tests {
             let out = net.relax(&d, &mut u, 200_000, 1e-9);
             assert!(out.converged, "run {r} did not settle: rate {}", out.rate);
             let e = gr.energy(&out.spins());
-            assert!(e >= e0 - 1e-9, "run {r} reported {e}, below the exact ground energy {e0}");
+            assert!(
+                e >= e0 - 1e-9,
+                "run {r} reported {e}, below the exact ground energy {e0}"
+            );
             assert!(
                 (out.energy + offset - e).abs() < 1e-6,
                 "run {r}: lyapunov {} plus offset {offset} is not the Ising energy {e}",
@@ -1270,7 +1394,10 @@ mod tests {
                 hits += 1;
             }
         }
-        assert!((best - e0).abs() < 1e-9, "restarts must find the ground state: {best} vs {e0}");
+        assert!(
+            (best - e0).abs() < 1e-9,
+            "restarts must find the ground state: {best} vs {e0}"
+        );
         assert!(hits > 0, "no restart reached the ground state at all");
         assert!(
             (hits as u64) < runs,
@@ -1299,7 +1426,11 @@ mod tests {
         let sweep: Vec<ValidFraction> = [500.0, 1000.0, 2000.0]
             .iter()
             .map(|&ab| {
-                let p = Penalties { a: ab, b: ab, ..HOPFIELD_TANK_1985 };
+                let p = Penalties {
+                    a: ab,
+                    b: ab,
+                    ..HOPFIELD_TANK_1985
+                };
                 valid_fraction(&tsp, &p, &d, 15.0, 0.002, 4000, 1e-6, runs, 900)
             })
             .collect();
@@ -1307,7 +1438,17 @@ mod tests {
         // The published point is the first of the sweep, and it must mostly fail.
         assert_eq!(
             sweep[0],
-            valid_fraction(&tsp, &HOPFIELD_TANK_1985, &d, 15.0, 0.002, 4000, 1e-6, runs, 900),
+            valid_fraction(
+                &tsp,
+                &HOPFIELD_TANK_1985,
+                &d,
+                15.0,
+                0.002,
+                4000,
+                1e-6,
+                runs,
+                900
+            ),
             "the sweep's first point is Hopfield & Tank's published parameter set"
         );
         assert!(
@@ -1351,7 +1492,12 @@ mod tests {
         let d = Dynamics::new(50.0, 1.0, 1e-5).expect("dynamics");
         let runs = 64;
         let run = |a: f64, dist: f64| {
-            let p = Penalties { a, b: a, c: 200.0, d: dist };
+            let p = Penalties {
+                a,
+                b: a,
+                c: 200.0,
+                d: dist,
+            };
             valid_fraction(&tsp, &p, &d, 10.0, 0.002, 4000, 1e-6, runs, 900)
         };
 
@@ -1369,7 +1515,10 @@ mod tests {
         );
 
         let published_d = run(500.0, 500.0);
-        assert_eq!(published_d.valid, 0, "Hopfield & Tank's D at n' = 10 must give no valid tour");
+        assert_eq!(
+            published_d.valid, 0,
+            "Hopfield & Tank's D at n' = 10 must give no valid tour"
+        );
         assert!(
             published_d.mean_active < 9.0,
             "the failure must be UNDER-activation, not double-booking: mean active {}",
@@ -1400,10 +1549,36 @@ mod tests {
     fn the_tsp_readout_is_stationary_in_the_step_budget() {
         let tsp = Tsp::random_euclidean(10, 12345);
         let d = Dynamics::new(50.0, 1.0, 1e-5).expect("dynamics");
-        let short = valid_fraction(&tsp, &HOPFIELD_TANK_1985, &d, 15.0, 0.002, 2000, 1e-6, 64, 900);
-        let long = valid_fraction(&tsp, &HOPFIELD_TANK_1985, &d, 15.0, 0.002, 12000, 1e-6, 64, 900);
-        assert_eq!(short.valid, long.valid, "the valid count must not depend on the step budget");
-        assert_eq!(short.unconverged, 64, "no run settles du/dt inside 2000 steps");
+        let short = valid_fraction(
+            &tsp,
+            &HOPFIELD_TANK_1985,
+            &d,
+            15.0,
+            0.002,
+            2000,
+            1e-6,
+            64,
+            900,
+        );
+        let long = valid_fraction(
+            &tsp,
+            &HOPFIELD_TANK_1985,
+            &d,
+            15.0,
+            0.002,
+            12000,
+            1e-6,
+            64,
+            900,
+        );
+        assert_eq!(
+            short.valid, long.valid,
+            "the valid count must not depend on the step budget"
+        );
+        assert_eq!(
+            short.unconverged, 64,
+            "no run settles du/dt inside 2000 steps"
+        );
         assert_eq!(long.unconverged, 64, "nor inside 12000, which is the point");
         // The readout is stationary but not frozen: MEASURED, exactly ONE neuron of the 6400 in
         // this sweep (64 runs x 100 neurons) is still moving between step 2000 and step 12000, and
@@ -1429,8 +1604,16 @@ mod tests {
         let tsp = Tsp::random_euclidean(6, 77);
         let net = tsp.network(&HOPFIELD_TANK_1985, 9.0);
         assert_eq!(net.n(), 36);
-        assert_eq!(net.asymmetry(), 0.0, "a symmetric distance matrix gives a symmetric T");
-        assert_eq!(net.max_diagonal(), 200.0, "Hopfield & Tank keep the C term's diagonal");
+        assert_eq!(
+            net.asymmetry(),
+            0.0,
+            "a symmetric distance matrix gives a symmetric T"
+        );
+        assert_eq!(
+            net.max_diagonal(),
+            200.0,
+            "Hopfield & Tank keep the C term's diagonal"
+        );
         assert_eq!(net.current(0), 200.0 * 9.0, "I = C n'");
         // The A term: two slots of the same city repel by A (plus the ubiquitous C).
         assert_eq!(net.t(tsp.neuron(2, 0), tsp.neuron(2, 3)), -700.0);
@@ -1460,12 +1643,18 @@ mod tests {
         // city 2 in two slots
         let mut bad = v.clone();
         bad[tsp.neuron(2, 3)] = 1.0;
-        assert_eq!(tsp.tour(&bad), Err(TourFault::CityCount { city: 2, active: 2 }));
+        assert_eq!(
+            tsp.tour(&bad),
+            Err(TourFault::CityCount { city: 2, active: 2 })
+        );
 
         // city 1 in no slot, and slot 1 then empty
         let mut bad = v.clone();
         bad[tsp.neuron(1, 1)] = 0.0;
-        assert_eq!(tsp.tour(&bad), Err(TourFault::CityCount { city: 1, active: 0 }));
+        assert_eq!(
+            tsp.tour(&bad),
+            Err(TourFault::CityCount { city: 1, active: 0 })
+        );
 
         // Every ROW still holds exactly one neuron, so only the column check can catch this: city 0
         // has moved into slot 1, which already held city 1. Slot 0 is now empty.
@@ -1473,9 +1662,16 @@ mod tests {
         bad[tsp.neuron(0, 0)] = 0.0;
         bad[tsp.neuron(0, 1)] = 1.0;
         for x in 0..c {
-            assert_eq!((0..c).filter(|&i| bad[tsp.neuron(x, i)] > 0.5).count(), 1, "row {x}");
+            assert_eq!(
+                (0..c).filter(|&i| bad[tsp.neuron(x, i)] > 0.5).count(),
+                1,
+                "row {x}"
+            );
         }
-        assert_eq!(tsp.tour(&bad), Err(TourFault::SlotCount { slot: 0, active: 0 }));
+        assert_eq!(
+            tsp.tour(&bad),
+            Err(TourFault::SlotCount { slot: 0, active: 0 })
+        );
     }
 
     /// A default is not a fallback: every malformed input names what it saw.
@@ -1498,15 +1694,31 @@ mod tests {
         ));
         assert_eq!(
             AnalogNet::new(2, vec![0.0; 4], vec![0.0, f64::INFINITY]),
-            Err(Refused::NotFinite { index: 1, value: f64::INFINITY })
+            Err(Refused::NotFinite {
+                index: 1,
+                value: f64::INFINITY
+            })
         );
-        assert!(matches!(Dynamics::new(0.0, 1.0, 1e-3), Err(Refused::BadGain { gain }) if gain == 0.0));
-        assert!(matches!(Dynamics::new(1.0, -1.0, 1e-3), Err(Refused::BadTau { tau }) if tau == -1.0));
+        assert!(
+            matches!(Dynamics::new(0.0, 1.0, 1e-3), Err(Refused::BadGain { gain }) if gain == 0.0)
+        );
+        assert!(
+            matches!(Dynamics::new(1.0, -1.0, 1e-3), Err(Refused::BadTau { tau }) if tau == -1.0)
+        );
         assert!(matches!(Dynamics::new(1.0, 1.0, 0.0), Err(Refused::BadStep { dt }) if dt == 0.0));
-        assert_eq!(Tsp::new(3, vec![0.0; 8]), Err(Refused::CityShape { got: 8, want: 9 }));
+        assert_eq!(
+            Tsp::new(3, vec![0.0; 8]),
+            Err(Refused::CityShape { got: 8, want: 9 })
+        );
         let mut d = vec![1.0; 9];
         d[0] = 0.0;
         d[4] = 0.5;
-        assert_eq!(Tsp::new(3, d), Err(Refused::SelfDistance { city: 1, value: 0.5 }));
+        assert_eq!(
+            Tsp::new(3, d),
+            Err(Refused::SelfDistance {
+                city: 1,
+                value: 0.5
+            })
+        );
     }
 }

@@ -126,7 +126,9 @@ pub fn binary_state(spins: &[i8]) -> Vec<i8> {
 /// Map a 0/1 state to the spin state of the same model: `s = 2x − 1`.
 #[must_use]
 pub fn spin_state(bits: &[i8]) -> Vec<i8> {
-    bits.iter().map(|&x| if x != 0 { 1i8 } else { -1 }).collect()
+    bits.iter()
+        .map(|&x| if x != 0 { 1i8 } else { -1 })
+        .collect()
 }
 
 // ---- the model ----------------------------------------------------------------------------------
@@ -181,7 +183,11 @@ impl Bqm {
     ///
     /// If `i` is past the variable count.
     pub fn bias(&mut self, i: usize, b: f64) {
-        assert!(i < self.linear.len(), "variable {i} of {}", self.linear.len());
+        assert!(
+            i < self.linear.len(),
+            "variable {i} of {}",
+            self.linear.len()
+        );
         self.linear[i] += b;
     }
 
@@ -215,7 +221,12 @@ impl Bqm {
     /// If `state` is shorter than the variable count.
     #[must_use]
     pub fn energy(&self, state: &[i8]) -> f64 {
-        assert!(state.len() >= self.linear.len(), "state of {} for {} variables", state.len(), self.linear.len());
+        assert!(
+            state.len() >= self.linear.len(),
+            "state of {} for {} variables",
+            state.len(),
+            self.linear.len()
+        );
         let mut e = self.offset;
         for (i, &h) in self.linear.iter().enumerate() {
             e += h * f64::from(state[i]);
@@ -351,7 +362,10 @@ impl Bqm {
     /// Whether the labels are exactly `0..n`, which is what `dimod` records as `"variables": false`.
     #[must_use]
     pub fn is_index_labeled(&self) -> bool {
-        self.labels.iter().enumerate().all(|(i, l)| *l == Label::Index(i as i64))
+        self.labels
+            .iter()
+            .enumerate()
+            .all(|(i, l)| *l == Label::Index(i as i64))
     }
 
     /// Neighbourhoods in the file's own order: per variable, ascending by neighbour.
@@ -437,7 +451,10 @@ impl core::fmt::Display for BqmError {
                 "this is a dimod BQM file of version {major}.{minor}; versions 1.x and 2.x are read"
             ),
             BqmError::Truncated { section, want, got } => {
-                write!(f, "the {section} section wants {want} bytes and {got} remain")
+                write!(
+                    f,
+                    "the {section} section wants {want} bytes and {got} remain"
+                )
             }
             BqmError::Header(why) => write!(f, "the JSON header is not usable: {why}"),
             BqmError::Dtype(name) => write!(
@@ -456,9 +473,16 @@ impl core::fmt::Display for BqmError {
             ),
             BqmError::Corrupt(why) => write!(f, "the model body contradicts itself: {why}"),
             BqmError::Line { line, text } => {
-                write!(f, "line {line} is not a comment, a header, or an `i j bias` triplet: {text:?}")
+                write!(
+                    f,
+                    "line {line} is not a comment, a header, or an `i j bias` triplet: {text:?}"
+                )
             }
-            BqmError::Count { kind, declared, found } => write!(
+            BqmError::Count {
+                kind,
+                declared,
+                found,
+            } => write!(
                 f,
                 "the `p qubo` header declares {declared} {kind} entries and the body holds {found}. \
                  A truncated file parses into a valid SMALLER instance whose optimum is not \
@@ -520,7 +544,11 @@ pub fn write_bqm(bqm: &Bqm) -> Vec<u8> {
     let ni = m.quadratic.len();
     let nb = m.neighborhoods();
     let wide = n > i32::MAX as usize || 2 * ni > i32::MAX as usize;
-    let (iname, iw) = if wide { ("int64", 8usize) } else { ("int32", 4usize) };
+    let (iname, iw) = if wide {
+        ("int64", 8usize)
+    } else {
+        ("int32", 4usize)
+    };
     let labeled = !m.is_index_labeled();
 
     let mut header = String::new();
@@ -601,13 +629,21 @@ pub fn write_bqm(bqm: &Bqm) -> Vec<u8> {
 pub fn read_bqm(bytes: &[u8]) -> Result<Bqm, BqmError> {
     if bytes.len() < 14 {
         return Err(if bytes.len() < 8 || bytes[..8] != MAGIC {
-            BqmError::Magic { got: bytes[..bytes.len().min(8)].to_vec() }
+            BqmError::Magic {
+                got: bytes[..bytes.len().min(8)].to_vec(),
+            }
         } else {
-            BqmError::Truncated { section: "prefix", want: 14, got: bytes.len() }
+            BqmError::Truncated {
+                section: "prefix",
+                want: 14,
+                got: bytes.len(),
+            }
         });
     }
     if bytes[..8] != MAGIC {
-        return Err(BqmError::Magic { got: bytes[..8].to_vec() });
+        return Err(BqmError::Magic {
+            got: bytes[..8].to_vec(),
+        });
     }
     let (major, minor) = (bytes[8], bytes[9]);
     if major == 0 || major > 2 {
@@ -626,7 +662,10 @@ pub fn read_bqm(bytes: &[u8]) -> Result<Bqm, BqmError> {
     let head = json_parse(&bytes[14..14 + header_len])
         .ok_or_else(|| BqmError::Header("not well-formed JSON".to_string()))?;
 
-    let field = |k: &str| head.get(k).ok_or_else(|| BqmError::Header(format!("no {k:?} field")));
+    let field = |k: &str| {
+        head.get(k)
+            .ok_or_else(|| BqmError::Header(format!("no {k:?} field")))
+    };
     let dtype = field("dtype")?
         .as_str()
         .ok_or_else(|| BqmError::Header("\"dtype\" is not a string".to_string()))?;
@@ -659,7 +698,9 @@ pub fn read_bqm(bytes: &[u8]) -> Result<Bqm, BqmError> {
             .as_f64()
             .ok_or_else(|| BqmError::Header("\"shape\" holds a non-number".to_string()))?;
         if v < 0.0 || v > 2f64.powi(53) || v.fract() != 0.0 {
-            return Err(BqmError::Header(format!("\"shape\" entry {v} is not a count")));
+            return Err(BqmError::Header(format!(
+                "\"shape\" entry {v} is not a count"
+            )));
         }
         Ok(v as usize)
     };
@@ -668,7 +709,8 @@ pub fn read_bqm(bytes: &[u8]) -> Result<Bqm, BqmError> {
     let body = &bytes[14 + header_len..];
     // Computed in the widths the header declares, so a hostile `shape` cannot overflow into a
     // small number and pass the bounds check.
-    let need = (dw as u128) + (n as u128) * (nw + dw) as u128 + 2 * (ni as u128) * (iw + dw) as u128;
+    let need =
+        (dw as u128) + (n as u128) * (nw + dw) as u128 + 2 * (ni as u128) * (iw + dw) as u128;
     if need > body.len() as u128 {
         return Err(BqmError::Truncated {
             section: "biases",
@@ -728,7 +770,9 @@ pub fn read_bqm(bytes: &[u8]) -> Result<Bqm, BqmError> {
                     )));
                 }
             } else {
-                return Err(BqmError::Corrupt(format!("variable {v} is its own neighbour")));
+                return Err(BqmError::Corrupt(format!(
+                    "variable {v} is its own neighbour"
+                )));
             }
         }
     }
@@ -741,7 +785,10 @@ pub fn read_bqm(bytes: &[u8]) -> Result<Bqm, BqmError> {
 
     let mut labels: Vec<Label> = (0..n as i64).map(Label::Index).collect();
     if major >= 2 {
-        let want_labels = head.get("variables").and_then(Json::as_bool).unwrap_or(false);
+        let want_labels = head
+            .get("variables")
+            .and_then(Json::as_bool)
+            .unwrap_or(false);
         if want_labels {
             let tail = &body[at + 2 * ni * (iw + dw)..];
             if tail.len() < 8 || &tail[..4] != b"VARS" {
@@ -753,7 +800,11 @@ pub fn read_bqm(bytes: &[u8]) -> Result<Bqm, BqmError> {
             }
             let len = u32::from_le_bytes([tail[4], tail[5], tail[6], tail[7]]) as usize;
             if len > tail.len() - 8 {
-                return Err(BqmError::Truncated { section: "VARS", want: len, got: tail.len() - 8 });
+                return Err(BqmError::Truncated {
+                    section: "VARS",
+                    want: len,
+                    got: tail.len() - 8,
+                });
             }
             labels = json_labels(
                 &json_parse(&tail[8..8 + len])
@@ -773,11 +824,19 @@ pub fn read_bqm(bytes: &[u8]) -> Result<Bqm, BqmError> {
         )));
     }
 
-    Ok(Bqm { vartype, linear, quadratic: quad, offset, labels })
+    Ok(Bqm {
+        vartype,
+        linear,
+        quadratic: quad,
+        offset,
+        labels,
+    })
 }
 
 fn json_labels(v: &Json) -> Result<Vec<Label>, BqmError> {
-    let arr = v.as_arr().ok_or_else(|| BqmError::Label("the list is not an array".to_string()))?;
+    let arr = v
+        .as_arr()
+        .ok_or_else(|| BqmError::Label("the list is not an array".to_string()))?;
     let mut out = Vec::with_capacity(arr.len());
     for e in arr {
         match e {
@@ -860,7 +919,10 @@ pub fn read_triplets(text: &str) -> Result<Bqm, BqmError> {
         if line.is_empty() {
             continue;
         }
-        let bad = || BqmError::Line { line: no + 1, text: line.to_string() };
+        let bad = || BqmError::Line {
+            line: no + 1,
+            text: line.to_string(),
+        };
         if line.starts_with('c') || line.starts_with('#') {
             if let Some(v) = tagged(line, "vartype").and_then(Vartype::from_name) {
                 vartype = v;
@@ -1092,11 +1154,18 @@ impl JsonP<'_> {
     fn number(&mut self) -> Option<Json> {
         let start = self.i;
         while self.i < self.b.len()
-            && matches!(self.b[self.i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+            && matches!(
+                self.b[self.i],
+                b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9'
+            )
         {
             self.i += 1;
         }
-        core::str::from_utf8(&self.b[start..self.i]).ok()?.parse::<f64>().ok().map(Json::Num)
+        core::str::from_utf8(&self.b[start..self.i])
+            .ok()?
+            .parse::<f64>()
+            .ok()
+            .map(Json::Num)
     }
     fn value(&mut self) -> Option<Json> {
         self.ws();
@@ -1270,7 +1339,9 @@ mod tests {
     fn unhex(s: &str) -> Vec<u8> {
         let b = s.as_bytes();
         (0..b.len() / 2)
-            .map(|k| u8::from_str_radix(core::str::from_utf8(&b[2 * k..2 * k + 2]).unwrap(), 16).unwrap())
+            .map(|k| {
+                u8::from_str_radix(core::str::from_utf8(&b[2 * k..2 * k + 2]).unwrap(), 16).unwrap()
+            })
             .collect()
     }
 
@@ -1332,7 +1403,10 @@ mod tests {
             assert_eq!(got.len(), want.len(), "{name}: length");
             if got != want {
                 let at = got.iter().zip(&want).position(|(a, b)| a != b).unwrap();
-                panic!("{name}: first difference at byte {at}: {:#04x} vs {:#04x}", got[at], want[at]);
+                panic!(
+                    "{name}: first difference at byte {at}: {:#04x} vs {:#04x}",
+                    got[at], want[at]
+                );
             }
         }
     }
@@ -1348,15 +1422,26 @@ mod tests {
             let spin = m.to_vartype(Vartype::Spin);
             let binary = m.to_vartype(Vartype::Binary);
             for mask in 0u32..(1u32 << n) {
-                let s: Vec<i8> =
-                    (0..n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let s: Vec<i8> = (0..n)
+                    .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 let x = binary_state(&s);
                 assert_eq!(spin_state(&x), s, "{name}: the state maps are not inverse");
                 let (a, b) = (spin.energy(&s), binary.energy(&x));
-                assert!((a - b).abs() < 1e-12, "{name}: state {mask}: spin {a} vs binary {b}");
+                assert!(
+                    (a - b).abs() < 1e-12,
+                    "{name}: state {mask}: spin {a} vs binary {b}"
+                );
                 // and the original scores it too, in whichever vartype it already was
-                let own = if m.vartype == Vartype::Spin { m.energy(&s) } else { m.energy(&x) };
-                assert!((a - own).abs() < 1e-12, "{name}: state {mask}: {a} vs {own}");
+                let own = if m.vartype == Vartype::Spin {
+                    m.energy(&s)
+                } else {
+                    m.energy(&x)
+                };
+                assert!(
+                    (a - own).abs() < 1e-12,
+                    "{name}: state {mask}: {a} vs {own}"
+                );
             }
         }
     }
@@ -1375,12 +1460,17 @@ mod tests {
         let binary = m.to_vartype(Vartype::Binary);
         let mut dropped = binary.clone();
         dropped.offset = 0.0;
-        assert!(binary.offset.abs() > 1e-9, "the substitution must produce a constant here");
+        assert!(
+            binary.offset.abs() > 1e-9,
+            "the substitution must produce a constant here"
+        );
 
         let mut with: Vec<(f64, u32)> = Vec::new();
         let mut without: Vec<(f64, u32)> = Vec::new();
         for mask in 0u32..16 {
-            let s: Vec<i8> = (0..4).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let s: Vec<i8> = (0..4)
+                .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             let x = binary_state(&s);
             let (a, b) = (binary.energy(&x), dropped.energy(&x));
             assert!(
@@ -1395,7 +1485,10 @@ mod tests {
         without.sort_by(|p, q| p.0.total_cmp(&q.0));
         let order: Vec<u32> = with.iter().map(|p| p.1).collect();
         let order_without: Vec<u32> = without.iter().map(|p| p.1).collect();
-        assert_eq!(order, order_without, "a dropped constant is invisible to every ranking");
+        assert_eq!(
+            order, order_without,
+            "a dropped constant is invisible to every ranking"
+        );
         assert!(
             (with[0].0 - without[0].0).abs() > 1e-9,
             "and it is exactly what a published objective value would disagree about"
@@ -1443,7 +1536,11 @@ mod tests {
                 let x: Vec<i8> = (0..n).map(|i| i8::from(mask >> i & 1 == 1)).collect();
                 let s = spin_state(&x);
                 let a = back.energy(&x);
-                let b = if m.vartype == Vartype::Spin { m.energy(&s) } else { m.energy(&x) };
+                let b = if m.vartype == Vartype::Spin {
+                    m.energy(&s)
+                } else {
+                    m.energy(&x)
+                };
                 assert!((a - b).abs() < 1e-12, "{name}: state {mask}: {a} vs {b}");
             }
         }
@@ -1475,14 +1572,18 @@ mod tests {
         let bqm = Bqm::from_graph(&g);
         assert_eq!(bqm.vartype, Vartype::Spin);
         for mask in 0u32..(1u32 << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             let (a, b) = (bqm.energy(&s), g.energy(&s));
             assert!((a - b).abs() < 1e-12, "state {mask}: bqm {a} vs graph {b}");
         }
         let (back, off) = bqm.to_graph();
         assert_eq!(off, 0.0);
         for mask in 0u32..(1u32 << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             assert!((back.energy(&s) - g.energy(&s)).abs() < 1e-12);
         }
     }
@@ -1510,7 +1611,10 @@ mod tests {
             let x: Vec<i8> = (0..6).map(|i| i8::from(mask >> i & 1 == 1)).collect();
             best = best.min(q.energy(&x));
         }
-        assert!((got - best).abs() < 1e-9, "elimination {got} vs brute force {best}");
+        assert!(
+            (got - best).abs() < 1e-9,
+            "elimination {got} vs brute force {best}"
+        );
 
         // and the state elimination returned is one that attains it
         let x = binary_state(&exact.ground_state.unwrap());
@@ -1535,29 +1639,54 @@ mod tests {
 
         let mut hostile = full.clone();
         hostile[10..14].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(matches!(read_bqm(&hostile), Err(BqmError::Truncated { .. })));
+        assert!(matches!(
+            read_bqm(&hostile),
+            Err(BqmError::Truncated { .. })
+        ));
 
         let mut wrong_magic = full.clone();
         wrong_magic[0] = b'X';
-        assert!(matches!(read_bqm(&wrong_magic), Err(BqmError::Magic { .. })));
+        assert!(matches!(
+            read_bqm(&wrong_magic),
+            Err(BqmError::Magic { .. })
+        ));
 
         let mut future = full.clone();
         future[8] = 9;
-        assert!(matches!(read_bqm(&future), Err(BqmError::Version { major: 9, .. })));
+        assert!(matches!(
+            read_bqm(&future),
+            Err(BqmError::Version { major: 9, .. })
+        ));
 
         // a shape that claims more interactions than the body holds
         let mut lying = full.clone();
         let at = lying.windows(9).position(|w| w == b"[3, 3], \"").unwrap();
         lying[at + 4] = b'9';
-        assert!(read_bqm(&lying).is_err(), "a shape the body cannot fill must be refused");
+        assert!(
+            read_bqm(&lying).is_err(),
+            "a shape the body cannot fill must be refused"
+        );
 
         // text
-        assert!(matches!(read_triplets("0 1"), Err(BqmError::Line { line: 1, .. })));
-        assert!(matches!(read_triplets("0 1 nope"), Err(BqmError::Line { .. })));
-        assert!(matches!(read_triplets("0 1 inf"), Err(BqmError::Line { .. })));
+        assert!(matches!(
+            read_triplets("0 1"),
+            Err(BqmError::Line { line: 1, .. })
+        ));
+        assert!(matches!(
+            read_triplets("0 1 nope"),
+            Err(BqmError::Line { .. })
+        ));
+        assert!(matches!(
+            read_triplets("0 1 inf"),
+            Err(BqmError::Line { .. })
+        ));
         assert!(matches!(
             read_triplets("p qubo 0 2 1 1\n0 0 1\n"),
-            Err(BqmError::Count { kind: "coupler", declared: 1, found: 0 })
+            Err(BqmError::Count {
+                kind: "coupler",
+                declared: 1,
+                found: 0
+            })
         ));
         assert!(matches!(
             read_triplets("p qubo 0 2 0 1\n0 5 1\n"),
@@ -1607,7 +1736,10 @@ mod tests {
     fn a_tuple_label_is_refused() {
         // the labelled fixture with `["a", "b"]` replaced by `[[0, 1], 2]`, same length
         let mut bytes = unhex(B_LABELED_BINARY);
-        let at = bytes.windows(10).position(|w| w == b"[\"a\", \"b\"]").unwrap();
+        let at = bytes
+            .windows(10)
+            .position(|w| w == b"[\"a\", \"b\"]")
+            .unwrap();
         bytes[at..at + 10].copy_from_slice(b"[[0, 1],2]");
         assert!(matches!(read_bqm(&bytes), Err(BqmError::Label(_))));
     }

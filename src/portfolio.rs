@@ -59,7 +59,9 @@ impl Budget {
     /// first — an arm that silently gets more is a comparison that measures the split.
     #[must_use]
     pub fn split(self, n: usize) -> Budget {
-        Budget { proposals: if n == 0 { 0 } else { self.proposals / n as u64 } }
+        Budget {
+            proposals: if n == 0 { 0 } else { self.proposals / n as u64 },
+        }
     }
 }
 
@@ -105,7 +107,10 @@ impl Search for Tabu {
     fn solve(&self, g: &Graph, budget: Budget, seed: u64) -> Found {
         // One iteration evaluates every free spin's flip, so an iteration is `n` proposals.
         let iters = (budget.proposals / g.n.max(1) as u64).max(1) as usize;
-        let p = crate::tabu::Params { iterations: iters, ..Default::default() };
+        let p = crate::tabu::Params {
+            iterations: iters,
+            ..Default::default()
+        };
         let o = crate::tabu::search(g, &p, seed);
         Found {
             arm: "tabu",
@@ -126,7 +131,10 @@ impl Search for Bls {
     }
     fn solve(&self, g: &Graph, budget: Budget, seed: u64) -> Found {
         let iters = (budget.proposals / g.n.max(1) as u64).max(1) as usize;
-        let p = crate::bls::Params { iterations: iters, ..Default::default() };
+        let p = crate::bls::Params {
+            iterations: iters,
+            ..Default::default()
+        };
         let o = crate::bls::search(g, &p, seed);
         Found {
             arm: "bls",
@@ -202,7 +210,12 @@ impl Search for Tempering {
 /// Every arm this crate offers through [`Search`].
 #[must_use]
 pub fn all() -> Vec<Box<dyn Search>> {
-    vec![Box::new(Tabu), Box::new(Bls), Box::new(Sqa), Box::new(Tempering)]
+    vec![
+        Box::new(Tabu),
+        Box::new(Bls),
+        Box::new(Sqa),
+        Box::new(Tempering),
+    ]
 }
 
 /// What a portfolio run produced.
@@ -235,7 +248,11 @@ pub fn run(g: &Graph, arms: &[Box<dyn Search>], budget: Budget, seed: u64) -> Re
         .expect("at least one arm")
         .clone();
     let spent = found.iter().map(|f| f.spent).sum();
-    Report { best, arms: found, spent }
+    Report {
+        best,
+        arms: found,
+        spent,
+    }
 }
 
 #[cfg(test)]
@@ -315,7 +332,11 @@ mod tests {
                 a.energy
             );
         }
-        assert!(r.arms.iter().any(|a| a.arm == r.best.arm && a.energy == r.best.energy));
+        assert!(
+            r.arms
+                .iter()
+                .any(|a| a.arm == r.best.arm && a.energy == r.best.energy)
+        );
         assert!((r.best.energy - g.energy(&r.best.state)).abs() < 1e-9);
     }
 
@@ -336,8 +357,16 @@ mod tests {
             arms.len()
         );
         assert_eq!(Budget::new(100).split(4), Budget::new(25));
-        assert_eq!(Budget::new(102).split(4), Budget::new(25), "the remainder is dropped");
-        assert_eq!(Budget::new(7).split(0), Budget::new(0), "no arms, no budget");
+        assert_eq!(
+            Budget::new(102).split(4),
+            Budget::new(25),
+            "the remainder is dropped"
+        );
+        assert_eq!(
+            Budget::new(7).split(0),
+            Budget::new(0),
+            "no arms, no budget"
+        );
 
         // And a LOWER bound, or the assertion above is satisfied by spending nothing: a portfolio
         // reporting zero would pass every upper bound in this file.
@@ -357,7 +386,10 @@ mod tests {
     fn the_tempering_arm_sizes_its_ladder_from_the_model() {
         let small = Tempering::rungs(100);
         let large = Tempering::rungs(400);
-        assert!(small >= 2 && large >= 2, "a ladder needs two rungs to swap at all");
+        assert!(
+            small >= 2 && large >= 2,
+            "a ladder needs two rungs to swap at all"
+        );
         let ratio = large as f64 / small as f64;
         assert!(
             (1.8..=2.2).contains(&ratio),
@@ -381,7 +413,11 @@ mod tests {
         let arms = all();
         let total = 1_200_000u64;
         let r = run(&g, &arms, Budget::new(total), 7);
-        let worst = r.arms.iter().map(|a| a.energy).fold(f64::NEG_INFINITY, f64::max);
+        let worst = r
+            .arms
+            .iter()
+            .map(|a| a.energy)
+            .fold(f64::NEG_INFINITY, f64::max);
         assert!(
             r.best.energy <= worst,
             "portfolio {} against its worst arm {worst}",
@@ -389,6 +425,10 @@ mod tests {
         );
         // And it should be somewhere near the planted optimum, not merely internally consistent.
         let excess = (r.best.energy - opt) / opt.abs();
-        assert!(excess < 0.25, "portfolio landed {:.1}% above the planted optimum", excess * 100.0);
+        assert!(
+            excess < 0.25,
+            "portfolio landed {:.1}% above the planted optimum",
+            excess * 100.0
+        );
     }
 }

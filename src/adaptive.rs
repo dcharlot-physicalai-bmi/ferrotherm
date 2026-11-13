@@ -116,7 +116,10 @@ impl Params {
     #[must_use]
     pub fn for_graph(g: &Graph) -> Params {
         let d = Params::default();
-        Params { replicas: replicas_for(g.n, d.beta_min, d.beta_max), ..d }
+        Params {
+            replicas: replicas_for(g.n, d.beta_min, d.beta_max),
+            ..d
+        }
     }
 }
 
@@ -129,7 +132,11 @@ pub fn adapt(g: &Graph, p: &Params, seed: u64) -> Outcome {
     let r = p.replicas.max(2);
     let mut betas = crate::tempering::geometric_ladder(p.beta_min, p.beta_max, r);
     let mut spread = Vec::with_capacity(p.epochs.max(1));
-    let mut last = TemperingResult { best: vec![1; g.n], best_e: f64::INFINITY, swap_rates: vec![] };
+    let mut last = TemperingResult {
+        best: vec![1; g.n],
+        best_e: f64::INFINITY,
+        swap_rates: vec![],
+    };
 
     for epoch in 0..p.epochs.max(1) {
         let out = crate::tempering::parallel_tempering(
@@ -140,7 +147,11 @@ pub fn adapt(g: &Graph, p: &Params, seed: u64) -> Outcome {
             seed ^ ((epoch as u64) << 17),
             None,
         );
-        let hi = out.swap_rates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let hi = out
+            .swap_rates
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
         let lo = out.swap_rates.iter().copied().fold(f64::INFINITY, f64::min);
         spread.push(hi - lo);
         if out.best_e < last.best_e {
@@ -155,7 +166,13 @@ pub fn adapt(g: &Graph, p: &Params, seed: u64) -> Outcome {
         }
     }
 
-    Outcome { best: last.best, best_e: last.best_e, betas, swap_rates: last.swap_rates, spread }
+    Outcome {
+        best: last.best,
+        best_e: last.best_e,
+        betas,
+        swap_rates: last.swap_rates,
+        spread,
+    }
 }
 
 /// [`adapt`], with the final epoch observed so the free-energy curve comes out beside the answer.
@@ -168,12 +185,20 @@ pub fn adapt(g: &Graph, p: &Params, seed: u64) -> Outcome {
 /// the traces carry free-energy DIFFERENCES rather than an absolute `ln Z`; see
 /// [`crate::tempering::LadderTraces::log_z_differences`]. Whether the respacing makes those
 /// differences better conditioned is a measurement, and `examples/adaptive_free_energy` makes it.
-pub fn adapt_observed(g: &Graph, p: &Params, seed: u64) -> (Outcome, crate::tempering::LadderTraces) {
+pub fn adapt_observed(
+    g: &Graph,
+    p: &Params,
+    seed: u64,
+) -> (Outcome, crate::tempering::LadderTraces) {
     let r = p.replicas.max(2);
     let epochs = p.epochs.max(1);
     let mut betas = crate::tempering::geometric_ladder(p.beta_min, p.beta_max, r);
     let mut spread = Vec::with_capacity(epochs);
-    let mut last = TemperingResult { best: vec![1; g.n], best_e: f64::INFINITY, swap_rates: vec![] };
+    let mut last = TemperingResult {
+        best: vec![1; g.n],
+        best_e: f64::INFINITY,
+        swap_rates: vec![],
+    };
     let mut traces = crate::tempering::LadderTraces {
         betas: betas.clone(),
         energies: vec![Vec::new(); r],
@@ -196,9 +221,20 @@ pub fn adapt_observed(g: &Graph, p: &Params, seed: u64) -> (Outcome, crate::temp
             traces = tr;
             out
         } else {
-            crate::tempering::parallel_tempering(g, &betas, p.rounds, p.swap_every, seed ^ ((epoch as u64) << 17), None)
+            crate::tempering::parallel_tempering(
+                g,
+                &betas,
+                p.rounds,
+                p.swap_every,
+                seed ^ ((epoch as u64) << 17),
+                None,
+            )
         };
-        let hi = out.swap_rates.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let hi = out
+            .swap_rates
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
         let lo = out.swap_rates.iter().copied().fold(f64::INFINITY, f64::min);
         spread.push(hi - lo);
         if out.best_e < last.best_e {
@@ -211,7 +247,16 @@ pub fn adapt_observed(g: &Graph, p: &Params, seed: u64) -> (Outcome, crate::temp
         }
     }
 
-    (Outcome { best: last.best, best_e: last.best_e, betas, swap_rates: last.swap_rates, spread }, traces)
+    (
+        Outcome {
+            best: last.best,
+            best_e: last.best_e,
+            betas,
+            swap_rates: last.swap_rates,
+            spread,
+        },
+        traces,
+    )
 }
 
 /// Acceptance below which an adjacent pair is a wall rather than a rung.
@@ -319,7 +364,11 @@ pub fn respace(betas: &[f64], rates: &[f64]) -> Vec<f64> {
             i += 1;
         }
         let span = cum[i + 1] - cum[i];
-        let frac = if span > 0.0 { (target - cum[i]) / span } else { 0.0 };
+        let frac = if span > 0.0 {
+            (target - cum[i]) / span
+        } else {
+            0.0
+        };
         let a = betas[i].ln();
         let b = betas[i + 1].ln();
         out[k] = (a + (b - a) * frac).exp();
@@ -405,14 +454,21 @@ pub fn adapt_2d(
     let mut reps: Vec<Sampler> = Vec::with_capacity(nb * ns);
     for si in 0..ns {
         for bi in 0..nb {
-            reps.push(Sampler::new(&graphs[si], betas[bi], seed ^ ((at(bi, si) as u64) * 0x9E37)));
+            reps.push(Sampler::new(
+                &graphs[si],
+                betas[bi],
+                seed ^ ((at(bi, si) as u64) * 0x9E37),
+            ));
         }
     }
     let mut rng = Pcg::new(seed ^ 0x2D2D, 7);
     let mut attempts = vec![0u64; nb.saturating_sub(1)];
     let mut accepts = vec![0u64; nb.saturating_sub(1)];
     // The physical row is the one at scale 1; its best is the answer.
-    let phys = scales.iter().position(|&s| (s - 1.0).abs() < 1e-12).unwrap();
+    let phys = scales
+        .iter()
+        .position(|&s| (s - 1.0).abs() < 1e-12)
+        .unwrap();
     let mut best = reps[at(nb - 1, phys)].s.clone();
     let mut best_e = g.energy(&best);
 
@@ -555,7 +611,11 @@ mod tests {
         };
         let out = adapt(&g, &p, 3);
         let worst = out.swap_rates.iter().copied().fold(f64::INFINITY, f64::min);
-        assert!(worst < 0.02, "this ladder is meant to be dead: {:?}", out.swap_rates);
+        assert!(
+            worst < 0.02,
+            "this ladder is meant to be dead: {:?}",
+            out.swap_rates
+        );
         assert!(
             *out.spread.last().unwrap() <= out.spread[0] + 1e-12,
             "and its spread does not rise: {:?}",
@@ -577,7 +637,10 @@ mod tests {
         let even = crate::tempering::geometric_ladder(0.1, 4.0, 6);
         let same = respace(&even, &[0.4; 5]);
         for (a, b) in even.iter().zip(&same) {
-            assert!((a - b).abs() < 1e-9, "an even ladder must not move: {even:?} -> {same:?}");
+            assert!(
+                (a - b).abs() < 1e-9,
+                "an even ladder must not move: {even:?} -> {same:?}"
+            );
         }
 
         // One dead pair in the middle: its neighbours must close in around it.
@@ -623,8 +686,16 @@ mod tests {
         let all_up = vec![1i8; 3];
         // E = -sum h s - sum J s s. With every spin +1: couplings contribute -(2.0 - 1.0) = -1.0
         // at scale 1 and -0.25 at scale 0.25; fields contribute -(0.5 - 1.5) = 1.0 either way.
-        assert!((g.energy(&all_up) - 0.0).abs() < 1e-12, "{}", g.energy(&all_up));
-        assert!((s.energy(&all_up) - 0.75).abs() < 1e-12, "{}", s.energy(&all_up));
+        assert!(
+            (g.energy(&all_up) - 0.0).abs() < 1e-12,
+            "{}",
+            g.energy(&all_up)
+        );
+        assert!(
+            (s.energy(&all_up) - 0.75).abs() < 1e-12,
+            "{}",
+            s.energy(&all_up)
+        );
     }
 
     /// A 2D grid that never visits the model as given is refused, because its answer would be the
@@ -648,9 +719,17 @@ mod tests {
         let b = crate::tempering::geometric_ladder(0.1, 3.0, 5);
         let out = adapt_2d(&g, &b, &[0.4, 0.7, 1.0], 300, 2, 5).unwrap();
         assert_eq!(out.best.len(), g.n);
-        assert!((g.energy(&out.best) - out.best_e).abs() < 1e-9, "energy must be the real one");
+        assert!(
+            (g.energy(&out.best) - out.best_e).abs() < 1e-9,
+            "energy must be the real one"
+        );
         // A 2D ladder over a ferromagnet at these betas should find something well below zero.
-        assert!(out.best_e < -0.8 * g.n_edges as f64, "best {} on {} edges", out.best_e, g.n_edges);
+        assert!(
+            out.best_e < -0.8 * g.n_edges as f64,
+            "best {} on {} edges",
+            out.best_e,
+            g.n_edges
+        );
     }
     /// The shipped default ladder is severed on a glass, and the derived one is not.
     ///
@@ -704,13 +783,21 @@ mod tests {
             replicas_for(400, lo, hi) > replicas_for(400, 0.5, 4.0),
             "a wider span needs more rungs than a narrow one"
         );
-        assert_eq!(replicas_for(0, lo, hi), 2, "never fewer than two, which could not swap");
+        assert_eq!(
+            replicas_for(0, lo, hi),
+            2,
+            "never fewer than two, which could not swap"
+        );
         // The clamp, on the path that reaches it. A tiny model over a narrow span computes ONE
         // rung, and one rung cannot swap with anything -- the `n == 0` case above returns early
         // and so never exercises this, which a mutation removing the clamp survived.
         assert_eq!(replicas_for(1, 1.0, 1.1), 2, "one rung is not a ladder");
         assert_eq!(replicas_for(100, 1.0, 1.0), 2, "nor for a span of nothing");
-        assert_eq!(replicas_for(100, 1.0, f64::NAN), 2, "nor for a span that is not a number");
+        assert_eq!(
+            replicas_for(100, 1.0, f64::NAN),
+            2,
+            "nor for a span that is not a number"
+        );
     }
 
     /// `gaps` reads the rates it is given, and empty means healthy.
@@ -729,5 +816,4 @@ mod tests {
         o.swap_rates = vec![0.0, 0.01, 0.04];
         assert_eq!(o.gaps(), vec![0, 1, 2], "every pair below the bar is named");
     }
-
 }

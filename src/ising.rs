@@ -241,11 +241,7 @@ pub fn exact_boltzmann(g: &Graph, beta: f64) -> Vec<f64> {
 pub fn onsager_m(beta: f64) -> f64 {
     let s = (2.0 * beta).sinh();
     let x = 1.0 - s.powi(-4);
-    if x <= 0.0 {
-        0.0
-    } else {
-        x.powf(1.0 / 8.0)
-    }
+    if x <= 0.0 { 0.0 } else { x.powf(1.0 / 8.0) }
 }
 
 /// Total-variation distance between two distributions.
@@ -276,7 +272,13 @@ mod tests {
     /// Counts first, because they are cheap and they catch a whole class of wrong.
     #[test]
     fn chimera_has_the_vertices_and_edges_the_formula_says() {
-        for (m, n, tt) in [(1usize, 1usize, 4usize), (2, 3, 4), (4, 4, 4), (16, 16, 4), (3, 3, 2)] {
+        for (m, n, tt) in [
+            (1usize, 1usize, 4usize),
+            (2, 3, 4),
+            (4, 4, 4),
+            (16, 16, 4),
+            (3, 3, 2),
+        ] {
             let g = chimera(m, n, tt, 1.0);
             assert_eq!(g.n, 2 * tt * m * n, "C_{{{m},{n},{tt}}} vertices");
             let want = m * n * tt * tt + (m - 1) * n * tt + m * (n - 1) * tt;
@@ -376,7 +378,10 @@ mod tests {
             }
             assert_eq!(crate::exact::Elimination::default().width(&gb.build()), 1);
         }
-        assert!(seen.iter().all(|&x| x), "the two shores must cover every vertex");
+        assert!(
+            seen.iter().all(|&x| x),
+            "the two shores must cover every vertex"
+        );
     }
 
     /// A glass has the same graph and different weights, and the weights are actually mixed.
@@ -388,7 +393,10 @@ mod tests {
         assert_eq!(g.n_edges, plain.n_edges);
         assert!(g.w.iter().all(|w| w.abs() == 1.0), "couplings are +/-1");
         let pos = g.w.iter().filter(|w| **w > 0.0).count();
-        assert!(pos > 0 && pos < g.w.len(), "a glass is frustrated, not a ferromagnet: {pos}");
+        assert!(
+            pos > 0 && pos < g.w.len(),
+            "a glass is frustrated, not a ferromagnet: {pos}"
+        );
         // Same seed, same instance -- otherwise no comparison across arms means anything.
         assert_eq!(g.w, chimera_glass(3, 3, 4, 11).w);
         assert_ne!(g.w, chimera_glass(3, 3, 4, 12).w);
@@ -418,16 +426,30 @@ mod tests {
         let g = ring(8, 1.0, 0.0);
         for beta in [1.0, 3.0, 6.0, 8.0, 24.0, 200.0] {
             let p = exact_boltzmann(&g, beta);
-            assert!(p.iter().all(|v| v.is_finite()), "beta={beta} produced a non-finite entry");
+            assert!(
+                p.iter().all(|v| v.is_finite()),
+                "beta={beta} produced a non-finite entry"
+            );
             let sum: f64 = p.iter().sum();
-            assert!((sum - 1.0).abs() < 1e-12, "beta={beta} sums to {sum}, not 1");
+            assert!(
+                (sum - 1.0).abs() < 1e-12,
+                "beta={beta} sums to {sum}, not 1"
+            );
         }
 
         // Still RIGHT, not merely finite: at low temperature a ferromagnetic ring puts half its
         // mass on all-down and half on all-up, and nothing measurable anywhere else.
         let p = exact_boltzmann(&g, 20.0);
-        assert!((p[0] - 0.5).abs() < 1e-9, "all-down should carry half the mass, got {}", p[0]);
-        assert!((p[255] - 0.5).abs() < 1e-9, "all-up should carry half the mass, got {}", p[255]);
+        assert!(
+            (p[0] - 0.5).abs() < 1e-9,
+            "all-down should carry half the mass, got {}",
+            p[0]
+        );
+        assert!(
+            (p[255] - 0.5).abs() < 1e-9,
+            "all-up should carry half the mass, got {}",
+            p[255]
+        );
     }
 
     #[test]

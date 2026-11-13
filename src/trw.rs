@@ -106,7 +106,13 @@ impl TreeCover {
         let t = member.len() as f64;
         let weight = vec![1.0 / t; member.len()];
         let rho = (0..ne).map(|e| uses[e] as f64 / t).collect();
-        TreeCover { edges, slots, weight, member, rho }
+        TreeCover {
+            edges,
+            slots,
+            weight,
+            member,
+            rho,
+        }
     }
 
     /// Coupling of edge `e`, read off the graph the cover was built from.
@@ -156,7 +162,11 @@ impl Trw {
 /// If `cover` was not built from `g`, or `damping` is not in `[0, 1)`.
 #[must_use]
 pub fn trw(g: &Graph, beta: f64, cover: &TreeCover, iters: usize, damping: f64) -> Trw {
-    assert_eq!(cover.edges.len(), g.n_edges, "cover was built from another graph");
+    assert_eq!(
+        cover.edges.len(),
+        g.n_edges,
+        "cover was built from another graph"
+    );
     assert!((0.0..1.0).contains(&damping), "damping must be in [0, 1)");
     let nd = g.nbr.len();
     let mut rev = vec![0usize; nd];
@@ -227,7 +237,14 @@ pub fn trw(g: &Graph, beta: f64, cover: &TreeCover, iters: usize, damping: f64) 
         consistency = consistency.max((bi[1] - (1.0 + m[i]) / 2.0).abs());
         consistency = consistency.max((bj[1] - (1.0 + m[j]) / 2.0).abs());
     }
-    Trw { beta, m, log_z: energy + entropy, residual, iterations: it, consistency }
+    Trw {
+        beta,
+        m,
+        log_z: energy + entropy,
+        residual,
+        iterations: it,
+        consistency,
+    }
 }
 
 /// The iteration-free bound: `Σ_t ρ_t ln Z(θ^t)` at the canonical split `w_e → w_e / ρ_e`, with
@@ -242,7 +259,11 @@ pub fn trw(g: &Graph, beta: f64, cover: &TreeCover, iters: usize, damping: f64) 
 /// acyclic graph has induced width 1.
 #[must_use]
 pub fn tree_decomposition_bound(g: &Graph, beta: f64, cover: &TreeCover) -> f64 {
-    assert_eq!(cover.edges.len(), g.n_edges, "cover was built from another graph");
+    assert_eq!(
+        cover.edges.len(),
+        g.n_edges,
+        "cover was built from another graph"
+    );
     let mut terms = Vec::with_capacity(cover.weight.len());
     for (t, mem) in cover.member.iter().enumerate() {
         let mut gb = GraphBuilder::new(g.n);
@@ -308,7 +329,9 @@ fn binary_entropy(m: f64) -> f64 {
 }
 
 fn entropy_of(p: &[f64]) -> f64 {
-    -p.iter().map(|&x| if x > 0.0 { x * x.ln() } else { 0.0 }).sum::<f64>()
+    -p.iter()
+        .map(|&x| if x > 0.0 { x * x.ln() } else { 0.0 })
+        .sum::<f64>()
 }
 
 /// Normalised pair belief `∝ exp(a x y + hi x + hj y)`, indexed `2 * x + y` with 0 meaning `-1`.
@@ -339,7 +362,9 @@ struct Dsu {
 
 impl Dsu {
     fn new(n: usize) -> Self {
-        Dsu { p: (0..n).collect() }
+        Dsu {
+            p: (0..n).collect(),
+        }
     }
     fn find(&mut self, x: usize) -> usize {
         let mut r = x;
@@ -404,7 +429,11 @@ mod tests {
     }
 
     fn exact(g: &Graph, beta: f64) -> f64 {
-        Elimination::default().log_partition(g, beta).unwrap().log_z.unwrap()
+        Elimination::default()
+            .log_partition(g, beta)
+            .unwrap()
+            .log_z
+            .unwrap()
     }
 
     /// The cover is a real convex combination of spanning forests: weights sum to one, every
@@ -424,7 +453,11 @@ mod tests {
         ] {
             let c = TreeCover::random(&g, k, 11);
             assert_eq!(c.edges.len(), g.n_edges);
-            assert!(c.member.len() >= k, "asked for {k} forests, got {}", c.member.len());
+            assert!(
+                c.member.len() >= k,
+                "asked for {k} forests, got {}",
+                c.member.len()
+            );
             let total: f64 = c.weight.iter().sum();
             assert!((total - 1.0).abs() < 1e-12, "weights sum to {total}");
             for t in 0..c.member.len() {
@@ -439,15 +472,25 @@ mod tests {
                 for e in 0..c.edges.len() {
                     if !c.member[t][e] {
                         let (i, j) = c.edges[e];
-                        assert_eq!(dsu.find(i), dsu.find(j), "forest {t} is not spanning at {e}");
+                        assert_eq!(
+                            dsu.find(i),
+                            dsu.find(j),
+                            "forest {t} is not spanning at {e}"
+                        );
                     }
                 }
             }
             for e in 0..c.edges.len() {
-                let want: f64 =
-                    (0..c.member.len()).filter(|&t| c.member[t][e]).map(|t| c.weight[t]).sum();
+                let want: f64 = (0..c.member.len())
+                    .filter(|&t| c.member[t][e])
+                    .map(|t| c.weight[t])
+                    .sum();
                 assert!((c.rho[e] - want).abs() < 1e-12);
-                assert!(c.rho[e] > 0.0 && c.rho[e] <= 1.0 + 1e-15, "rho {} at {e}", c.rho[e]);
+                assert!(
+                    c.rho[e] > 0.0 && c.rho[e] <= 1.0 + 1e-15,
+                    "rho {} at {e}",
+                    c.rho[e]
+                );
             }
         }
     }
@@ -463,16 +506,31 @@ mod tests {
             let g = random_tree(18, seed);
             let beta = 0.9;
             let c = TreeCover::random(&g, 3, seed + 100);
-            assert!(c.rho.iter().all(|&r| (r - 1.0).abs() < 1e-15), "a forest has rho = 1");
+            assert!(
+                c.rho.iter().all(|&r| (r - 1.0).abs() < 1e-15),
+                "a forest has rho = 1"
+            );
             let t = trw(&g, beta, &c, 500, 0.0);
             let truth = exact(&g, beta);
             assert!(t.converged(1e-12), "seed {seed}: residual {}", t.residual);
-            assert!((t.log_z - truth).abs() < 1e-9, "seed {seed}: TRW {} vs {truth}", t.log_z);
-            assert!(t.consistency < 1e-9, "seed {seed}: consistency {}", t.consistency);
+            assert!(
+                (t.log_z - truth).abs() < 1e-9,
+                "seed {seed}: TRW {} vs {truth}",
+                t.log_z
+            );
+            assert!(
+                t.consistency < 1e-9,
+                "seed {seed}: consistency {}",
+                t.consistency
+            );
             let marg = Elimination::default().marginals(&g, beta).unwrap();
             for i in 0..g.n {
                 let want = 2.0 * marg[i] - 1.0;
-                assert!((t.m[i] - want).abs() < 1e-9, "site {i}: {} vs {want}", t.m[i]);
+                assert!(
+                    (t.m[i] - want).abs() < 1e-9,
+                    "site {i}: {} vs {want}",
+                    t.m[i]
+                );
             }
             // and the iteration-free route agrees, since the single forest IS the model
             let j = tree_decomposition_bound(&g, beta, &c);
@@ -504,7 +562,12 @@ mod tests {
             for seed in 0..3u64 {
                 let c = TreeCover::random(g, 8, seed);
                 let t = trw(g, *beta, &c, 20_000, 0.5);
-                assert!(t.converged(1e-11), "residual {} n={} beta={beta}", t.residual, g.n);
+                assert!(
+                    t.converged(1e-11),
+                    "residual {} n={} beta={beta}",
+                    t.residual,
+                    g.n
+                );
                 assert!(t.consistency < 1e-8, "consistency {}", t.consistency);
                 assert!(
                     t.log_z >= truth - 1e-9,
@@ -555,19 +618,29 @@ mod tests {
             let t = trw(&g, beta, &c, 20_000, 0.5);
             assert!(t.converged(1e-11));
             let j = tree_decomposition_bound(&g, beta, &c);
-            assert!(t.log_z <= j + 1e-7, "TRW {} above canonical split {j}", t.log_z);
+            assert!(
+                t.log_z <= j + 1e-7,
+                "TRW {} above canonical split {j}",
+                t.log_z
+            );
         }
     }
 
     /// With mean field below, `ln Z` is now bracketed deterministically from both sides.
     #[test]
     fn brackets_exact_log_z_with_mean_field() {
-        for (g, beta) in [(ising::lattice2d(4, 1.0), 0.3), (random_loopy(18, 20, 6), 0.7)] {
+        for (g, beta) in [
+            (ising::lattice2d(4, 1.0), 0.3),
+            (random_loopy(18, 20, 6), 0.7),
+        ] {
             let truth = exact(&g, beta);
             let lo = naive_mean_field(&g, beta, 5000, 0.5).log_z;
             let c = TreeCover::random(&g, 8, 8);
             let hi = trw(&g, beta, &c, 20_000, 0.5).log_z;
-            assert!(lo <= truth + 1e-12 && truth <= hi + 1e-9, "{lo} <= {truth} <= {hi}");
+            assert!(
+                lo <= truth + 1e-12 && truth <= hi + 1e-9,
+                "{lo} <= {truth} <= {hi}"
+            );
             assert!(hi - lo < 3.0, "bracket width {}", hi - lo);
         }
     }
@@ -591,7 +664,11 @@ mod tests {
         let want = (2.0 * (j.exp() * (h1 + h2).cosh() + (-j).exp() * (h1 - h2).cosh())).ln();
         let c = TreeCover::random(&pair, 2, 3);
         let t = trw(&pair, 1.0, &c, 500, 0.0);
-        assert!((t.log_z - want).abs() < 1e-12, "pair gave {} want {want}", t.log_z);
+        assert!(
+            (t.log_z - want).abs() < 1e-12,
+            "pair gave {} want {want}",
+            t.log_z
+        );
         assert!((tree_decomposition_bound(&pair, 1.0, &c) - want).abs() < 1e-12);
     }
 
@@ -649,22 +726,50 @@ mod tests {
             let cover = TreeCover::random(&g, 8, 1);
             let t = trw(&g, beta, &cover, 20_000, 0.5);
             let jensen = tree_decomposition_bound(&g, beta, &cover);
-            assert!(t.converged(1e-9), "trw did not converge at beta {beta}: residual {}", t.residual);
+            assert!(
+                t.converged(1e-9),
+                "trw did not converge at beta {beta}: residual {}",
+                t.residual
+            );
 
-            assert!(lower <= exact, "mean field {lower} ABOVE exact {exact} at beta {beta}, n={}", g.n);
-            assert!(exact <= t.log_z, "TRW {} BELOW exact {exact} at beta {beta}, n={}", t.log_z, g.n);
-            assert!(exact <= jensen, "Jensen {jensen} BELOW exact {exact} at beta {beta}");
-            assert!(t.log_z <= jensen + 1e-9, "message passing must not be worse than the split");
+            assert!(
+                lower <= exact,
+                "mean field {lower} ABOVE exact {exact} at beta {beta}, n={}",
+                g.n
+            );
+            assert!(
+                exact <= t.log_z,
+                "TRW {} BELOW exact {exact} at beta {beta}, n={}",
+                t.log_z,
+                g.n
+            );
+            assert!(
+                exact <= jensen,
+                "Jensen {jensen} BELOW exact {exact} at beta {beta}"
+            );
+            assert!(
+                t.log_z <= jensen + 1e-9,
+                "message passing must not be worse than the split"
+            );
 
             // THE CONTROL. A bracket `[-inf, +inf]` passes every assertion above. Both gaps must be
             // bounded per spin -- the measured values are under 0.10 -- or the bracket says nothing.
             let gap_lo = (exact - lower) / n;
             let gap_hi = (t.log_z - exact) / n;
-            assert!(gap_lo < 0.15, "the lower bound is uninformative: {gap_lo} per spin at beta {beta}");
-            assert!(gap_hi < 0.15, "the upper bound is uninformative: {gap_hi} per spin at beta {beta}");
+            assert!(
+                gap_lo < 0.15,
+                "the lower bound is uninformative: {gap_lo} per spin at beta {beta}"
+            );
+            assert!(
+                gap_hi < 0.15,
+                "the upper bound is uninformative: {gap_hi} per spin at beta {beta}"
+            );
             // And the exact value must sit strictly inside, not on an edge that a sign error could
             // still satisfy.
-            assert!(gap_lo > 1e-6 && gap_hi > 1e-6, "a bound touching the truth is suspicious");
+            assert!(
+                gap_lo > 1e-6 && gap_hi > 1e-6,
+                "a bound touching the truth is suspicious"
+            );
         }
     }
 }

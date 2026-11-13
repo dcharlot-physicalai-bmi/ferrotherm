@@ -22,7 +22,9 @@
 //! ```text
 //! cargo run --release --example tick_random_exact
 //! ```
-use ferrotherm::autocorr::{boltzmann, peretto, stationary_solved, total_variation, AutocorrError, Kernel};
+use ferrotherm::autocorr::{
+    AutocorrError, Kernel, boltzmann, peretto, stationary_solved, total_variation,
+};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -75,12 +77,21 @@ fn uncoupled(n: usize, seed: u64) -> Graph {
     b.build()
 }
 
-const PS: [(f64, &str); 6] =
-    [(1.0, "1"), (0.8, "1/1.25"), (2.0 / 3.0, "1/1.5"), (0.5, "1/2"), (1.0 / 3.0, "1/3"), (0.1, "1/10")];
+const PS: [(f64, &str); 6] = [
+    (1.0, "1"),
+    (0.8, "1/1.25"),
+    (2.0 / 3.0, "1/1.5"),
+    (0.5, "1/2"),
+    (1.0 / 3.0, "1/3"),
+    (0.1, "1/10"),
+];
 
 fn run(name: &str, g: &Graph) {
     println!("\n  {name}: {} spins\n", g.n);
-    println!("        {:>7}   {:>10} {:>10}   {:>12}", "p = 1/c", "TV vs Bolt", "TV vs Per", "TV vs p=1");
+    println!(
+        "        {:>7}   {:>10} {:>10}   {:>12}",
+        "p = 1/c", "TV vs Bolt", "TV vs Per", "TV vs p=1"
+    );
     println!("                                              <- the paper says THIS column is zero");
     for &beta in &[0.5f64, 1.0, 2.0, 3.0] {
         let bolt = boltzmann(g, beta).expect("small");
@@ -120,7 +131,10 @@ fn main() {
     println!("  p -> 0 is at most one site at a time (the Boltzmann limit).");
 
     run("4x3 grid, +-1 couplings (bipartite)", &grid_glass(4, 3, 7));
-    run("12-ring with chords (0,4) (2,7) (5,10) (odd cycles)", &chorded_ring(3));
+    run(
+        "12-ring with chords (0,4) (2,7) (5,10) (odd cycles)",
+        &chorded_ring(3),
+    );
 
     println!("\n  CONTROL -- 12 uncoupled sites: the law must not move with p at all.");
     let u = uncoupled(12, 3);
@@ -128,18 +142,29 @@ fn main() {
         let bolt = boltzmann(&u, beta).expect("small");
         let worst = PS
             .iter()
-            .map(|&(p, _)| total_variation(&stationary_solved(&u, beta, Kernel::TickRandom { p }).expect("solvable"), &bolt))
+            .map(|&(p, _)| {
+                total_variation(
+                    &stationary_solved(&u, beta, Kernel::TickRandom { p }).expect("solvable"),
+                    &bolt,
+                )
+            })
             .fold(0.0f64, f64::max);
         println!("        beta {beta}: worst TV from Boltzmann over all p = {worst:.3e}");
     }
 
-    println!("\n  p = 1 must BE the synchronous kernel, and this is the residual of that identity:");
+    println!(
+        "\n  p = 1 must BE the synchronous kernel, and this is the residual of that identity:"
+    );
     for (nm, g) in [("grid", grid_glass(4, 3, 7)), ("ring", chorded_ring(3))] {
         for &beta in &[0.5f64, 1.0, 2.0, 3.0] {
             let a = stationary_solved(&g, beta, Kernel::TickRandom { p: 1.0 }).expect("solvable");
             let b = stationary_solved(&g, beta, Kernel::Synchronous).expect("solvable");
             let c = peretto(&g, beta).expect("small");
-            println!("        {nm} beta {beta}: TV(tick p=1, synchronous) = {:.3e}   TV(tick p=1, peretto) = {:.3e}", total_variation(&a, &b), total_variation(&a, &c));
+            println!(
+                "        {nm} beta {beta}: TV(tick p=1, synchronous) = {:.3e}   TV(tick p=1, peretto) = {:.3e}",
+                total_variation(&a, &b),
+                total_variation(&a, &c)
+            );
         }
     }
 
@@ -157,7 +182,10 @@ fn main() {
         for &p in &[0.01f64, 0.02, 0.05, 0.1] {
             let law = stationary_solved(&g, beta, Kernel::TickRandom { p }).expect("solvable");
             let tv = total_variation(&law, &bolt);
-            println!("        beta {beta} p {p:>5}: TV = {tv:.6}   TV/p = {:.6}", tv / p);
+            println!(
+                "        beta {beta} p {p:>5}: TV = {tv:.6}   TV/p = {:.6}",
+                tv / p
+            );
         }
     }
     let _ = AutocorrError::TooManySpins { n: 0, max: 0 };

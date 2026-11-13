@@ -22,7 +22,7 @@
 //
 // run: cargo run --release --example nearest_boltzmann
 
-use ferrotherm::autocorr::{boltzmann, spins, stationary_solved, total_variation, Kernel};
+use ferrotherm::autocorr::{Kernel, boltzmann, spins, stationary_solved, total_variation};
 use ferrotherm::continuous::solve;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
@@ -109,7 +109,12 @@ fn moments_and_fisher(law: &[f64], n: usize, edges: &[(usize, usize)]) -> (Vec<f
 
 /// Newton's method on the strictly convex objective KL(target || Boltzmann(theta)), from `start`.
 /// Returns theta*, the KL there, the sup-norm of the last gradient, and the iterations taken.
-fn nearest_pair(target: &[f64], n: usize, edges: &[(usize, usize)], start: &[f64]) -> (Vec<f64>, f64, f64, usize) {
+fn nearest_pair(
+    target: &[f64],
+    n: usize,
+    edges: &[(usize, usize)],
+    start: &[f64],
+) -> (Vec<f64>, f64, f64, usize) {
     let d = edges.len() + n;
     let (m_target, _) = moments_and_fisher(target, n, edges);
     let mut theta = start.to_vec();
@@ -158,8 +163,20 @@ fn nearest_pair(target: &[f64], n: usize, edges: &[(usize, usize)], start: &[f64
 }
 
 /// The single temperature whose Boltzmann law is nearest in KL, by golden section on [lo, hi].
-fn nearest_beta(target: &[f64], n: usize, edges: &[(usize, usize)], theta0: &[f64], lo: f64, hi: f64) -> (f64, f64) {
-    let f = |b: f64| kl(target, &boltzmann(&build(n, edges, theta0), b).expect("small"));
+fn nearest_beta(
+    target: &[f64],
+    n: usize,
+    edges: &[(usize, usize)],
+    theta0: &[f64],
+    lo: f64,
+    hi: f64,
+) -> (f64, f64) {
+    let f = |b: f64| {
+        kl(
+            target,
+            &boltzmann(&build(n, edges, theta0), b).expect("small"),
+        )
+    };
     let phi = 0.5 * (3.0 - 5.0f64.sqrt());
     let (mut a, mut b) = (lo, hi);
     let mut c = a + phi * (b - a);
@@ -190,12 +207,30 @@ fn main() {
     let (edges, theta0) = grid_glass(w, h, 7);
     let e = edges.len();
     println!("THE NEAREST BOLTZMANN PAIR TO THE FABRIC'S LAW, EXACTLY, ON ALL 2^{n} STATES\n");
-    println!("  model    {w}x{h} open grid, random +-1 couplings, fields in [-0.2, 0.2]: {e} couplings + {n} fields = {} parameters", e + n);
-    println!("  fabric   Q.8 weights, 1024-entry ROM, 16-bit comparator (autocorr::Kernel::FixedFabric), law by direct solve");
-    println!("  fit      maximum likelihood to the fabric's law = exact moment matching, Newton with the exact Fisher matrix\n");
+    println!(
+        "  model    {w}x{h} open grid, random +-1 couplings, fields in [-0.2, 0.2]: {e} couplings + {n} fields = {} parameters",
+        e + n
+    );
+    println!(
+        "  fabric   Q.8 weights, 1024-entry ROM, 16-bit comparator (autocorr::Kernel::FixedFabric), law by direct solve"
+    );
+    println!(
+        "  fit      maximum likelihood to the fabric's law = exact moment matching, Newton with the exact Fisher matrix\n"
+    );
     println!(
         "  {:>5}   {:>10} {:>10}   {:>8} {:>10} {:>10}   {:>10} {:>10} {:>7} {:>7} {:>8}   {:>9}",
-        "beta", "KL loaded", "TV loaded", "beta_eff", "KL b_eff", "TV b_eff", "KL pair", "TV pair", "max|dJ|", "max|dh|", "not-B %", "newton"
+        "beta",
+        "KL loaded",
+        "TV loaded",
+        "beta_eff",
+        "KL b_eff",
+        "TV b_eff",
+        "KL pair",
+        "TV pair",
+        "max|dJ|",
+        "max|dh|",
+        "not-B %",
+        "newton"
     );
     for &beta in &[0.5f64, 1.0, 1.5, 2.0, 3.0] {
         let g = build(n, &edges, &theta0);
@@ -206,20 +241,43 @@ fn main() {
         let (b_eff, kl_eff) = nearest_beta(&fab, n, &edges, &theta0, 0.25 * beta, 2.0 * beta);
         let tv_eff = total_variation(&fab, &boltzmann(&g, b_eff).expect("small"));
         let (star, kl_pair, grad, iters) = nearest_pair(&fab, n, &edges, &loaded);
-        let tv_pair = total_variation(&fab, &boltzmann(&build(n, &edges, &star), 1.0).expect("small"));
-        let dj = star[..e].iter().zip(&loaded[..e]).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max);
-        let dh = star[e..].iter().zip(&loaded[e..]).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max);
+        let tv_pair = total_variation(
+            &fab,
+            &boltzmann(&build(n, &edges, &star), 1.0).expect("small"),
+        );
+        let dj = star[..e]
+            .iter()
+            .zip(&loaded[..e])
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f64, f64::max);
+        let dh = star[e..]
+            .iter()
+            .zip(&loaded[e..])
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f64, f64::max);
         println!(
             "  {beta:>5.2}   {kl_loaded:>10.3e} {tv_loaded:>10.3e}   {b_eff:>8.4} {kl_eff:>10.3e} {tv_eff:>10.3e}   {kl_pair:>10.3e} {tv_pair:>10.3e} {dj:>7.4} {dh:>7.4} {:>7.2}%   {iters:>3} {grad:>5.0e}",
             100.0 * kl_pair / kl_loaded
         );
     }
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  'loaded' is the Boltzmann law the fabric was programmed for; 'b_eff' the nearest single temperature;");
-    println!("  'pair' the nearest Boltzmann law of ANY couplings and fields, found exactly. max|dJ| and max|dh| are how");
-    println!("  far that pair sits from the loaded parameters, in the units the fabric loads (beta already applied).");
-    println!("  'not-B %' is the share of the loaded loss that survives the best possible pair: the part of the");
-    println!("  fabric's law that is not the Boltzmann distribution of anything, which no calibrated load can remove.");
-    println!("  'newton' is the iterations and the sup-norm of the moment gap at the stop; the objective is strictly");
+    println!(
+        "  'loaded' is the Boltzmann law the fabric was programmed for; 'b_eff' the nearest single temperature;"
+    );
+    println!(
+        "  'pair' the nearest Boltzmann law of ANY couplings and fields, found exactly. max|dJ| and max|dh| are how"
+    );
+    println!(
+        "  far that pair sits from the loaded parameters, in the units the fabric loads (beta already applied)."
+    );
+    println!(
+        "  'not-B %' is the share of the loaded loss that survives the best possible pair: the part of the"
+    );
+    println!(
+        "  fabric's law that is not the Boltzmann distribution of anything, which no calibrated load can remove."
+    );
+    println!(
+        "  'newton' is the iterations and the sup-norm of the moment gap at the stop; the objective is strictly"
+    );
     println!("  convex, so a gap at the noise floor is the global optimum.");
 }

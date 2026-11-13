@@ -97,7 +97,13 @@ fn main() {
         let Some(emb) = embed::embed(&g, &hardware, seed) else {
             continue;
         };
-        let proved = branch::solve(&g, &branch::Params { max_nodes: 40_000_000, ..Default::default() });
+        let proved = branch::solve(
+            &g,
+            &branch::Params {
+                max_nodes: 40_000_000,
+                ..Default::default()
+            },
+        );
         if !proved.proved_optimal {
             continue;
         }
@@ -131,8 +137,10 @@ fn main() {
             let emb = embed::apply_with(&c.logical, &hardware, &c.emb, s);
             // One anneal per instance, the same schedule for every row, so the only thing that
             // differs down the column is the constant under test.
-            let ladder: Vec<(f64, usize)> =
-                tempering::geometric_ladder(0.05, 6.0, 120).into_iter().map(|b| (b, 60)).collect();
+            let ladder: Vec<(f64, usize)> = tempering::geometric_ladder(0.05, 6.0, 120)
+                .into_iter()
+                .map(|b| (b, 60))
+                .collect();
             let (state, _) = tempering::anneal(&emb.graph, &ladder, ci as u64 ^ 0xC4A1, None);
             let (values, broke) = embed::unembed(&c.emb, &state);
             broken_frac += broke.len() as f64 / NV as f64;

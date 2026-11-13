@@ -127,12 +127,19 @@ pub const MAX_MUL_RELATIVE_ERROR: f64 = 1.0 / 9.0;
 /// If `x` is not finite and strictly positive.
 #[must_use]
 pub fn decompose(x: f64) -> (i32, f64) {
-    assert!(x > 0.0 && x.is_finite(), "a logarithm needs a positive finite argument, got {x}");
+    assert!(
+        x > 0.0 && x.is_finite(),
+        "a logarithm needs a positive finite argument, got {x}"
+    );
     let e = x.log2().floor();
     let m = x / 2.0f64.powf(e);
     // Guard the boundary: rounding can leave the mantissa at exactly 2.0, which is not in [1, 2)
     // and would put the exponent one out.
-    if m >= 2.0 { (e as i32 + 1, m / 2.0) } else { (e as i32, m) }
+    if m >= 2.0 {
+        (e as i32 + 1, m / 2.0)
+    } else {
+        (e as i32, m)
+    }
 }
 
 /// Mitchell's approximation to `log2(x)`: the exponent plus the mantissa field, read as a fraction.
@@ -187,7 +194,10 @@ impl Correction {
     /// If `bits` is zero or above 20, where the table stops being a table.
     #[must_use]
     pub fn new(bits: u32) -> Correction {
-        assert!(bits > 0 && bits <= 20, "a correction table of {bits} bits is not one");
+        assert!(
+            bits > 0 && bits <= 20,
+            "a correction table of {bits} bits is not one"
+        );
         let n = 1usize << bits;
         let mut forward = Vec::with_capacity(n);
         let mut inverse = Vec::with_capacity(n);
@@ -197,7 +207,11 @@ impl Correction {
             forward.push(m.log2() - (m - 1.0));
             inverse.push(2.0f64.powf(mid) - (1.0 + mid));
         }
-        Correction { bits, forward, inverse }
+        Correction {
+            bits,
+            forward,
+            inverse,
+        }
     }
 
     /// Entries in each table.
@@ -301,7 +315,10 @@ pub fn worst_mitchell_error(n: usize) -> f64 {
 /// If the temperature is not positive.
 #[must_use]
 pub fn format_floor(bits: u32, temperature_k: f64) -> f64 {
-    assert!(temperature_k > 0.0, "temperature must be positive, got {temperature_k}");
+    assert!(
+        temperature_k > 0.0,
+        "temperature must be positive, got {temperature_k}"
+    );
     f64::from(bits) * BOLTZMANN_CONSTANT * temperature_k * core::f64::consts::LN_2
 }
 
@@ -318,8 +335,14 @@ pub fn format_floor(bits: u32, temperature_k: f64) -> f64 {
 /// If `share` is outside `[0, 1]` or `factor` is not above zero.
 #[must_use]
 pub fn device_speedup(share: f64, factor: f64) -> f64 {
-    assert!((0.0..=1.0).contains(&share), "a share must be a fraction, got {share}");
-    assert!(factor > 0.0, "a saving factor must be positive, got {factor}");
+    assert!(
+        (0.0..=1.0).contains(&share),
+        "a share must be a fraction, got {share}"
+    );
+    assert!(
+        factor > 0.0,
+        "a saving factor must be positive, got {factor}"
+    );
     let terms = [1.0 - share, share / factor];
     1.0 / sum_up(&terms)
 }
@@ -332,9 +355,15 @@ mod tests {
     #[test]
     fn mitchells_worst_multiply_is_exactly_one_ninth() {
         let got = mitchell_mul(1.5, 1.5);
-        assert!((got - 2.0).abs() < 1e-15, "Mitchell should reconstruct exactly 2, got {got}");
+        assert!(
+            (got - 2.0).abs() < 1e-15,
+            "Mitchell should reconstruct exactly 2, got {got}"
+        );
         let rel = (got - 2.25) / 2.25;
-        assert!((rel + 1.0 / 9.0).abs() < 1e-15, "the worst case should be -1/9, got {rel}");
+        assert!(
+            (rel + 1.0 / 9.0).abs() < 1e-15,
+            "the worst case should be -1/9, got {rel}"
+        );
         assert!((MAX_MUL_RELATIVE_ERROR - 1.0 / 9.0).abs() < 1e-18);
         // And it IS the worst: a dense scan finds nothing above it.
         let scanned = worst_mitchell_error(600);
@@ -342,16 +371,25 @@ mod tests {
             scanned <= MAX_MUL_RELATIVE_ERROR + 1e-12,
             "a scan found {scanned}, above the claimed maximum"
         );
-        assert!(scanned > 0.9 * MAX_MUL_RELATIVE_ERROR, "the scan should approach it, got {scanned}");
+        assert!(
+            scanned > 0.9 * MAX_MUL_RELATIVE_ERROR,
+            "the scan should approach it, got {scanned}"
+        );
     }
 
     /// The log error peaks where the derivative vanishes, and the constant is that value.
     #[test]
     fn the_log_error_peaks_where_the_derivative_vanishes() {
         let m = WORST_MANTISSA;
-        assert!((m - 1.0 / core::f64::consts::LN_2).abs() < 1e-15, "1/ln2 is the stationary point");
+        assert!(
+            (m - 1.0 / core::f64::consts::LN_2).abs() < 1e-15,
+            "1/ln2 is the stationary point"
+        );
         let e = (m - 1.0) - m.log2();
-        assert!((e.abs() - MAX_LOG_ERROR).abs() < 1e-12, "got {e}, constant says {MAX_LOG_ERROR}");
+        assert!(
+            (e.abs() - MAX_LOG_ERROR).abs() < 1e-12,
+            "got {e}, constant says {MAX_LOG_ERROR}"
+        );
         assert!(e < 0.0, "Mitchell underestimates the logarithm");
         // Nothing in [1, 2) beats it.
         for i in 0..=10_000 {
@@ -389,9 +427,15 @@ mod tests {
                 stalled += 1;
             }
             previous = worst;
-            assert!(worst > 0.005, "half-corrected error {worst} at {bits} bits fell below 0.5%");
+            assert!(
+                worst > 0.005,
+                "half-corrected error {worst} at {bits} bits fell below 0.5%"
+            );
         }
-        assert!(stalled >= 1, "the half correction was expected to stop improving, and did not");
+        assert!(
+            stalled >= 1,
+            "the half correction was expected to stop improving, and did not"
+        );
     }
 
     /// Correcting both directions converges, and reaching FP16 accuracy takes ten bits.
@@ -404,12 +448,21 @@ mod tests {
         let coarse = Correction::new(4).worst_relative_error(400);
         let mid = Correction::new(8).worst_relative_error(400);
         let ten = Correction::new(10).worst_relative_error(400);
-        assert!(coarse > mid && mid > ten, "more table must mean less error: {coarse} {mid} {ten}");
+        assert!(
+            coarse > mid && mid > ten,
+            "more table must mean less error: {coarse} {mid} {ten}"
+        );
         assert!(ten < 0.0008, "ten bits should reach FP16 level, got {ten}");
-        assert!(mid > 0.0008, "eight bits should NOT reach it, got {mid} -- else ten is not the answer");
+        assert!(
+            mid > 0.0008,
+            "eight bits should NOT reach it, got {mid} -- else ten is not the answer"
+        );
         assert_eq!(Correction::new(10).entries(), 1024);
         // and it is a real correction, not a rounding artefact of the scan
-        assert!(worst_mitchell_error(400) > 100.0 * ten, "the correction bought two orders");
+        assert!(
+            worst_mitchell_error(400) > 100.0 * ten,
+            "the correction bought two orders"
+        );
     }
 
     /// The floor does not care what the bits encode.
@@ -427,7 +480,10 @@ mod tests {
         assert!((format_floor(8, 300.0) / format_floor(16, 300.0) - 0.5).abs() < 1e-12);
         let analog_ratio = crate::precision::analog_bit_energy(16, 300.0)
             / crate::precision::analog_bit_energy(8, 300.0);
-        assert!(analog_ratio > 60_000.0, "analogue should blow up by 2^16, got {analog_ratio}");
+        assert!(
+            analog_ratio > 60_000.0,
+            "analogue should blow up by 2^16, got {analog_ratio}"
+        );
     }
 
     /// Amdahl's ceiling on any format argument, whatever the format.
@@ -438,7 +494,10 @@ mod tests {
         assert!((five - 1.0 / 0.6).abs() < 1e-12, "got {five}");
         // Free is the ceiling, and the ceiling is 1/(1 - share) no matter the factor.
         let free = device_speedup(0.5, f64::INFINITY);
-        assert!((free - 2.0).abs() < 1e-12, "a free multiplier at half the energy is 2x, got {free}");
+        assert!(
+            (free - 2.0).abs() < 1e-12,
+            "a free multiplier at half the energy is 2x, got {free}"
+        );
         assert!(device_speedup(0.3, 1e9) < 1.0 / 0.7 + 1e-9);
         // And a format that touches a tenth of the budget cannot buy more than 1.12x, ever.
         assert!(device_speedup(0.1, f64::INFINITY) < 1.12);
@@ -456,6 +515,9 @@ mod tests {
         let (e, m) = decompose(8.0);
         assert_eq!(e, 3);
         assert!((m - 1.0).abs() < 1e-15);
-        assert!((mitchell_log2(8.0) - 3.0).abs() < 1e-15, "Mitchell is EXACT on powers of two");
+        assert!(
+            (mitchell_log2(8.0) - 3.0).abs() < 1e-15,
+            "Mitchell is EXACT on powers of two"
+        );
     }
 }

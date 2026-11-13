@@ -11,12 +11,12 @@
 // the naming path recovers what was put in; it is not evidence about a device, because both ends
 // use the same addressing and would agree wherever that addressing is wrong. The witness for the
 // addressing is the logic-location file itself -- see `logic_location::cross_check`.
-use ferrotherm_silicon::bitstream::{cmd, reg, type1_read, type1_write, type2_read, SYNC};
+use ferrotherm_silicon::bitstream::{SYNC, cmd, reg, type1_read, type1_write, type2_read};
 use ferrotherm_silicon::capture::{
-    capture_and_read, readback_words, Readout, GLUTMASK, PAD_FRAMES, STREAM_CTL0, STREAM_MASK,
+    GLUTMASK, PAD_FRAMES, Readout, STREAM_CTL0, STREAM_MASK, capture_and_read, readback_words,
 };
 use ferrotherm_silicon::frame::WORDS_PER_FRAME;
-use ferrotherm_silicon::logic_location::{parse_ll, LlBit};
+use ferrotherm_silicon::logic_location::{LlBit, parse_ll};
 
 /// The frame the built-in listing places its cells in, and the one after it.
 const BASE: u32 = 0x0042_0100;
@@ -42,7 +42,9 @@ fn name_of(w: u32) -> &'static str {
 fn describe(w: u32, prev: u32) -> String {
     if prev == type1_write(reg::CMD, 1) {
         return match w {
-            cmd::GCAPTURE => "  <- GCAPTURE: latch every flip-flop into configuration memory".into(),
+            cmd::GCAPTURE => {
+                "  <- GCAPTURE: latch every flip-flop into configuration memory".into()
+            }
             cmd::RCFG => "  <- RCFG: the next FDRO read streams frames out".into(),
             _ => format!("  <- command 0x{w:02X}"),
         };
@@ -60,7 +62,11 @@ fn describe(w: u32, prev: u32) -> String {
         return "  read FDRO, count 0 -- the length follows in a type-2".into();
     }
     let n = name_of(w);
-    if n.is_empty() { String::new() } else { format!("  {n}") }
+    if n.is_empty() {
+        String::new()
+    } else {
+        format!("  {n}")
+    }
 }
 
 fn main() {
@@ -106,7 +112,9 @@ fn main() {
 
     // ---- 3. the control bit that does not arrive -------------------------------------------
     println!("\n== 3. the write that does nothing ==");
-    println!("  the generated stream writes CTL0 = 0x{STREAM_CTL0:08X} under MASK = 0x{STREAM_MASK:08X}");
+    println!(
+        "  the generated stream writes CTL0 = 0x{STREAM_CTL0:08X} under MASK = 0x{STREAM_MASK:08X}"
+    );
     println!(
         "  bit 8 (0x{GLUTMASK:08X}) is set in the value and absent from the mask, so it never lands"
     );
@@ -126,7 +134,9 @@ fn main() {
         if !on {
             continue;
         }
-        let Some(frame) = cell.frame_address.checked_sub(BASE) else { continue };
+        let Some(frame) = cell.frame_address.checked_sub(BASE) else {
+            continue;
+        };
         if frame as usize >= frames {
             continue;
         }

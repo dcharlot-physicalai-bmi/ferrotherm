@@ -659,11 +659,7 @@ impl FixedPdit {
         let seeds: Vec<u32> = (0..n)
             .map(|i| {
                 let s = splitmix(seed ^ (i as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93)) as u32;
-                if s == 0 {
-                    1
-                } else {
-                    s
-                }
+                if s == 0 { 1 } else { s }
             })
             .collect();
         let init_s: Vec<u8> = (0..n)
@@ -1836,7 +1832,7 @@ pub fn encoded_row(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::potts::{enumerate, ring, PottsBuilder};
+    use crate::potts::{PottsBuilder, enumerate, ring};
 
     /// `softmax([f, -f])` is `sigma(2 beta f)`: the p-bit is the two-state p-dit, to `1e-15`. The
     /// radix economy is minimised at three among the integers, near `e` among the reals, and the
@@ -2130,7 +2126,9 @@ mod tests {
             .output()
             .is_err()
         {
-            eprintln!("SKIP: iverilog not installed on this machine; the p-dit AXI shell gate did not run, skipping");
+            eprintln!(
+                "SKIP: iverilog not installed on this machine; the p-dit AXI shell gate did not run, skipping"
+            );
             return;
         }
         let mut b = PottsBuilder::new(3, 6, Interaction::Potts);
@@ -2271,7 +2269,9 @@ endmodule
             .output()
             .is_err()
         {
-            eprintln!("SKIP: iverilog not installed on this machine; the cumulative p-dit RTL gate did not run, skipping");
+            eprintln!(
+                "SKIP: iverilog not installed on this machine; the cumulative p-dit RTL gate did not run, skipping"
+            );
             return;
         }
         let mut b = PottsBuilder::new(3, 6, Interaction::Potts);
@@ -2334,7 +2334,9 @@ endmodule
             .output()
             .is_err()
         {
-            eprintln!("SKIP: iverilog not installed on this machine; the p-dit RTL bit-exactness gate did not run, skipping");
+            eprintln!(
+                "SKIP: iverilog not installed on this machine; the p-dit RTL bit-exactness gate did not run, skipping"
+            );
             return;
         }
         let mut b = PottsBuilder::new(3, 6, Interaction::Potts);

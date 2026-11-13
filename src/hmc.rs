@@ -224,7 +224,10 @@ impl core::fmt::Display for Invalid {
                 write!(f, "step size {eps} is not a finite positive number")
             }
             Invalid::Shape { what, given, want } => {
-                write!(f, "{what} has length {given}, and the target has dimension {want}")
+                write!(
+                    f,
+                    "{what} has length {given}, and the target has dimension {want}"
+                )
             }
             Invalid::Mass { index, inv_mass } => write!(
                 f,
@@ -232,7 +235,10 @@ impl core::fmt::Display for Invalid {
                  and the momentum's standard deviation is one over its square root"
             ),
             Invalid::Start { index, value } => {
-                write!(f, "starting coordinate {index} is {value}, which is not finite")
+                write!(
+                    f,
+                    "starting coordinate {index} is {value}, which is not finite"
+                )
             }
             Invalid::StartPotential { potential } => write!(
                 f,
@@ -244,7 +250,11 @@ impl core::fmt::Display for Invalid {
                 "target acceptance {delta} is outside (0, 1), so no step size can attain it"
             ),
             Invalid::Depth { depth, cap } => {
-                write!(f, "tree depth {depth} is past the cap of {cap} ({} states)", 1u64 << cap)
+                write!(
+                    f,
+                    "tree depth {depth} is past the cap of {cap} ({} states)",
+                    1u64 << cap
+                )
             }
             Invalid::NotPositiveDefinite => write!(
                 f,
@@ -370,10 +380,18 @@ impl Quadratic {
     /// distribution for a sampler to be right about.
     pub fn new(n: usize, a: Vec<f64>, b: Vec<f64>) -> Result<Quadratic, Invalid> {
         if a.len() != n * n {
-            return Err(Invalid::Shape { what: "a", given: a.len(), want: n * n });
+            return Err(Invalid::Shape {
+                what: "a",
+                given: a.len(),
+                want: n * n,
+            });
         }
         if b.len() != n {
-            return Err(Invalid::Shape { what: "b", given: b.len(), want: n });
+            return Err(Invalid::Shape {
+                what: "b",
+                given: b.len(),
+                want: n,
+            });
         }
         if crate::continuous::cholesky(&a, n).is_none() {
             return Err(Invalid::NotPositiveDefinite);
@@ -437,7 +455,11 @@ impl Logistic {
     /// `F(q) = 1/(1 + e^{−q})`, exact and elementary.
     #[must_use]
     pub fn cdf(q: f64) -> f64 {
-        if q >= 0.0 { 1.0 / (1.0 + (-q).exp()) } else { q.exp() / (1.0 + q.exp()) }
+        if q >= 0.0 {
+            1.0 / (1.0 + (-q).exp())
+        } else {
+            q.exp() / (1.0 + q.exp())
+        }
     }
 
     /// `F⁻¹(u) = ln(u / (1 − u))`, for `u` in `(0, 1)`.
@@ -452,7 +474,11 @@ impl Logistic {
 
 /// `ln(1 + e^x)`, without overflowing for large `x` or losing the small-`x` end.
 fn softplus(x: f64) -> f64 {
-    if x > 0.0 { x + (-x).exp().ln_1p() } else { x.exp().ln_1p() }
+    if x > 0.0 {
+        x + (-x).exp().ln_1p()
+    } else {
+        x.exp().ln_1p()
+    }
 }
 
 impl Target for Logistic {
@@ -542,7 +568,11 @@ impl DualAveraging {
     /// clamped to `[1e-10, 1e10]` so that a transient excursion cannot hand the sampler a zero or
     /// an infinity.
     pub fn update(&mut self, accept_stat: f64) -> f64 {
-        let a = if accept_stat.is_finite() { accept_stat.clamp(0.0, 1.0) } else { 0.0 };
+        let a = if accept_stat.is_finite() {
+            accept_stat.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         self.m += 1;
         let m = self.m as f64;
         let eta = 1.0 / (m + self.t0);
@@ -596,17 +626,27 @@ pub fn reasonable_step_size<T: Target + ?Sized>(
 ) -> Result<f64, Invalid> {
     let n = t.dim();
     if q.len() != n {
-        return Err(Invalid::Shape { what: "q", given: q.len(), want: n });
+        return Err(Invalid::Shape {
+            what: "q",
+            given: q.len(),
+            want: n,
+        });
     }
     if inv_mass.len() != n {
-        return Err(Invalid::Shape { what: "inv_mass", given: inv_mass.len(), want: n });
+        return Err(Invalid::Shape {
+            what: "inv_mass",
+            given: inv_mass.len(),
+            want: n,
+        });
     }
     let u0 = t.potential(q);
     if !u0.is_finite() {
         return Err(Invalid::StartPotential { potential: u0 });
     }
     let mut rng = Pcg::new(seed, 0x4C46);
-    let p0: Vec<f64> = (0..n).map(|i| standard_normal(&mut rng) / inv_mass[i].sqrt()).collect();
+    let p0: Vec<f64> = (0..n)
+        .map(|i| standard_normal(&mut rng) / inv_mass[i].sqrt())
+        .collect();
     let h0 = u0 + kinetic(&p0, inv_mass);
     let mut eps = 1.0f64;
     let mut g = vec![0.0; n];
@@ -615,7 +655,11 @@ pub fn reasonable_step_size<T: Target + ?Sized>(
         let (mut q1, mut p1) = (q.to_vec(), p0.clone());
         leapfrog_with(t, &mut q1, &mut p1, inv_mass, eps, g);
         let h1 = t.potential(&q1) + kinetic(&p1, inv_mass);
-        if h1.is_finite() { h0 - h1 } else { f64::NEG_INFINITY }
+        if h1.is_finite() {
+            h0 - h1
+        } else {
+            f64::NEG_INFINITY
+        }
     };
     let mut log_ratio = trial(eps, &mut g);
     let grow = log_ratio > -core::f64::consts::LN_2;
@@ -665,7 +709,11 @@ fn setup<T: Target + ?Sized>(
         return Err(Invalid::StepSize { eps });
     }
     if q0.len() != n {
-        return Err(Invalid::Shape { what: "q0", given: q0.len(), want: n });
+        return Err(Invalid::Shape {
+            what: "q0",
+            given: q0.len(),
+            want: n,
+        });
     }
     for (i, &v) in q0.iter().enumerate() {
         if !v.is_finite() {
@@ -676,11 +724,18 @@ fn setup<T: Target + ?Sized>(
         None => vec![1.0; n],
         Some(m) => {
             if m.len() != n {
-                return Err(Invalid::Shape { what: "inv_mass", given: m.len(), want: n });
+                return Err(Invalid::Shape {
+                    what: "inv_mass",
+                    given: m.len(),
+                    want: n,
+                });
             }
             for (i, &v) in m.iter().enumerate() {
                 if !(v.is_finite() && v > 0.0) {
-                    return Err(Invalid::Mass { index: i, inv_mass: v });
+                    return Err(Invalid::Mass {
+                        index: i,
+                        inv_mass: v,
+                    });
                 }
             }
             m.to_vec()
@@ -691,7 +746,11 @@ fn setup<T: Target + ?Sized>(
         return Err(Invalid::StartPotential { potential: u0 });
     }
     let sd: Vec<f64> = inv.iter().map(|&v| 1.0 / v.sqrt()).collect();
-    Ok(Setup { q: q0.to_vec(), inv_mass: inv, sd })
+    Ok(Setup {
+        q: q0.to_vec(),
+        inv_mass: inv,
+        sd,
+    })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -819,7 +878,11 @@ impl<'t, T: Target + ?Sized> Hmc<'t, T> {
         let h1 = self.target.potential(&self.q) + kinetic(&self.p, &self.inv_mass);
         let dh = h1 - h0;
         self.last_delta_h = dh;
-        let a = if dh.is_nan() { 0.0 } else { (-dh).exp().min(1.0) };
+        let a = if dh.is_nan() {
+            0.0
+        } else {
+            (-dh).exp().min(1.0)
+        };
         self.accept_stat = a;
         self.proposed += 1;
         if !self.correct || self.rng.f64() < a {
@@ -993,7 +1056,10 @@ impl<'t, T: Target + ?Sized> Nuts<'t, T> {
     /// [`Invalid::Depth`] past [`MAX_DEPTH_CAP`].
     pub fn set_max_depth(&mut self, depth: usize) -> Result<(), Invalid> {
         if depth > MAX_DEPTH_CAP {
-            return Err(Invalid::Depth { depth, cap: MAX_DEPTH_CAP });
+            return Err(Invalid::Depth {
+                depth,
+                cap: MAX_DEPTH_CAP,
+            });
         }
         self.max_depth = depth;
         Ok(())
@@ -1103,16 +1169,16 @@ impl<'t, T: Target + ?Sized> Nuts<'t, T> {
         sub.n = total;
         sub.alpha += other.alpha;
         sub.n_alpha += other.n_alpha;
-        sub.ok = other.ok
-            && !self.turned(&sub.q_minus, &sub.p_minus, &sub.q_plus, &sub.p_plus);
+        sub.ok = other.ok && !self.turned(&sub.q_minus, &sub.p_minus, &sub.q_plus, &sub.p_plus);
         sub
     }
 
     /// One draw.
     pub fn draw(&mut self) -> &[f64] {
         let n = self.q.len();
-        let p0: Vec<f64> =
-            (0..n).map(|i| self.sd[i] * standard_normal(&mut self.rng)).collect();
+        let p0: Vec<f64> = (0..n)
+            .map(|i| self.sd[i] * standard_normal(&mut self.rng))
+            .collect();
         let h0 = self.target.potential(&self.q) + kinetic(&p0, &self.inv_mass);
         // The slice variable, in logs: ln u with u ~ Uniform(0, exp(-H0)).
         let log_u = -h0 + self.rng.f64().max(f64::MIN_POSITIVE).ln();
@@ -1325,7 +1391,11 @@ mod tests {
         let t3 = Quadratic::new(3, a, vec![0.0; 3]).unwrap();
         for eps in [0.125f64, 0.25, 0.5, 0.75] {
             let d = det(&jacobian(&t3, &[1.0, 0.5, 2.0], eps));
-            assert!((d - 1.0).abs() < 1e-14, "eps {eps}: det = {d}, off by {:e}", d - 1.0);
+            assert!(
+                (d - 1.0).abs() < 1e-14,
+                "eps {eps}: det = {d}, off by {:e}",
+                d - 1.0
+            );
         }
     }
 
@@ -1353,7 +1423,10 @@ mod tests {
         for _ in 0..6 {
             leapfrog(&t, &mut q, &mut p, &[1.0], 0.5);
         }
-        assert_ne!(q, q0, "the fixture must actually move, or the round trip tests nothing");
+        assert_ne!(
+            q, q0,
+            "the fixture must actually move, or the round trip tests nothing"
+        );
         p[0] = -p[0];
         for _ in 0..6 {
             leapfrog(&t, &mut q, &mut p, &[1.0], 0.5);
@@ -1400,7 +1473,10 @@ mod tests {
                 worst = worst.max((q[i] - q0[i]).abs()).max((p[i] - p0[i]).abs());
             }
         }
-        assert!(worst < 1e-14, "worst round-trip error {worst:e} over 80 steps");
+        assert!(
+            worst < 1e-14,
+            "worst round-trip error {worst:e} over 80 steps"
+        );
     }
 
     /// ORACLE: the closed-form invariant of the leapfrog map on a quadratic.
@@ -1496,7 +1572,10 @@ mod tests {
         for q in [[0.0, 0.0], [1.5, -0.5], [-2.0, 3.0]] {
             let mine = t.potential(&q);
             let theirs = gbm.energy(&q, &[]);
-            assert!((mine - theirs).abs() < 1e-12, "U {mine} vs Gbm::energy {theirs}");
+            assert!(
+                (mine - theirs).abs() < 1e-12,
+                "U {mine} vs Gbm::energy {theirs}"
+            );
         }
 
         const CHAINS: usize = 12;
@@ -1542,7 +1621,10 @@ mod tests {
             ];
             for (name, samples, exact) in checks {
                 let (est, se) = mean_and_se(samples);
-                assert!(se < 0.02, "eps {eps} {name}: error bar {se:.4} is too wide to bite");
+                assert!(
+                    se < 0.02,
+                    "eps {eps} {name}: error bar {se:.4} is too wide to bite"
+                );
                 assert!(
                     (est - exact).abs() < 4.0 * se,
                     "eps {eps} {name}: {est:.5} vs exact {exact:.5}, {:.2} error bars away",
@@ -1576,7 +1658,10 @@ mod tests {
         let eps = 1.0f64;
         let t = Quadratic::new(1, vec![a], vec![0.0]).unwrap();
         let want_uncorrected = 1.0 / (a * (1.0 - eps * eps * a / 4.0));
-        assert!((want_uncorrected - 4.0 / 3.0).abs() < 1e-15, "the fixture is the 4/3 case");
+        assert!(
+            (want_uncorrected - 4.0 / 3.0).abs() < 1e-15,
+            "the fixture is the 4/3 case"
+        );
 
         const CHAINS: usize = 12;
         const DRAWS: usize = 20000;
@@ -1606,7 +1691,10 @@ mod tests {
             se_on > 0.0 && se_off > 0.0,
             "twelve chains agreed to the last bit, so the fixture is a fixed point and not a chain"
         );
-        assert!(se_on < 0.01 && se_off < 0.01, "error bars {se_on:.4} / {se_off:.4} too wide");
+        assert!(
+            se_on < 0.01 && se_off < 0.01,
+            "error bars {se_on:.4} / {se_off:.4} too wide"
+        );
         assert!(
             (on - 1.0 / a).abs() < 4.0 * se_on,
             "corrected variance {on:.4} vs exact 1.0 ({:.1} error bars)",
@@ -1628,7 +1716,9 @@ mod tests {
 
     /// Exact deciles of the standard logistic, from its closed-form quantile function.
     fn logistic_deciles() -> Vec<f64> {
-        (1..10).map(|k| Logistic::quantile(f64::from(k) / 10.0)).collect()
+        (1..10)
+            .map(|k| Logistic::quantile(f64::from(k) / 10.0))
+            .collect()
     }
 
     /// Which decile a value falls in.
@@ -1656,7 +1746,11 @@ mod tests {
         // The oracle itself: quantile and CDF must be inverses, and the cells equiprobable.
         for (k, &e) in edges.iter().enumerate() {
             let want = (k + 1) as f64 / 10.0;
-            assert!((Logistic::cdf(e) - want).abs() < 1e-15, "decile {k}: F = {}", Logistic::cdf(e));
+            assert!(
+                (Logistic::cdf(e) - want).abs() < 1e-15,
+                "decile {k}: F = {}",
+                Logistic::cdf(e)
+            );
         }
 
         const ONE_STEP: usize = 120_000;
@@ -1700,7 +1794,10 @@ mod tests {
         }
         for (k, f) in freq.iter().enumerate() {
             let (est, se) = mean_and_se(f);
-            assert!(se < 0.004, "cell {k}: chain-to-chain error bar {se:.5} is too wide to bite");
+            assert!(
+                se < 0.004,
+                "cell {k}: chain-to-chain error bar {se:.5} is too wide to bite"
+            );
             assert!(
                 (est - 0.1).abs() < 4.0 * se,
                 "cell {k}: long-run frequency {est:.5} vs exact 0.1 ({:.1} error bars)",
@@ -1733,15 +1830,25 @@ mod tests {
             assert!(!on.diverged(), "a stable step size must not diverge");
         }
         let steps_on = on.total_leapfrogs() as f64 / DRAWS as f64;
-        assert!(deepest < 8, "the deepest draw reached the CAP ({deepest}), so nothing was proved");
-        assert!(deepest >= 2, "the criterion fired instantly ({deepest}), which is its own bug");
+        assert!(
+            deepest < 8,
+            "the deepest draw reached the CAP ({deepest}), so nothing was proved"
+        );
+        assert!(
+            deepest >= 2,
+            "the criterion fired instantly ({deepest}), which is its own bug"
+        );
 
         let mut off = Nuts::new(&t, &[0.0], 0.25, 99).unwrap();
         off.set_max_depth(8).unwrap();
         off.u_turn(false);
         for _ in 0..DRAWS {
             off.draw();
-            assert_eq!(off.depth(), 8, "without the criterion every draw must reach the cap");
+            assert_eq!(
+                off.depth(),
+                8,
+                "without the criterion every draw must reach the cap"
+            );
             assert_eq!(off.leapfrogs(), 255, "depth 8 is 2^8 - 1 leapfrog steps");
         }
         let steps_off = off.total_leapfrogs() as f64 / DRAWS as f64;
@@ -1767,13 +1874,19 @@ mod tests {
             wild.draw();
             hits += usize::from(wild.diverged());
         }
-        assert_eq!(hits, 200, "draws at eps = 20 from q = 2 that were reported divergent");
+        assert_eq!(
+            hits, 200,
+            "draws at eps = 20 from q = 2 that were reported divergent"
+        );
 
         let mut calm = Nuts::new(&t, &[0.0], 0.3, 5).unwrap();
         calm.set_max_depth(6).unwrap();
         for _ in 0..200 {
             calm.draw();
-            assert!(!calm.diverged(), "eps = 0.3 must never divergence-flag on a unit Gaussian");
+            assert!(
+                !calm.diverged(),
+                "eps = 0.3 must never divergence-flag on a unit Gaussian"
+            );
         }
     }
 
@@ -1821,8 +1934,14 @@ mod tests {
         // The quadrature must be a decreasing function that brackets the target, or bisection is
         // solving nothing.
         let (lo_eps, hi_eps) = (0.05f64, 1.9f64);
-        let (lo_a, hi_a) = (quadrature_accept_rate(lo_eps), quadrature_accept_rate(hi_eps));
-        assert!(lo_a > delta && hi_a < delta, "acceptance {lo_a:.4}..{hi_a:.4} does not bracket");
+        let (lo_a, hi_a) = (
+            quadrature_accept_rate(lo_eps),
+            quadrature_accept_rate(hi_eps),
+        );
+        assert!(
+            lo_a > delta && hi_a < delta,
+            "acceptance {lo_a:.4}..{hi_a:.4} does not bracket"
+        );
         let (mut lo, mut hi) = (lo_eps, hi_eps);
         for _ in 0..18 {
             let mid = 0.5 * (lo + hi);
@@ -1841,7 +1960,10 @@ mod tests {
             (got - want).abs() / want < 0.08,
             "dual averaging settled on {got:.4}; the acceptance integral says {want:.4}"
         );
-        assert!((s.step_size() - got).abs() < 1e-15, "warmup must leave the chain at eps-bar");
+        assert!(
+            (s.step_size() - got).abs() < 1e-15,
+            "warmup must leave the chain at eps-bar"
+        );
 
         // And the adapted chain must actually accept at the rate it was asked for.
         let mut check = Hmc::new(&t, &[0.0], got, 1, 7).unwrap();
@@ -1849,7 +1971,10 @@ mod tests {
             check.draw();
         }
         let rate = check.acceptance().unwrap();
-        assert!((rate - delta).abs() < 0.02, "adapted chain accepts at {rate:.4}, asked {delta}");
+        assert!(
+            (rate - delta).abs() < 0.02,
+            "adapted chain accepts at {rate:.4}, asked {delta}"
+        );
     }
 
     /// The step-size search brackets, rather than returning whatever it started at.
@@ -1876,24 +2001,40 @@ mod tests {
             Some(Invalid::StepSize { eps: 0.0 })
         );
         assert_eq!(
-            Hmc::new(&t, &[0.0], f64::NAN, 4, 1).err().map(|e| matches!(e, Invalid::StepSize { .. })),
+            Hmc::new(&t, &[0.0], f64::NAN, 4, 1)
+                .err()
+                .map(|e| matches!(e, Invalid::StepSize { .. })),
             Some(true)
         );
         assert_eq!(
             Nuts::new(&t, &[0.0, 1.0], 0.5, 1).err(),
-            Some(Invalid::Shape { what: "q0", given: 2, want: 1 })
+            Some(Invalid::Shape {
+                what: "q0",
+                given: 2,
+                want: 1
+            })
         );
         assert_eq!(
             Nuts::new(&t, &[f64::INFINITY], 0.5, 1).err(),
-            Some(Invalid::Start { index: 0, value: f64::INFINITY })
+            Some(Invalid::Start {
+                index: 0,
+                value: f64::INFINITY
+            })
         );
         assert_eq!(
             Hmc::with_mass(&t, &[0.0], 0.5, 4, Some(&[0.0]), 1).err(),
-            Some(Invalid::Mass { index: 0, inv_mass: 0.0 })
+            Some(Invalid::Mass {
+                index: 0,
+                inv_mass: 0.0
+            })
         );
         assert_eq!(
             Hmc::with_mass(&t, &[0.0], 0.5, 4, Some(&[1.0, 1.0]), 1).err(),
-            Some(Invalid::Shape { what: "inv_mass", given: 2, want: 1 })
+            Some(Invalid::Shape {
+                what: "inv_mass",
+                given: 2,
+                want: 1
+            })
         );
         assert_eq!(
             DualAveraging::new(0.5, 1.0).err(),
@@ -1902,7 +2043,10 @@ mod tests {
         let mut s = Nuts::new(&t, &[0.0], 0.5, 1).unwrap();
         assert_eq!(
             s.set_max_depth(MAX_DEPTH_CAP + 1).err(),
-            Some(Invalid::Depth { depth: MAX_DEPTH_CAP + 1, cap: MAX_DEPTH_CAP })
+            Some(Invalid::Depth {
+                depth: MAX_DEPTH_CAP + 1,
+                cap: MAX_DEPTH_CAP
+            })
         );
         assert_eq!(
             Quadratic::new(2, vec![1.0, 2.0, 2.0, 1.0], vec![0.0, 0.0]).err(),
@@ -1910,10 +2054,18 @@ mod tests {
         );
         assert_eq!(
             Quadratic::new(2, vec![1.0, 0.0], vec![0.0, 0.0]).err(),
-            Some(Invalid::Shape { what: "a", given: 2, want: 4 })
+            Some(Invalid::Shape {
+                what: "a",
+                given: 2,
+                want: 4
+            })
         );
         // Every one of them prints the value, not a category.
-        let msg = Invalid::Mass { index: 3, inv_mass: -2.5 }.to_string();
+        let msg = Invalid::Mass {
+            index: 3,
+            inv_mass: -2.5,
+        }
+        .to_string();
         assert!(msg.contains("-2.5") && msg.contains('3'), "{msg}");
     }
 
@@ -1946,7 +2098,11 @@ mod tests {
         assert!(delta_h_guard(4, 1.0) < delta_h_guard(4, 10.0));
         // A divergence is a thousand nats. The guard on a hundred-dimensional model at an energy
         // scale of 1e6 is 4.5e-8, ten orders below it, so rounding can never be read as one.
-        assert!(delta_h_guard(100, 1e6) < DIVERGENCE_LIMIT * 1e-6, "{}", delta_h_guard(100, 1e6));
+        assert!(
+            delta_h_guard(100, 1e6) < DIVERGENCE_LIMIT * 1e-6,
+            "{}",
+            delta_h_guard(100, 1e6)
+        );
     }
 
     /// A diagonal mass rescales the geometry and must leave the ANSWER alone: sampling
@@ -1983,13 +2139,18 @@ mod tests {
             }
             v0[c] = s00 / DRAWS as f64;
             v1[c] = s11 / DRAWS as f64;
-            assert!(s.acceptance().unwrap() > 0.9, "preconditioning should accept freely");
+            assert!(
+                s.acceptance().unwrap() > 0.9,
+                "preconditioning should accept freely"
+            );
         }
-        for (name, samples, exact) in
-            [("Var(q0)", &v0, want_cov[0]), ("Var(q1)", &v1, want_cov[3])]
+        for (name, samples, exact) in [("Var(q0)", &v0, want_cov[0]), ("Var(q1)", &v1, want_cov[3])]
         {
             let (est, se) = mean_and_se(samples);
-            assert!(se / exact < 0.01, "{name}: error bar {se:.5} is too wide to bite");
+            assert!(
+                se / exact < 0.01,
+                "{name}: error bar {se:.5} is too wide to bite"
+            );
             assert!(
                 (est - exact).abs() < 4.0 * se,
                 "{name}: {est:.5} vs exact {exact:.5} ({:.2} error bars)",

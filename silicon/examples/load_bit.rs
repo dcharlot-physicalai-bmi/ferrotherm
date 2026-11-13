@@ -18,7 +18,11 @@ fn main() {
     let raw = std::fs::read(&path).expect("read bitstream");
     let bit = parse_bit(&raw);
     let sync = find_sync(bit.config).expect("no sync word in this file");
-    println!("bitstream: {} bytes, sync at {}", bit.config.len(), sync - 4);
+    println!(
+        "bitstream: {} bytes, sync at {}",
+        bit.config.len(),
+        sync - 4
+    );
     if !bit.part.is_empty() {
         println!("  container: part={:?} design={:?}", bit.part, bit.design);
     }
@@ -32,7 +36,10 @@ fn main() {
         println!("before: {}", Stat(s).describe());
     }
 
-    println!("\nconfiguring ({} bytes through CFG_IN)...", bit.config.len());
+    println!(
+        "\nconfiguring ({} bytes through CFG_IN)...",
+        bit.config.len()
+    );
     match tap.configure(bit.config, Consequence::ClearsTheRunningDesign) {
         Ok(st) => {
             println!("after:  {}", st.describe());

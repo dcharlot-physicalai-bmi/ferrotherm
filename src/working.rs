@@ -29,7 +29,10 @@ fn key(a: u32, b: u32) -> (u32, u32) {
 #[must_use]
 pub fn identity_numbered(graph: Graph) -> Topology {
     let n = graph.n as u32;
-    Topology { graph, qubits: (0..n).collect() }
+    Topology {
+        graph,
+        qubits: (0..n).collect(),
+    }
 }
 
 /// The qubits and couplers a machine has lost, in the machine's own numbering.
@@ -103,17 +106,33 @@ impl Defects {
     /// If `ideal` is malformed: its qubit list must have one entry per node.
     #[must_use]
     pub fn sample(ideal: &Topology, qubit_yield: f64, coupler_yield: f64, seed: u64) -> Defects {
-        assert_eq!(ideal.qubits.len(), ideal.graph.n, "topology qubit list does not match its graph");
-        let clamp = |p: f64| if p.is_finite() { p.clamp(0.0, 1.0) } else { 1.0 };
+        assert_eq!(
+            ideal.qubits.len(),
+            ideal.graph.n,
+            "topology qubit list does not match its graph"
+        );
+        let clamp = |p: f64| {
+            if p.is_finite() {
+                p.clamp(0.0, 1.0)
+            } else {
+                1.0
+            }
+        };
         let (pq, pc) = (clamp(qubit_yield), clamp(coupler_yield));
 
         let mut rq = Pcg::new(seed, 0x00DE_AD00);
-        let qubits: BTreeSet<u32> =
-            ideal.qubits.iter().copied().filter(|_| rq.f64() >= pq).collect();
+        let qubits: BTreeSet<u32> = ideal
+            .qubits
+            .iter()
+            .copied()
+            .filter(|_| rq.f64() >= pq)
+            .collect();
 
         let mut rc = Pcg::new(seed, 0x00DE_ADC0);
-        let couplers: BTreeSet<(u32, u32)> =
-            vendor_edges(ideal).into_iter().filter(|_| rc.f64() >= pc).collect();
+        let couplers: BTreeSet<(u32, u32)> = vendor_edges(ideal)
+            .into_iter()
+            .filter(|_| rc.f64() >= pc)
+            .collect();
 
         Defects { qubits, couplers }
     }
@@ -151,13 +170,21 @@ impl Yield {
     /// Fraction of qubits alive; `1.0` for an empty machine.
     #[must_use]
     pub fn qubit_rate(&self) -> f64 {
-        if self.qubits_ideal == 0 { 1.0 } else { self.qubits as f64 / self.qubits_ideal as f64 }
+        if self.qubits_ideal == 0 {
+            1.0
+        } else {
+            self.qubits as f64 / self.qubits_ideal as f64
+        }
     }
 
     /// Fraction of couplers alive; `1.0` for a machine with none.
     #[must_use]
     pub fn coupler_rate(&self) -> f64 {
-        if self.couplers_ideal == 0 { 1.0 } else { self.couplers as f64 / self.couplers_ideal as f64 }
+        if self.couplers_ideal == 0 {
+            1.0
+        } else {
+            self.couplers as f64 / self.couplers_ideal as f64
+        }
     }
 }
 
@@ -197,9 +224,17 @@ impl Working {
     #[must_use]
     pub fn new(ideal: &Topology, defects: &Defects) -> Working {
         let g = &ideal.graph;
-        assert_eq!(ideal.qubits.len(), g.n, "topology qubit list does not match its graph");
-        let live: Vec<u32> =
-            ideal.qubits.iter().copied().filter(|q| !defects.qubits.contains(q)).collect();
+        assert_eq!(
+            ideal.qubits.len(),
+            g.n,
+            "topology qubit list does not match its graph"
+        );
+        let live: Vec<u32> = ideal
+            .qubits
+            .iter()
+            .copied()
+            .filter(|q| !defects.qubits.contains(q))
+            .collect();
 
         let mut b = GraphBuilder::new(live.len());
         let mut ideal_couplers = BTreeSet::new();
@@ -229,7 +264,10 @@ impl Working {
         }
 
         Working {
-            topology: Topology { graph: b.build(), qubits: live },
+            topology: Topology {
+                graph: b.build(),
+                qubits: live,
+            },
             defects: defects.clone(),
             ideal_qubits: ideal.qubits.clone(),
             ideal_couplers,
@@ -348,7 +386,11 @@ impl Working {
     /// together, or a logical edge with no live coupler between its chains.
     pub fn audit_qubits(&self, logical: &Graph, chains: &[Vec<u32>]) -> Result<(), String> {
         if chains.len() != logical.n {
-            return Err(format!("{} chains for {} variables", chains.len(), logical.n));
+            return Err(format!(
+                "{} chains for {} variables",
+                chains.len(),
+                logical.n
+            ));
         }
         let mut seen: BTreeMap<u32, usize> = BTreeMap::new();
         for (v, chain) in chains.iter().enumerate() {
@@ -357,7 +399,9 @@ impl Working {
             }
             for &q in chain {
                 if self.ideal_qubits.binary_search(&q).is_err() {
-                    return Err(format!("variable {v} uses qubit {q}, which this machine never had"));
+                    return Err(format!(
+                        "variable {v} uses qubit {q}, which this machine never had"
+                    ));
                 }
                 if self.defects.qubit_dead(q) {
                     return Err(format!("variable {v} uses qubit {q}, which is dead"));
@@ -522,7 +566,10 @@ mod tests {
         // (0,4) is a real chimera coupler and 0 is also a dead qubit; both filters agree on it.
         assert_eq!(w.graph().n, want_nodes);
         assert_eq!(w.graph().n_edges, want_edges);
-        assert!(want_edges < ideal.graph.n_edges, "the test must actually remove something");
+        assert!(
+            want_edges < ideal.graph.n_edges,
+            "the test must actually remove something"
+        );
     }
 
     /// The working graph is exactly the live-induced subgraph minus the dead couplers — both
@@ -537,7 +584,10 @@ mod tests {
         // Nothing extra: every working coupler is an ideal one, alive, between live qubits.
         for (a, b) in edge_set(w.graph()) {
             let (qa, qb) = (w.qubit(a as usize).unwrap(), w.qubit(b as usize).unwrap());
-            assert!(ideal_edges.contains(&key(qa, qb)), "coupler {qa}-{qb} is not on the machine");
+            assert!(
+                ideal_edges.contains(&key(qa, qb)),
+                "coupler {qa}-{qb} is not on the machine"
+            );
             assert!(!d.coupler_dead(qa, qb), "coupler {qa}-{qb} is dead");
             assert!(!d.qubit_dead(qa) && !d.qubit_dead(qb));
         }
@@ -548,10 +598,16 @@ mod tests {
             .collect();
         for &(qa, qb) in &ideal_edges {
             if !d.coupler_dead(qa, qb) {
-                assert!(live_pairs.contains(&key(qa, qb)), "coupler {qa}-{qb} was lost");
+                assert!(
+                    live_pairs.contains(&key(qa, qb)),
+                    "coupler {qa}-{qb} was lost"
+                );
             }
         }
-        assert!(!d.dead_qubits().is_empty(), "the draw must actually kill something");
+        assert!(
+            !d.dead_qubits().is_empty(),
+            "the draw must actually kill something"
+        );
     }
 
     /// Renumbering preserves adjacency: every node's neighbour set, read back in machine numbering,
@@ -591,7 +647,10 @@ mod tests {
         let w = Working::new(&ideal, &nothing);
         assert_eq!(w.graph().n, 0);
         assert_eq!(w.graph().n_edges, 0);
-        assert!(w.embed(&triangle(), 1).is_none(), "no machine, no embedding");
+        assert!(
+            w.embed(&triangle(), 1).is_none(),
+            "no machine, no embedding"
+        );
     }
 
     /// Lowering a yield can only kill more. One draw per item from a rate-independent stream makes
@@ -604,8 +663,14 @@ mod tests {
             let (hi, lo) = (pair[0], pair[1]);
             let a = Defects::sample(&ideal, hi, hi, 5);
             let b = Defects::sample(&ideal, lo, lo, 5);
-            assert!(a.dead_qubits().is_subset(b.dead_qubits()), "qubits at {hi} vs {lo}");
-            assert!(a.dead_couplers().is_subset(b.dead_couplers()), "couplers at {hi} vs {lo}");
+            assert!(
+                a.dead_qubits().is_subset(b.dead_qubits()),
+                "qubits at {hi} vs {lo}"
+            );
+            assert!(
+                a.dead_couplers().is_subset(b.dead_couplers()),
+                "couplers at {hi} vs {lo}"
+            );
         }
     }
 
@@ -613,8 +678,14 @@ mod tests {
     #[test]
     fn a_defect_map_is_reproducible_from_its_seed() {
         let ideal = identity_numbered(chimera(2, 2, 4, 1.0));
-        assert_eq!(Defects::sample(&ideal, 0.9, 0.9, 42), Defects::sample(&ideal, 0.9, 0.9, 42));
-        assert_ne!(Defects::sample(&ideal, 0.9, 0.9, 42), Defects::sample(&ideal, 0.9, 0.9, 43));
+        assert_eq!(
+            Defects::sample(&ideal, 0.9, 0.9, 42),
+            Defects::sample(&ideal, 0.9, 0.9, 42)
+        );
+        assert_ne!(
+            Defects::sample(&ideal, 0.9, 0.9, 42),
+            Defects::sample(&ideal, 0.9, 0.9, 43)
+        );
     }
 
     /// A hand-built embedding on `grid(3)`, checked against the grid's own definition, and then the
@@ -628,11 +699,18 @@ mod tests {
         let ideal = identity_numbered(grid(3));
         let logical = triangle();
         let chains = vec![vec![0u32, 1], vec![3], vec![4]];
-        let e = Embedding { chains: vec![vec![0, 1], vec![3], vec![4]], sites: 9 };
+        let e = Embedding {
+            chains: vec![vec![0, 1], vec![3], vec![4]],
+            sites: 9,
+        };
 
         let clean = Working::new(&ideal, &Defects::none());
-        clean.audit_qubits(&logical, &chains).expect("this is an embedding of the triangle");
-        clean.audit(&logical, &e).expect("and it verifies against the working graph");
+        clean
+            .audit_qubits(&logical, &chains)
+            .expect("this is an embedding of the triangle");
+        clean
+            .audit(&logical, &e)
+            .expect("and it verifies against the working graph");
         assert_eq!(
             clean.couplers_used(&logical, &chains),
             vec![(0, 1), (0, 3), (1, 4), (3, 4)],
@@ -642,19 +720,25 @@ mod tests {
         // A dead qubit under a chain.
         let mut d = Defects::none();
         d.kill_qubit(4);
-        let why = Working::new(&ideal, &d).audit_qubits(&logical, &chains).unwrap_err();
+        let why = Working::new(&ideal, &d)
+            .audit_qubits(&logical, &chains)
+            .unwrap_err();
         assert!(why.contains("qubit 4") && why.contains("dead"), "{why}");
 
         // A dead coupler holding a chain together.
         let mut d = Defects::none();
         d.kill_coupler(0, 1);
-        let why = Working::new(&ideal, &d).audit_qubits(&logical, &chains).unwrap_err();
+        let why = Working::new(&ideal, &d)
+            .audit_qubits(&logical, &chains)
+            .unwrap_err();
         assert!(why.contains("not connected by live couplers"), "{why}");
 
         // A dead coupler realising a logical edge.
         let mut d = Defects::none();
         d.kill_coupler(3, 4);
-        let why = Working::new(&ideal, &d).audit_qubits(&logical, &chains).unwrap_err();
+        let why = Working::new(&ideal, &d)
+            .audit_qubits(&logical, &chains)
+            .unwrap_err();
         assert!(why.contains("variables 1 and 2"), "{why}");
 
         // A qubit that is not on the machine at all.
@@ -673,16 +757,23 @@ mod tests {
         let ideal = identity_numbered(chimera(3, 3, 4, 1.0));
         let clique = complete(12);
         let e = chimera_clique(3, 4).expect("K_12 on a 3x3 chimera");
-        e.verify(&clique, &ideal.graph).expect("the construction is right on the ideal lattice");
+        e.verify(&clique, &ideal.graph)
+            .expect("the construction is right on the ideal lattice");
 
         let victim = e.chains[0][0] as u32;
         let mut d = Defects::none();
         d.kill_qubit(victim);
         let w = Working::new(&ideal, &d);
-        let chains: Vec<Vec<u32>> =
-            e.chains.iter().map(|c| c.iter().map(|&s| s as u32).collect()).collect();
+        let chains: Vec<Vec<u32>> = e
+            .chains
+            .iter()
+            .map(|c| c.iter().map(|&s| s as u32).collect())
+            .collect();
         let why = w.audit_qubits(&clique, &chains).unwrap_err();
-        assert!(why.contains(&format!("qubit {victim}")) && why.contains("dead"), "{why}");
+        assert!(
+            why.contains(&format!("qubit {victim}")) && why.contains("dead"),
+            "{why}"
+        );
     }
 
     /// An embedding found against a working graph uses no dead qubit and no dead coupler — read off
@@ -701,7 +792,9 @@ mod tests {
             assert!(w.stats().qubit_rate() < 1.0);
             defective += 1;
 
-            let Some(e) = w.embed(&logical, seed) else { continue };
+            let Some(e) = w.embed(&logical, seed) else {
+                continue;
+            };
             found += 1;
 
             let chains = w.chain_qubits(&e).unwrap();
@@ -712,15 +805,23 @@ mod tests {
                 }
             }
             for (a, b) in w.couplers_used(&logical, &chains) {
-                assert!(!d.coupler_dead(a, b), "the run would program dead coupler {a}-{b}");
+                assert!(
+                    !d.coupler_dead(a, b),
+                    "the run would program dead coupler {a}-{b}"
+                );
                 assert!(w.coupler_live(a, b));
             }
             // The chains have to still be an embedding of the program into the machine that is left.
-            e.verify(&logical, w.graph()).expect("verify against the working graph");
-            w.audit(&logical, &e).expect("audit against the live fabric");
+            e.verify(&logical, w.graph())
+                .expect("verify against the working graph");
+            w.audit(&logical, &e)
+                .expect("audit against the live fabric");
         }
         assert_eq!(defective, 8);
-        assert!(found >= 6, "only {found} of 8 defective machines took a K_5");
+        assert!(
+            found >= 6,
+            "only {found} of 8 defective machines took a K_5"
+        );
     }
 
     /// A model applied under an embedding programs only live sites, and its total weight is the
@@ -731,7 +832,9 @@ mod tests {
         let d = Defects::sample(&ideal, 0.9, 0.9, 2);
         let w = Working::new(&ideal, &d);
         let logical = triangle();
-        let e = w.embed(&logical, 4).expect("a triangle fits a defective 6x6 king");
+        let e = w
+            .embed(&logical, 4)
+            .expect("a triangle fits a defective 6x6 king");
         let out = w.apply(&logical, &e);
 
         assert_eq!(out.graph.n, w.graph().n);

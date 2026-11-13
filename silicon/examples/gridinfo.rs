@@ -15,12 +15,19 @@ use std::time::Instant;
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let grid_path = args.next().expect("usage: gridinfo <tilegrid.json> [segbits.db]");
+    let grid_path = args
+        .next()
+        .expect("usage: gridinfo <tilegrid.json> [segbits.db]");
     let text = std::fs::read_to_string(&grid_path).expect("read tilegrid");
     let t0 = Instant::now();
     let grid = TileGrid::parse(&text).expect("parse tilegrid");
     let dt = t0.elapsed();
-    println!("parsed {:.1} MB, {} tiles in {:.2} s", text.len() as f64 / 1e6, grid.tiles.len(), dt.as_secs_f64());
+    println!(
+        "parsed {:.1} MB, {} tiles in {:.2} s",
+        text.len() as f64 / 1e6,
+        grid.tiles.len(),
+        dt.as_secs_f64()
+    );
 
     let mut by_kind: BTreeMap<&str, usize> = BTreeMap::new();
     let mut with_bits = 0usize;
@@ -30,7 +37,11 @@ fn main() {
         if t.logic_block().is_some() {
             with_bits += 1;
         }
-        slices += t.sites.iter().filter(|(_, ty)| ty.starts_with("SLICE")).count();
+        slices += t
+            .sites
+            .iter()
+            .filter(|(_, ty)| ty.starts_with("SLICE"))
+            .count();
     }
     let mut top: Vec<_> = by_kind.iter().collect();
     top.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
@@ -41,8 +52,14 @@ fn main() {
     let datasheet_luts = 63_400usize;
     println!(
         "datasheet cross-check: {} slices x 4 = {} LUT6 vs datasheet {} -> {}",
-        slices, slices * 4, datasheet_luts,
-        if slices * 4 == datasheet_luts { "MATCH" } else { "MISMATCH - grid parse is wrong" }
+        slices,
+        slices * 4,
+        datasheet_luts,
+        if slices * 4 == datasheet_luts {
+            "MATCH"
+        } else {
+            "MISMATCH - grid parse is wrong"
+        }
     );
 
     // frame-address extent of the logic blocks
@@ -72,19 +89,35 @@ fn main() {
                 let resolved: Vec<_> = bits.iter().filter_map(|b| block.resolve(*b)).collect();
                 println!(
                     "\n{} in {} ({} sites): {}/64 INIT bits resolve",
-                    prefix, tile.name, tile.sites.len(), resolved.len()
+                    prefix,
+                    tile.name,
+                    tile.sites.len(),
+                    resolved.len()
                 );
                 for (i, a) in resolved.iter().take(4).enumerate() {
-                    println!("  INIT[{i:02}] -> frame 0x{:08X} word {} bit {}", a.frame, a.word, a.bit);
+                    println!(
+                        "  INIT[{i:02}] -> frame 0x{:08X} word {} bit {}",
+                        a.frame, a.word, a.bit
+                    );
                 }
-                let frames: std::collections::BTreeSet<u32> = resolved.iter().map(|a| a.frame).collect();
-                println!("  spans {} distinct frames, words {:?}", frames.len(),
-                         resolved.iter().map(|a| a.word).collect::<std::collections::BTreeSet<_>>());
-                println!("verdict: {}", if resolved.len() == 64 {
-                    "all 64 truth-table bits have physical addresses — the map is complete"
-                } else {
-                    "INCOMPLETE map — refusing to trust it"
-                });
+                let frames: std::collections::BTreeSet<u32> =
+                    resolved.iter().map(|a| a.frame).collect();
+                println!(
+                    "  spans {} distinct frames, words {:?}",
+                    frames.len(),
+                    resolved
+                        .iter()
+                        .map(|a| a.word)
+                        .collect::<std::collections::BTreeSet<_>>()
+                );
+                println!(
+                    "verdict: {}",
+                    if resolved.len() == 64 {
+                        "all 64 truth-table bits have physical addresses — the map is complete"
+                    } else {
+                        "INCOMPLETE map — refusing to trust it"
+                    }
+                );
             }
             None => println!("\n{prefix}: incomplete INIT map in this database"),
         }

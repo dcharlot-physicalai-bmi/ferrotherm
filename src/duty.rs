@@ -128,7 +128,10 @@ impl core::fmt::Display for DutyError {
                  IS the comparison -- so this cannot be answered rather than answered with a guess. \
                  No thermodynamic vendor publishes the number; supply it and the arithmetic runs"
             ),
-            DutyError::DeviceCannotSustain { reflash_s, period_s } => write!(
+            DutyError::DeviceCannotSustain {
+                reflash_s,
+                period_s,
+            } => write!(
                 f,
                 "reprogramming this device for one period takes at least {reflash_s:.6} s and the \
                  cadence allows {period_s:.6} s, so it cannot run this loop at ANY energy price. \
@@ -229,7 +232,9 @@ impl DeviceRun {
     /// [`DutyError::PricesUnstated`] when the device publishes no per-operation energy. Not a device
     /// that is expensive: a fact about the literature.
     pub fn compute_joules(&self) -> Result<f64, DutyError> {
-        self.per_period.joules(&self.prices).ok_or(DutyError::PricesUnstated)
+        self.per_period
+            .joules(&self.prices)
+            .ok_or(DutyError::PricesUnstated)
     }
 
     /// Can it reprogram itself fast enough for this cadence?
@@ -245,12 +250,18 @@ impl DeviceRun {
     /// a feasibility verdict that arrives before any joules.
     pub fn check_sustains(&self, period_s: f64) -> Result<(), DutyError> {
         if !period_s.is_finite() || period_s <= 0.0 {
-            return Err(DutyError::Empty("the period must be a finite positive number of seconds"));
+            return Err(DutyError::Empty(
+                "the period must be a finite positive number of seconds",
+            ));
         }
-        match self.per_period.reflash_seconds(&self.prices, self.graph_nodes) {
-            Some(reflash_s) if reflash_s > period_s => {
-                Err(DutyError::DeviceCannotSustain { reflash_s, period_s })
-            }
+        match self
+            .per_period
+            .reflash_seconds(&self.prices, self.graph_nodes)
+        {
+            Some(reflash_s) if reflash_s > period_s => Err(DutyError::DeviceCannotSustain {
+                reflash_s,
+                period_s,
+            }),
             _ => Ok(()),
         }
     }
@@ -268,7 +279,9 @@ impl DeviceRun {
         self.check_sustains(period_s)?;
         let standby = self.standby_watts.ok_or(DutyError::StandbyUnpublished)?;
         if !standby.is_finite() || standby < 0.0 {
-            return Err(DutyError::NotPhysical("standby power must be finite and non-negative"));
+            return Err(DutyError::NotPhysical(
+                "standby power must be finite and non-negative",
+            ));
         }
         Ok(self.compute_joules()? + standby * period_s)
     }
@@ -304,7 +317,9 @@ impl Machine {
     /// measurement outcome; a NEGATIVE marginal is the meter's noise, not a machine generating power.
     pub fn new(idle_watts: f64, marginal_watts: f64, rate: f64) -> Result<Machine, DutyError> {
         if !idle_watts.is_finite() || idle_watts < 0.0 {
-            return Err(DutyError::NotPhysical("idle power must be finite and non-negative"));
+            return Err(DutyError::NotPhysical(
+                "idle power must be finite and non-negative",
+            ));
         }
         if !marginal_watts.is_finite() || marginal_watts < 0.0 {
             return Err(DutyError::NotPhysical(
@@ -315,7 +330,11 @@ impl Machine {
         if !rate.is_finite() || rate <= 0.0 {
             return Err(DutyError::NotPhysical("rate must be finite and positive"));
         }
-        Ok(Machine { idle_watts, marginal_watts, rate })
+        Ok(Machine {
+            idle_watts,
+            marginal_watts,
+            rate,
+        })
     }
 
     /// Seconds of computation `work` units need.
@@ -352,10 +371,14 @@ impl Machine {
     /// when the work needs more seconds than the cadence allows.
     pub fn duty(&self, work: u64, period_s: f64) -> Result<f64, DutyError> {
         if work == 0 {
-            return Err(DutyError::Empty("no work was done, so there is no duty cycle"));
+            return Err(DutyError::Empty(
+                "no work was done, so there is no duty cycle",
+            ));
         }
         if !period_s.is_finite() || period_s <= 0.0 {
-            return Err(DutyError::Empty("the period must be a finite positive number of seconds"));
+            return Err(DutyError::Empty(
+                "the period must be a finite positive number of seconds",
+            ));
         }
         let needs_s = self.run_seconds(work);
         if needs_s > period_s {
@@ -531,7 +554,10 @@ mod tests {
         let busy = m.standby_budget(work, m.run_seconds(work)).unwrap(); // duty = 1
         let rare = m.standby_budget(work, 60.0).unwrap(); // once a minute
 
-        assert!((busy - 120.0).abs() < 1e-9, "at full duty the whole draw is the budget: {busy}");
+        assert!(
+            (busy - 120.0).abs() < 1e-9,
+            "at full duty the whole draw is the budget: {busy}"
+        );
         // Relative, not absolute: the residual is `marginal * duty`, so what the claim really
         // says is that the compute term has become a rounding error on the idle term.
         let residual = (rare - m.idle_watts).abs() / m.idle_watts;
@@ -578,7 +604,10 @@ mod tests {
             }
             other => panic!("expected a sustainability refusal, got {other:?}"),
         }
-        assert!(m.joules_per_period(10_000_000_000, 11.0).is_ok(), "11 s is enough for 10 s of work");
+        assert!(
+            m.joules_per_period(10_000_000_000, 11.0).is_ok(),
+            "11 s is enough for 10 s of work"
+        );
     }
 
     #[test]
@@ -608,8 +637,14 @@ mod tests {
 
         let good = m.beaten_by(m.idle_watts / 4.0, 0.0, work, period).unwrap();
         let bad = m.beaten_by(m.idle_watts * 2.0, 0.0, work, period).unwrap();
-        assert!(good.challenger_wins, "a quarter of the idle draw has to win: {good:?}");
-        assert!(!bad.challenger_wins, "twice the idle draw cannot win on free compute: {bad:?}");
+        assert!(
+            good.challenger_wins,
+            "a quarter of the idle draw has to win: {good:?}"
+        );
+        assert!(
+            !bad.challenger_wins,
+            "twice the idle draw cannot win on free compute: {bad:?}"
+        );
 
         // And the budget is what separated them, not the computation -- which was zero for both.
         assert!(m.idle_watts / 4.0 < good.standby_budget);
@@ -639,7 +674,11 @@ mod tests {
     fn z1_control_loop(nodes: u64) -> DeviceRun {
         DeviceRun {
             prices: crate::ledger::Z1_SPICE,
-            per_period: Ledger { samples: nodes * 64, reads: 16, writes: nodes },
+            per_period: Ledger {
+                samples: nodes * 64,
+                reads: 16,
+                writes: nodes,
+            },
             graph_nodes: nodes,
             standby_watts: None,
             standby_is_upper_bound: false,
@@ -655,7 +694,10 @@ mod tests {
         let m = gpu();
         let mut dev = z1_control_loop(1_000);
         dev.per_period.writes = 0; // model-resident, so the reflash cap is not what stops us
-        assert!(dev.check_sustains(60.0).is_ok(), "no writes means no reflash floor");
+        assert!(
+            dev.check_sustains(60.0).is_ok(),
+            "no writes means no reflash floor"
+        );
         assert!(dev.compute_joules().is_ok(), "its computation IS priced");
 
         let err = m.beaten_by_device(&dev, 1_000_000, 60.0).unwrap_err();
@@ -676,8 +718,14 @@ mod tests {
         let m = gpu();
         let dev = z1_control_loop(1_000);
         match m.beaten_by_device(&dev, 1_000_000, 0.01) {
-            Err(DutyError::DeviceCannotSustain { reflash_s, period_s }) => {
-                assert!((reflash_s - 1.0).abs() < 1e-9, "one full reflash at 1 Hz: {reflash_s}");
+            Err(DutyError::DeviceCannotSustain {
+                reflash_s,
+                period_s,
+            }) => {
+                assert!(
+                    (reflash_s - 1.0).abs() < 1e-9,
+                    "one full reflash at 1 Hz: {reflash_s}"
+                );
                 assert!((period_s - 0.01).abs() < 1e-12);
             }
             other => panic!("feasibility must be decided first, got {other:?}"),
@@ -696,13 +744,20 @@ mod tests {
         let m = gpu();
         let dev = DeviceRun {
             prices: crate::ledger::Prices::UNSTATED,
-            per_period: Ledger { samples: 1_000, reads: 1, writes: 0 },
+            per_period: Ledger {
+                samples: 1_000,
+                reads: 1,
+                writes: 0,
+            },
             graph_nodes: 1_000,
             standby_watts: Some(1.0),
             standby_is_upper_bound: false,
         };
         assert_eq!(dev.compute_joules().unwrap_err(), DutyError::PricesUnstated);
-        assert_eq!(m.beaten_by_device(&dev, 1_000_000, 1.0).unwrap_err(), DutyError::PricesUnstated);
+        assert_eq!(
+            m.beaten_by_device(&dev, 1_000_000, 1.0).unwrap_err(),
+            DutyError::PricesUnstated
+        );
     }
 
     #[test]
@@ -717,10 +772,16 @@ mod tests {
 
         let (work, period) = (1_000_000u64, 60.0);
         let v = m.beaten_by_device(&dev, work, period).unwrap();
-        let loose = m.beaten_by(0.001, dev.compute_joules().unwrap(), work, period).unwrap();
+        let loose = m
+            .beaten_by(0.001, dev.compute_joules().unwrap(), work, period)
+            .unwrap();
         assert!((v.challenger_joules - loose.challenger_joules).abs() < 1e-12);
         assert_eq!(v.challenger_wins, loose.challenger_wins);
-        assert!(v.challenger_wins, "a milliwatt against a {} W idle draw wins", m.idle_watts);
+        assert!(
+            v.challenger_wins,
+            "a milliwatt against a {} W idle draw wins",
+            m.idle_watts
+        );
     }
 
     #[test]
@@ -735,7 +796,9 @@ mod tests {
         dev.per_period.writes = 0;
 
         // Z1's published spec, used as the pessimistic stand-in.
-        let v = m.beaten_by_device(&dev.with_standby_at_most(1.0), work, period).unwrap();
+        let v = m
+            .beaten_by_device(&dev.with_standby_at_most(1.0), work, period)
+            .unwrap();
         assert_eq!(
             v.outcome(),
             Outcome::ChallengerWins,
@@ -757,7 +820,9 @@ mod tests {
         let mut dev = z1_control_loop(1_000);
         dev.per_period.writes = 0;
 
-        let bounded = m.beaten_by_device(&dev.with_standby_at_most(500.0), work, period).unwrap();
+        let bounded = m
+            .beaten_by_device(&dev.with_standby_at_most(500.0), work, period)
+            .unwrap();
         assert!(!bounded.challenger_wins);
         assert_eq!(bounded.outcome(), Outcome::Inconclusive);
 
@@ -773,10 +838,22 @@ mod tests {
     #[test]
     fn a_challenger_stated_in_nonsense_is_refused() {
         let m = gpu();
-        assert!(matches!(m.beaten_by(f64::NAN, 0.0, 10, 1.0), Err(DutyError::NotPhysical(_))));
-        assert!(matches!(m.beaten_by(-1.0, 0.0, 10, 1.0), Err(DutyError::NotPhysical(_))));
-        assert!(matches!(m.beaten_by(1.0, f64::NAN, 10, 1.0), Err(DutyError::NotPhysical(_))));
-        assert!(matches!(m.beaten_by(1.0, -1.0, 10, 1.0), Err(DutyError::NotPhysical(_))));
+        assert!(matches!(
+            m.beaten_by(f64::NAN, 0.0, 10, 1.0),
+            Err(DutyError::NotPhysical(_))
+        ));
+        assert!(matches!(
+            m.beaten_by(-1.0, 0.0, 10, 1.0),
+            Err(DutyError::NotPhysical(_))
+        ));
+        assert!(matches!(
+            m.beaten_by(1.0, f64::NAN, 10, 1.0),
+            Err(DutyError::NotPhysical(_))
+        ));
+        assert!(matches!(
+            m.beaten_by(1.0, -1.0, 10, 1.0),
+            Err(DutyError::NotPhysical(_))
+        ));
         // An unsustainable cadence is still refused through this path.
         assert!(matches!(
             m.beaten_by(1.0, 0.0, 10_000_000_000, 1.0),
@@ -786,12 +863,27 @@ mod tests {
 
     #[test]
     fn unphysical_characterisations_are_refused() {
-        assert!(matches!(Machine::new(f64::NAN, 1.0, 1.0), Err(DutyError::NotPhysical(_))));
-        assert!(matches!(Machine::new(-1.0, 1.0, 1.0), Err(DutyError::NotPhysical(_))));
+        assert!(matches!(
+            Machine::new(f64::NAN, 1.0, 1.0),
+            Err(DutyError::NotPhysical(_))
+        ));
+        assert!(matches!(
+            Machine::new(-1.0, 1.0, 1.0),
+            Err(DutyError::NotPhysical(_))
+        ));
         // A negative delta is the meter's noise floor, not a generator.
-        assert!(matches!(Machine::new(1.0, -0.5, 1.0), Err(DutyError::NotPhysical(_))));
-        assert!(matches!(Machine::new(1.0, 1.0, 0.0), Err(DutyError::NotPhysical(_))));
-        assert!(matches!(Machine::new(1.0, 1.0, f64::INFINITY), Err(DutyError::NotPhysical(_))));
+        assert!(matches!(
+            Machine::new(1.0, -0.5, 1.0),
+            Err(DutyError::NotPhysical(_))
+        ));
+        assert!(matches!(
+            Machine::new(1.0, 1.0, 0.0),
+            Err(DutyError::NotPhysical(_))
+        ));
+        assert!(matches!(
+            Machine::new(1.0, 1.0, f64::INFINITY),
+            Err(DutyError::NotPhysical(_))
+        ));
         // Zero marginal is a real outcome: the workload did not clear the noise.
         let flat = Machine::new(20.0, 0.0, 1e9).unwrap();
         assert_eq!(flat.idle_dominant_below(), f64::INFINITY);

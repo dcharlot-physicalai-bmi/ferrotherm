@@ -104,7 +104,10 @@ impl core::fmt::Display for WireError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             WireError::Truncated { at, needed } => {
-                write!(f, "truncated at byte {at}: {needed} more byte(s) were needed")
+                write!(
+                    f,
+                    "truncated at byte {at}: {needed} more byte(s) were needed"
+                )
             }
             WireError::VarintNotCanonical { at } => write!(
                 f,
@@ -122,10 +125,16 @@ impl core::fmt::Display for WireError {
                  skipping it would report a partial message as a whole one"
             ),
             WireError::UnknownWireType { at, wire } => {
-                write!(f, "wire type {wire} at byte {at} is not one the format defines")
+                write!(
+                    f,
+                    "wire type {wire} at byte {at} is not one the format defines"
+                )
             }
             WireError::FieldNumberZero { at } => {
-                write!(f, "field number 0 at byte {at} is reserved and no writer may emit it")
+                write!(
+                    f,
+                    "field number 0 at byte {at} is reserved and no writer may emit it"
+                )
             }
         }
     }
@@ -256,12 +265,15 @@ impl<'a> Reader<'a> {
                 // length passes any bounds check you write after it.
                 let len = usize::try_from(len)
                     .map_err(|_| WireError::LengthOutOfRange { at: lat, len })?;
-                let end = self
-                    .i
-                    .checked_add(len)
-                    .ok_or(WireError::LengthOutOfRange { at: lat, len: len as u64 })?;
+                let end = self.i.checked_add(len).ok_or(WireError::LengthOutOfRange {
+                    at: lat,
+                    len: len as u64,
+                })?;
                 if end > self.b.len() {
-                    return Err(WireError::Truncated { at: lat, needed: end - self.b.len() });
+                    return Err(WireError::Truncated {
+                        at: lat,
+                        needed: end - self.b.len(),
+                    });
                 }
                 let s = &self.b[self.i..end];
                 self.i = end;
@@ -275,12 +287,15 @@ impl<'a> Reader<'a> {
     }
 
     fn take_array<const N: usize>(&mut self) -> Result<[u8; N], WireError> {
-        let end = self
-            .i
-            .checked_add(N)
-            .ok_or(WireError::Truncated { at: self.i, needed: N })?;
+        let end = self.i.checked_add(N).ok_or(WireError::Truncated {
+            at: self.i,
+            needed: N,
+        })?;
         if end > self.b.len() {
-            return Err(WireError::Truncated { at: self.i, needed: end - self.b.len() });
+            return Err(WireError::Truncated {
+                at: self.i,
+                needed: end - self.b.len(),
+            });
         }
         let mut out = [0u8; N];
         out.copy_from_slice(&self.b[self.i..end]);
@@ -298,7 +313,10 @@ fn read_varint(b: &[u8], start: usize) -> Result<(u64, usize), WireError> {
     let mut v: u64 = 0;
     let mut i = start;
     for byte_index in 0..10usize {
-        let byte = *b.get(i).ok_or(WireError::Truncated { at: start, needed: 1 })?;
+        let byte = *b.get(i).ok_or(WireError::Truncated {
+            at: start,
+            needed: 1,
+        })?;
         i += 1;
         if byte_index == 9 {
             // The tenth byte contributes bit 63 only.
@@ -347,12 +365,19 @@ pub fn packed_varints(p: &[u8]) -> Result<Vec<u64>, WireError> {
 /// [`WireError::Truncated`] when the payload is not a whole number of eight-byte doubles.
 pub fn packed_doubles(p: &[u8]) -> Result<Vec<f64>, WireError> {
     if !p.len().is_multiple_of(8) {
-        return Err(WireError::Truncated { at: p.len() - (p.len() % 8), needed: 8 - (p.len() % 8) });
+        return Err(WireError::Truncated {
+            at: p.len() - (p.len() % 8),
+            needed: 8 - (p.len() % 8),
+        });
     }
     // `as_chunks::<8>` yields `[u8; 8]` directly, so the length is carried by the TYPE and the
     // `try_into().expect("chunks_exact(8)")` this used to need -- an unreachable panic that still
     // had to be read and dismissed by anyone auditing the parser -- is gone rather than justified.
-    Ok(p.as_chunks::<8>().0.iter().map(|&c| f64::from_bits(u64::from_le_bytes(c))).collect())
+    Ok(p.as_chunks::<8>()
+        .0
+        .iter()
+        .map(|&c| f64::from_bits(u64::from_le_bytes(c)))
+        .collect())
 }
 
 // ---- writing -------------------------------------------------------------------------------
@@ -459,7 +484,9 @@ mod tests {
     fn a_hostile_length_prefix_is_named_rather_than_wrapping() {
         // Eleven bytes that aborted the host process through the C ABI: tag 0x0A, then a length of
         // ~2^64. `self.i + len as usize` wrapped, and the wrapped end passed the bounds check.
-        let bytes = [0x0A, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01];
+        let bytes = [
+            0x0A, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x01,
+        ];
         match all(&bytes) {
             Err(WireError::LengthOutOfRange { .. } | WireError::Truncated { .. }) => {}
             other => panic!("expected a named refusal, got {other:?}"),
@@ -491,11 +518,17 @@ mod tests {
         // message as a complete one.
         let mut b = Vec::new();
         put_key(&mut b, 4, 3);
-        assert!(matches!(all(&b), Err(WireError::GroupsUnsupported { field: 4, .. })));
+        assert!(matches!(
+            all(&b),
+            Err(WireError::GroupsUnsupported { field: 4, .. })
+        ));
 
         let mut c = Vec::new();
         put_key(&mut c, 4, 6);
-        assert!(matches!(all(&c), Err(WireError::UnknownWireType { wire: 6, .. })));
+        assert!(matches!(
+            all(&c),
+            Err(WireError::UnknownWireType { wire: 6, .. })
+        ));
     }
 
     #[test]
@@ -516,7 +549,9 @@ mod tests {
         p.push(0x80); // a varint that never ends
         match packed_varints(&p) {
             Err(WireError::Truncated { .. }) => {}
-            other => panic!("a corrupt packed array must not become a shorter valid one: {other:?}"),
+            other => {
+                panic!("a corrupt packed array must not become a shorter valid one: {other:?}")
+            }
         }
 
         // Doubles: a partial group is a refusal, where `chunks_exact` would have dropped it.
@@ -524,7 +559,10 @@ mod tests {
         d.extend_from_slice(&1.0f64.to_bits().to_le_bytes());
         assert_eq!(packed_doubles(&d).unwrap(), vec![1.0]);
         d.push(0x00);
-        assert!(matches!(packed_doubles(&d), Err(WireError::Truncated { .. })));
+        assert!(matches!(
+            packed_doubles(&d),
+            Err(WireError::Truncated { .. })
+        ));
     }
 
     #[test]
@@ -559,7 +597,11 @@ mod tests {
         put_str_field(&mut b, 9999, "a field from a later version");
         put_varint_field(&mut b, 2, 8);
         let f = all(&b).unwrap();
-        assert_eq!(f.len(), 3, "the reader hands all three up; the caller ignores 9999");
+        assert_eq!(
+            f.len(),
+            3,
+            "the reader hands all three up; the caller ignores 9999"
+        );
         assert_eq!(f[2].value.as_u64(), Some(8), "and keeps reading past it");
     }
 }

@@ -114,7 +114,13 @@ pub fn naive_mean_field(g: &Graph, beta: f64, iters: usize, damping: f64) -> Mea
         it += 1;
     }
     let log_z = gibbs_bogoliubov(g, beta, &m);
-    MeanField { beta, m, log_z, residual, iterations: it }
+    MeanField {
+        beta,
+        m,
+        log_z,
+        residual,
+        iterations: it,
+    }
 }
 
 /// Naive mean field with the leading `clamped.len()` spins **pinned** to the values given.
@@ -181,7 +187,13 @@ pub fn naive_mean_field_clamped(
         }
     }
     let log_z = gibbs_bogoliubov(g, beta, &m);
-    MeanField { beta, m, log_z, residual, iterations: it }
+    MeanField {
+        beta,
+        m,
+        log_z,
+        residual,
+        iterations: it,
+    }
 }
 
 /// TAP: naive mean field with the Onsager reaction term, returning the second-order Plefka free
@@ -218,7 +230,13 @@ pub fn tap(g: &Graph, beta: f64, iters: usize, damping: f64) -> MeanField {
         }
     }
     let log_z = gibbs_bogoliubov(g, beta, &m) + 0.5 * beta * beta * onsager;
-    MeanField { beta, m, log_z, residual, iterations: it }
+    MeanField {
+        beta,
+        m,
+        log_z,
+        residual,
+        iterations: it,
+    }
 }
 
 /// What belief propagation produced.
@@ -264,12 +282,16 @@ impl Bethe {
 pub fn belief_propagation(g: &Graph, beta: f64, iters: usize, damping: f64) -> Bethe {
     let ne = g.nbr.len();
     let mut u = vec![0.0f64; ne]; // u[e] = message from nbr[e] into the owner of slot e
-    let owner: Vec<usize> = (0..g.n).flat_map(|i| core::iter::repeat_n(i, g.offset[i + 1] - g.offset[i])).collect();
+    let owner: Vec<usize> = (0..g.n)
+        .flat_map(|i| core::iter::repeat_n(i, g.offset[i + 1] - g.offset[i]))
+        .collect();
     // reverse slot: the slot in nbr[e]'s list that points back at owner(e)
     let rev: Vec<usize> = (0..ne)
         .map(|e| {
             let (i, j) = (owner[e], g.nbr[e] as usize);
-            (g.offset[j]..g.offset[j + 1]).find(|&f| g.nbr[f] as usize == i).expect("symmetric adjacency")
+            (g.offset[j]..g.offset[j + 1])
+                .find(|&f| g.nbr[f] as usize == i)
+                .expect("symmetric adjacency")
         })
         .collect();
     let cavity = |u: &[f64], i: usize, exclude: usize| -> f64 {
@@ -320,7 +342,13 @@ pub fn belief_propagation(g: &Graph, beta: f64, iters: usize, damping: f64) -> B
             }
         }
     }
-    Bethe { beta, m, log_z, residual, iterations: it }
+    Bethe {
+        beta,
+        m,
+        log_z,
+        residual,
+        iterations: it,
+    }
 }
 
 #[cfg(test)]
@@ -361,7 +389,11 @@ mod tests {
                 assert!(b <= truth + 1e-12, "bound {b} above ln Z {truth}");
             }
             let mf = naive_mean_field(&g, beta, 2000, 0.3);
-            assert!(mf.log_z <= truth + 1e-12, "fixed-point bound {} above ln Z {truth}", mf.log_z);
+            assert!(
+                mf.log_z <= truth + 1e-12,
+                "fixed-point bound {} above ln Z {truth}",
+                mf.log_z
+            );
             // and at m = 0 the bound is n ln 2 − 0, which is only ln Z at β = 0: below it here.
             assert!(gibbs_bogoliubov(&g, beta, &vec![0.0; g.n]) < truth);
         }
@@ -378,10 +410,18 @@ mod tests {
             let marg = ex.marginals(&g, beta).unwrap(); // P(s_i = +1)
             let bp = belief_propagation(&g, beta, 500, 0.0);
             assert!(bp.converged(1e-12), "seed {seed}: residual {}", bp.residual);
-            assert!((bp.log_z - truth).abs() < 1e-9, "seed {seed}: Bethe {} vs exact {truth}", bp.log_z);
+            assert!(
+                (bp.log_z - truth).abs() < 1e-9,
+                "seed {seed}: Bethe {} vs exact {truth}",
+                bp.log_z
+            );
             for i in 0..g.n {
                 let m_true = 2.0 * marg[i] - 1.0;
-                assert!((bp.m[i] - m_true).abs() < 1e-9, "seed {seed} site {i}: BP {} vs {m_true}", bp.m[i]);
+                assert!(
+                    (bp.m[i] - m_true).abs() < 1e-9,
+                    "seed {seed} site {i}: BP {} vs {m_true}",
+                    bp.m[i]
+                );
             }
         }
     }
@@ -395,7 +435,10 @@ mod tests {
         let bp = belief_propagation(&g, beta, 2000, 0.5);
         assert!(bp.converged(1e-10));
         let err = (bp.log_z - truth).abs();
-        assert!(err < 0.5 && err > 1e-6, "Bethe error {err} on a 4x4 torus at beta 0.3");
+        assert!(
+            err < 0.5 && err > 1e-6,
+            "Bethe error {err} on a 4x4 torus at beta 0.3"
+        );
     }
 
     /// TAP beats naive mean field on a small SK sample at high temperature, in ln Z and in m.
@@ -406,7 +449,11 @@ mod tests {
         let mut gb = GraphBuilder::new(n);
         for i in 0..n {
             for j in (i + 1)..n {
-                gb.couple(i, j, (if rng.f64() < 0.5 { -1.0 } else { 1.0 }) / (n as f64).sqrt());
+                gb.couple(
+                    i,
+                    j,
+                    (if rng.f64() < 0.5 { -1.0 } else { 1.0 }) / (n as f64).sqrt(),
+                );
             }
             gb.bias(i, 0.3 * (rng.f64() - 0.5));
         }
@@ -417,8 +464,22 @@ mod tests {
         let mf = naive_mean_field(&g, beta, 5000, 0.5);
         let tp = tap(&g, beta, 5000, 0.5);
         assert!(mf.converged(1e-10) && tp.converged(1e-10));
-        assert!((tp.log_z - truth).abs() < (mf.log_z - truth).abs(), "TAP {} MF {} exact {truth}", tp.log_z, mf.log_z);
-        let err = |m: &[f64]| (0..n).map(|i| (m[i] - (2.0 * marg[i] - 1.0)).abs()).fold(0.0, f64::max);
-        assert!(err(&tp.m) < err(&mf.m), "TAP marginal error {} vs MF {}", err(&tp.m), err(&mf.m));
+        assert!(
+            (tp.log_z - truth).abs() < (mf.log_z - truth).abs(),
+            "TAP {} MF {} exact {truth}",
+            tp.log_z,
+            mf.log_z
+        );
+        let err = |m: &[f64]| {
+            (0..n)
+                .map(|i| (m[i] - (2.0 * marg[i] - 1.0)).abs())
+                .fold(0.0, f64::max)
+        };
+        assert!(
+            err(&tp.m) < err(&mf.m),
+            "TAP marginal error {} vs MF {}",
+            err(&tp.m),
+            err(&mf.m)
+        );
     }
 }

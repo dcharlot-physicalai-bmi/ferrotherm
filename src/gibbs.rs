@@ -315,10 +315,18 @@ impl<'g> Sampler<'g> {
         // measured against a barrier that parked and is superseded rather than deleted -- it was
         // right about the fabric it ran on, and what changed was the fabric.
         //
-        let smallest = self.g.classes.iter().map(std::vec::Vec::len).min().unwrap_or(0);
+        let smallest = self
+            .g
+            .classes
+            .iter()
+            .map(std::vec::Vec::len)
+            .min()
+            .unwrap_or(0);
         let threads = threads.min((smallest / MIN_CHUNK).max(1));
         if threads <= 1 {
-            for _ in 0..n { self.sweep(None); }
+            for _ in 0..n {
+                self.sweep(None);
+            }
             self.par_sweeps += n as u64;
             self.threads_used = 1;
             self.charge_par(n, ledger);
@@ -337,11 +345,20 @@ impl<'g> Sampler<'g> {
             .iter()
             .map(|c| {
                 let chunk = c.len().div_ceil(threads);
-                let parts = if chunk == 0 { 0 } else { c.len().div_ceil(chunk) };
+                let parts = if chunk == 0 {
+                    0
+                } else {
+                    c.len().div_ceil(chunk)
+                };
                 (chunk, parts)
             })
             .collect();
-        let workers = layout.iter().map(|&(_, parts)| parts).max().unwrap_or(1).max(1);
+        let workers = layout
+            .iter()
+            .map(|&(_, parts)| parts)
+            .max()
+            .unwrap_or(1)
+            .max(1);
 
         let sp = self.s.as_mut_ptr() as usize;
         let clamped = &self.clamped;
@@ -457,7 +474,9 @@ mod tests {
         let mut z = 0.0;
         let mut p_exact = [0.0f64; 16];
         for m in 0..16u32 {
-            let s: Vec<i8> = (0..4).map(|b| if m >> b & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..4)
+                .map(|b| if m >> b & 1 == 1 { 1 } else { -1 })
+                .collect();
             let w = (-beta * g.energy(&s)).exp();
             p_exact[m as usize] = w;
             z += w;
@@ -506,13 +525,19 @@ mod tests {
         }
         let m = acc / reads as f64;
         let exact = crate::ising::onsager_m(beta);
-        assert!((m - exact).abs() < 0.01, "parallel |M| {m:.4} vs Onsager {exact:.4}");
+        assert!(
+            (m - exact).abs() < 0.01,
+            "parallel |M| {m:.4} vs Onsager {exact:.4}"
+        );
         // determinism for fixed (seed, threads)
         let mut a = Sampler::new(&g, beta, 0x1234);
         let mut b = Sampler::new(&g, beta, 0x1234);
         a.sweeps_par(50, 4, None);
         b.sweeps_par(50, 4, None);
-        assert_eq!(a.s, b.s, "same (seed, threads) must reproduce bit-identically");
+        assert_eq!(
+            a.s, b.s,
+            "same (seed, threads) must reproduce bit-identically"
+        );
     }
 
     /// Clamped nodes must never change and must steer the conditional distribution.
@@ -563,7 +588,11 @@ mod tests {
             .iter()
             .map(|c| {
                 let chunk = c.len().div_ceil(threads);
-                let parts = if chunk == 0 { 0 } else { c.len().div_ceil(chunk) };
+                let parts = if chunk == 0 {
+                    0
+                } else {
+                    c.len().div_ceil(chunk)
+                };
                 (chunk, parts)
             })
             .collect();
@@ -607,12 +636,19 @@ mod tests {
         }
 
         assert_eq!(fast.s, slow.s, "the hoisted-spawn shape moved the numbers");
-        assert_eq!(fast.threads_used(), threads, "and it must have actually threaded");
+        assert_eq!(
+            fast.threads_used(),
+            threads,
+            "and it must have actually threaded"
+        );
         // Not vacuous: a different seed must give a different answer, or `assert_eq` above would
         // pass for two samplers that both did nothing.
         let mut other = Sampler::new(&g, 0.44, 999);
         other.sweeps_par(sweeps, threads, None);
-        assert_ne!(other.s, fast.s, "two seeds landing on the same state makes this test vacuous");
+        assert_ne!(
+            other.s, fast.s,
+            "two seeds landing on the same state makes this test vacuous"
+        );
     }
 
     #[test]

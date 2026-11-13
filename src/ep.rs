@@ -139,7 +139,11 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { max_sweeps: 500, tol: 1e-11, damping: 0.5 }
+        Params {
+            max_sweeps: 500,
+            tol: 1e-11,
+            damping: 0.5,
+        }
     }
 }
 
@@ -254,7 +258,11 @@ pub enum EpError {
 impl core::fmt::Display for EpError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match *self {
-            EpError::DidNotConverge { sweeps, residual, tol } => write!(
+            EpError::DidNotConverge {
+                sweeps,
+                residual,
+                tol,
+            } => write!(
                 f,
                 "expectation propagation did not converge in {sweeps} sweeps: the largest natural \
                  parameter still moved by {residual:e} against a tolerance of {tol:e}. EP has no \
@@ -267,7 +275,11 @@ impl core::fmt::Display for EpError {
                  row {site} has Cholesky pivot {pivot:e}. The Gaussian approximation does not \
                  exist, so neither does the covariance the cavity is built from"
             ),
-            EpError::ImproperTilt { sweep, site, precision } => write!(
+            EpError::ImproperTilt {
+                sweep,
+                site,
+                precision,
+            } => write!(
                 f,
                 "on sweep {sweep} the tilted distribution at site {site} had precision \
                  {precision:e} and cannot be normalised; a Gaussian site cannot absorb a cavity \
@@ -322,7 +334,10 @@ impl Site {
                     log_z: log_two_cosh(field) - 0.5 * precision,
                 })
             }
-            Site::Gaussian { mean: mu, variance: v } => {
+            Site::Gaussian {
+                mean: mu,
+                variance: v,
+            } => {
                 let p = precision + 1.0 / v;
                 if !(p > 0.0) {
                     return Err(p);
@@ -441,7 +456,12 @@ fn gaussian_moments(
     }
     let half_log_det: f64 = (0..n).map(|i| l[i * n + i].ln()).sum();
     let quad: f64 = (0..n).map(|i| b[i] * mean[i]).sum();
-    Ok(Moments { sigma, mean, half_log_det, quad })
+    Ok(Moments {
+        sigma,
+        mean,
+        half_log_det,
+        quad,
+    })
 }
 
 /// Run EP with the Ising measure at every site — the ordinary call.
@@ -475,11 +495,18 @@ pub fn run(g: &Graph, beta: f64, p: &Params) -> Result<Ep, EpError> {
 /// if a [`Site::Gaussian`] has a non-positive variance.
 pub fn run_with_sites(g: &Graph, beta: f64, sites: &[Site], p: &Params) -> Result<Ep, EpError> {
     assert_eq!(sites.len(), g.n, "one site factor per node");
-    assert!((0.0..1.0).contains(&p.damping), "damping must be in [0, 1); got {}", p.damping);
+    assert!(
+        (0.0..1.0).contains(&p.damping),
+        "damping must be in [0, 1); got {}",
+        p.damping
+    );
     assert!(beta.is_finite(), "beta must be finite; got {beta}");
     for (i, s) in sites.iter().enumerate() {
         if let Site::Gaussian { variance, .. } = *s {
-            assert!(variance > 0.0, "site {i} has variance {variance}, which is not a width");
+            assert!(
+                variance > 0.0,
+                "site {i} has variance {variance}, which is not a width"
+            );
         }
     }
     let n = g.n;
@@ -500,8 +527,9 @@ pub fn run_with_sites(g: &Graph, beta: f64, sites: &[Site], p: &Params) -> Resul
     let mut lam: Vec<f64> = (0..n)
         .map(|i| match sites[i] {
             Site::Spin => {
-                let row: f64 =
-                    (g.offset[i]..g.offset[i + 1]).map(|e| (beta * g.w[e]).abs()).sum();
+                let row: f64 = (g.offset[i]..g.offset[i + 1])
+                    .map(|e| (beta * g.w[e]).abs())
+                    .sum();
                 1.0 + row
             }
             Site::Gaussian { variance, .. } => 1.0 / variance,
@@ -523,11 +551,20 @@ pub fn run_with_sites(g: &Graph, beta: f64, sites: &[Site], p: &Params) -> Resul
         residual = 0.0;
         for i in 0..n {
             let (prec_cav, field_cav) = cavity(mom.sigma[i], mom.mean[i], lam[i], gam[i]);
-            let t = sites[i]
-                .tilt(prec_cav, field_cav)
-                .map_err(|precision| EpError::ImproperTilt { sweep, site: i, precision })?;
+            let t =
+                sites[i]
+                    .tilt(prec_cav, field_cav)
+                    .map_err(|precision| EpError::ImproperTilt {
+                        sweep,
+                        site: i,
+                        precision,
+                    })?;
             if !(t.var > 0.0) || !t.var.is_finite() {
-                return Err(EpError::Saturated { sweep, site: i, field: field_cav });
+                return Err(EpError::Saturated {
+                    sweep,
+                    site: i,
+                    field: field_cav,
+                });
             }
             let fresh_lam = 1.0 / t.var - prec_cav;
             let fresh_gam = t.mean / t.var - field_cav;
@@ -544,7 +581,9 @@ pub fn run_with_sites(g: &Graph, beta: f64, sites: &[Site], p: &Params) -> Resul
             // impossible — the same lesson `linalg::jacobi_eig` records about thresholds that do
             // not scale with their matrix.
             let scale = |x: f64, y: f64| (x - y).abs() / (1.0 + y.abs().max(x.abs()));
-            residual = residual.max(scale(next_lam, lam[i])).max(scale(next_gam, gam[i]));
+            residual = residual
+                .max(scale(next_lam, lam[i]))
+                .max(scale(next_gam, gam[i]));
             lam[i] = next_lam;
             gam[i] = next_gam;
         }
@@ -553,7 +592,11 @@ pub fn run_with_sites(g: &Graph, beta: f64, sites: &[Site], p: &Params) -> Resul
             return finish(g, beta, sites, &lam, &gam, swept, residual);
         }
     }
-    Err(EpError::DidNotConverge { sweeps: swept, residual, tol: p.tol })
+    Err(EpError::DidNotConverge {
+        sweeps: swept,
+        residual,
+        tol: p.tol,
+    })
 }
 
 /// Assemble the answer at the converged parameters.
@@ -572,8 +615,11 @@ fn finish(
     residual: f64,
 ) -> Result<Ep, EpError> {
     let n = g.n;
-    let mom = gaussian_moments(g, beta, lam, gam)
-        .map_err(|(site, pivot)| EpError::Indefinite { sweep: sweeps, site, pivot })?;
+    let mom = gaussian_moments(g, beta, lam, gam).map_err(|(site, pivot)| EpError::Indefinite {
+        sweep: sweeps,
+        site,
+        pivot,
+    })?;
     let mut m = vec![0.0f64; n];
     let mut variance = vec![0.0f64; n];
     let mut cavity_precision = vec![0.0f64; n];
@@ -584,7 +630,11 @@ fn finish(
         let (prec_cav, field_cav) = cavity(mom.sigma[i], mom.mean[i], lam[i], gam[i]);
         let t = sites[i]
             .tilt(prec_cav, field_cav)
-            .map_err(|precision| EpError::ImproperTilt { sweep: sweeps, site: i, precision })?;
+            .map_err(|precision| EpError::ImproperTilt {
+                sweep: sweeps,
+                site: i,
+                precision,
+            })?;
         m[i] = t.mean;
         variance[i] = t.var;
         cavity_precision[i] = prec_cav;
@@ -683,12 +733,23 @@ mod tests {
                 gb.bias(i, 3.0 * rng.f64() - 1.5);
             }
             let g = gb.build();
-            let out = run(&g, beta, &Params { damping: 0.0, ..Params::default() }).unwrap();
+            let out = run(
+                &g,
+                beta,
+                &Params {
+                    damping: 0.0,
+                    ..Params::default()
+                },
+            )
+            .unwrap();
             let mut worst = 0.0f64;
             for i in 0..n {
                 worst = worst.max((out.m[i] - (beta * g.h[i]).tanh()).abs());
             }
-            assert!(worst < 1e-15, "beta {beta}: marginal off the closed form by {worst:e}");
+            assert!(
+                worst < 1e-15,
+                "beta {beta}: marginal off the closed form by {worst:e}"
+            );
             let truth: f64 = (0..n).map(|i| (2.0 * (beta * g.h[i]).cosh()).ln()).sum();
             assert!(
                 (out.log_z - truth).abs() < 1e-13,
@@ -702,7 +763,10 @@ mod tests {
                     "site {i}: an uncoupled cavity must be flat, not {:e}",
                     out.cavity_precision[i]
                 );
-                assert!((out.cavity_field[i] - beta * g.h[i]).abs() < 1e-13, "site {i}");
+                assert!(
+                    (out.cavity_field[i] - beta * g.h[i]).abs() < 1e-13,
+                    "site {i}"
+                );
             }
         }
     }
@@ -726,13 +790,29 @@ mod tests {
             gb.bias(2, 0.15);
             let g = gb.build();
             let sites = [
-                Site::Gaussian { mean: 0.5, variance: 0.8 },
-                Site::Gaussian { mean: -0.2, variance: 1.3 },
-                Site::Gaussian { mean: 0.9, variance: 0.45 },
+                Site::Gaussian {
+                    mean: 0.5,
+                    variance: 0.8,
+                },
+                Site::Gaussian {
+                    mean: -0.2,
+                    variance: 1.3,
+                },
+                Site::Gaussian {
+                    mean: 0.9,
+                    variance: 0.45,
+                },
             ];
-            let out =
-                run_with_sites(&g, beta, &sites, &Params { damping: 0.0, ..Params::default() })
-                    .unwrap();
+            let out = run_with_sites(
+                &g,
+                beta,
+                &sites,
+                &Params {
+                    damping: 0.0,
+                    ..Params::default()
+                },
+            )
+            .unwrap();
 
             // A = diag(1/v) − βJ for this chain, and b = βh + μ/v.
             let (v0, v1, v2) = (0.8f64, 1.3f64, 0.45f64);
@@ -774,8 +854,7 @@ mod tests {
             //   Z = ∫ Π exp(−(s−μ)²/2v) · exp(β(½sᵀJs + hᵀs)) ds
             let quad: f64 = (0..3).map(|i| b[i] * want[i]).sum();
             let offset = mu0 * mu0 / (2.0 * v0) + mu1 * mu1 / (2.0 * v1) + mu2 * mu2 / (2.0 * v2);
-            let want_lz =
-                1.5 * core::f64::consts::TAU.ln() - 0.5 * det.ln() + 0.5 * quad - offset;
+            let want_lz = 1.5 * core::f64::consts::TAU.ln() - 0.5 * det.ln() + 0.5 * quad - offset;
             assert!(
                 (out.log_z - want_lz).abs() < 1e-12,
                 "j=({j1},{j2}) beta={beta}: EP ln Z {} vs closed form {want_lz}",
@@ -800,10 +879,15 @@ mod tests {
             let (marg, log_z) = enumerate(&g, beta);
             let out = run(&g, beta, &Params::default()).unwrap();
             let mf = crate::meanfield::naive_mean_field(&g, beta, 5000, 0.5);
-            assert!(mf.converged(1e-10), "seed {seed}: the control must converge too");
+            assert!(
+                mf.converged(1e-10),
+                "seed {seed}: the control must converge too"
+            );
 
             let err = |m: &[f64]| {
-                (0..g.n).map(|i| (m[i] - marg[i]).abs()).fold(0.0f64, f64::max)
+                (0..g.n)
+                    .map(|i| (m[i] - marg[i]).abs())
+                    .fold(0.0f64, f64::max)
             };
             let (e_ep, e_mf) = (err(&out.m), err(&mf.m));
             assert!(
@@ -816,7 +900,10 @@ mod tests {
                 "seed {seed}: EP ln Z error {z_ep:e} is not below mean field's {z_mf:e}"
             );
             // Absolute, so a regression that degrades BOTH cannot hide behind the comparison.
-            assert!(e_ep < 0.1, "seed {seed}: EP marginal error {e_ep:e} is too large outright");
+            assert!(
+                e_ep < 0.1,
+                "seed {seed}: EP marginal error {e_ep:e} is too large outright"
+            );
         }
     }
 
@@ -835,24 +922,52 @@ mod tests {
     #[test]
     fn a_run_that_does_not_converge_is_a_typed_error() {
         let g = crate::ising::lattice2d(4, 1.0);
-        let p = Params { max_sweeps: 2000, tol: 1e-11, damping: 0.5 };
+        let p = Params {
+            max_sweeps: 2000,
+            tol: 1e-11,
+            damping: 0.5,
+        };
         match run(&g, 0.5, &p) {
-            Err(EpError::DidNotConverge { sweeps, residual, tol }) => {
-                assert_eq!(sweeps, 2000, "it must spend its whole budget before refusing");
+            Err(EpError::DidNotConverge {
+                sweeps,
+                residual,
+                tol,
+            }) => {
+                assert_eq!(
+                    sweeps, 2000,
+                    "it must spend its whole budget before refusing"
+                );
                 assert!(
                     residual > 1e-3,
                     "residual {residual:e} is small, so this instance is merely slow and the test \
                      is no longer about a limit cycle"
                 );
                 assert!(residual > tol);
-                let text = EpError::DidNotConverge { sweeps, residual, tol }.to_string();
+                let text = EpError::DidNotConverge {
+                    sweeps,
+                    residual,
+                    tol,
+                }
+                .to_string();
                 assert!(text.contains("did not converge"), "{text}");
             }
             other => panic!("expected a non-convergence error, got {other:?}"),
         }
-        let damped = run(&g, 0.5, &Params { max_sweeps: 2000, tol: 1e-11, damping: 0.8 })
-            .expect("damping is the documented remedy for a cycle");
-        assert!(damped.sweeps < 100, "and it is a fast remedy: {} sweeps", damped.sweeps);
+        let damped = run(
+            &g,
+            0.5,
+            &Params {
+                max_sweeps: 2000,
+                tol: 1e-11,
+                damping: 0.8,
+            },
+        )
+        .expect("damping is the documented remedy for a cycle");
+        assert!(
+            damped.sweeps < 100,
+            "and it is a fast remedy: {} sweeps",
+            damped.sweeps
+        );
 
         // The remedy has a limit, which the message also says. A frustrated instance at beta 2.2
         // is refused at every damping tried: measured over 100,000 sweeps, a relative residual of
@@ -861,7 +976,15 @@ mod tests {
         // residual has to be checked for.
         for damping in [0.6f64, 0.95] {
             let hard = frustrated(12, 24, 3);
-            let out = run(&hard, 2.2, &Params { max_sweeps: 500, tol: 1e-11, damping });
+            let out = run(
+                &hard,
+                2.2,
+                &Params {
+                    max_sweeps: 500,
+                    tol: 1e-11,
+                    damping,
+                },
+            );
             assert!(
                 matches!(out, Err(EpError::DidNotConverge { .. })),
                 "damping {damping}: expected divergence, got {out:?}"
@@ -879,10 +1002,21 @@ mod tests {
     #[test]
     fn a_gaussian_that_does_not_exist_is_refused_at_the_pivot() {
         let g = crate::ising::lattice2d(4, 1.0);
-        match run(&g, 0.6, &Params { max_sweeps: 2000, tol: 1e-11, damping: 0.5 }) {
+        match run(
+            &g,
+            0.6,
+            &Params {
+                max_sweeps: 2000,
+                tol: 1e-11,
+                damping: 0.5,
+            },
+        ) {
             Err(EpError::Indefinite { site, pivot, .. }) => {
                 assert!(site < g.n);
-                assert!(pivot <= 0.0, "an indefinite report needs a non-positive pivot: {pivot}");
+                assert!(
+                    pivot <= 0.0,
+                    "an indefinite report needs a non-positive pivot: {pivot}"
+                );
             }
             other => panic!("expected an indefinite report, got {other:?}"),
         }
@@ -915,7 +1049,14 @@ mod tests {
         gb.couple(0, 1, 0.1);
         gb.bias(0, 5.0);
         gb.bias(1, 5.0);
-        let mild = run(&gb.build(), 1.0, &Params { max_sweeps: 20_000, ..Params::default() });
+        let mild = run(
+            &gb.build(),
+            1.0,
+            &Params {
+                max_sweeps: 20_000,
+                ..Params::default()
+            },
+        );
         assert!(mild.is_ok(), "a field of 5 is inside the family: {mild:?}");
     }
 
@@ -927,16 +1068,29 @@ mod tests {
     /// a Gaussian one does not.
     #[test]
     fn an_improper_tilt_is_refused_rather_than_divided_by() {
-        let gauss = Site::Gaussian { mean: 0.4, variance: 1.0 };
-        assert_eq!(gauss.tilt(-4.0, 0.3).err(), Some(-3.0), "precision -4 + 1/v is -3");
-        assert_eq!(gauss.tilt(-1.0, 0.3).err(), Some(0.0), "exactly zero is not normalisable");
+        let gauss = Site::Gaussian {
+            mean: 0.4,
+            variance: 1.0,
+        };
+        assert_eq!(
+            gauss.tilt(-4.0, 0.3).err(),
+            Some(-3.0),
+            "precision -4 + 1/v is -3"
+        );
+        assert_eq!(
+            gauss.tilt(-1.0, 0.3).err(),
+            Some(0.0),
+            "exactly zero is not normalisable"
+        );
         let ok = gauss.tilt(-0.75, 0.3).expect("0.25 is a precision");
         assert!((ok.var - 4.0).abs() < 1e-15);
         // A spin takes the same improper cavity without complaint, and its moments do not move
         // with the quadratic term at all: s^2 = 1 on its support.
         let want = 0.3f64.tanh();
         for precision in [-4.0f64, -1.0, 0.0, 3.0] {
-            let t = Site::Spin.tilt(precision, 0.3).expect("a spin normalises it");
+            let t = Site::Spin
+                .tilt(precision, 0.3)
+                .expect("a spin normalises it");
             assert_eq!(t.mean, want, "precision {precision} moved a spin's mean");
             assert_eq!(t.var, 1.0 - want * want);
         }
@@ -957,7 +1111,10 @@ mod tests {
                 "site {i}: cavity precision {} is positive",
                 out.cavity_precision[i]
             );
-            assert!(out.cavity_precision[i] < -1e-12, "site {i} is coupled, so it must be strict");
+            assert!(
+                out.cavity_precision[i] < -1e-12,
+                "site {i} is coupled, so it must be strict"
+            );
         }
         // An isolated node in an otherwise coupled graph gets exactly zero.
         let mut gb = GraphBuilder::new(4);
@@ -966,7 +1123,10 @@ mod tests {
         gb.bias(3, 0.6);
         let mixed = gb.build();
         let out = run(&mixed, 0.8, &Params::default()).unwrap();
-        assert!(out.cavity_precision[3].abs() < 1e-15, "an isolated site has no reaction term");
+        assert!(
+            out.cavity_precision[3].abs() < 1e-15,
+            "an isolated site has no reaction term"
+        );
     }
 
     /// Moment consistency: at a fixed point the tilted mean and variance equal the Gaussian's.
@@ -1000,13 +1160,19 @@ mod tests {
     /// `ln(2 cosh x)` must survive the fields EP actually reaches, where the textbook form is `inf`.
     #[test]
     fn the_log_cosh_helper_does_not_overflow_where_cosh_does() {
-        assert!((2.0f64 * 800.0f64.cosh()).ln().is_infinite(), "the naive form must really fail");
+        assert!(
+            (2.0f64 * 800.0f64.cosh()).ln().is_infinite(),
+            "the naive form must really fail"
+        );
         assert!((log_two_cosh(800.0) - 800.0).abs() < 1e-12);
         assert!((log_two_cosh(0.0) - 2.0f64.ln()).abs() < 1e-15);
         // Symmetric, and equal to the textbook form wherever the textbook form exists.
         for x in [-3.25f64, -0.5, 0.125, 4.0, 20.0] {
             assert!((log_two_cosh(x) - log_two_cosh(-x)).abs() < 1e-15);
-            assert!((log_two_cosh(x) - (2.0 * x.cosh()).ln()).abs() < 1e-13, "at {x}");
+            assert!(
+                (log_two_cosh(x) - (2.0 * x.cosh()).ln()).abs() < 1e-13,
+                "at {x}"
+            );
         }
     }
 

@@ -149,13 +149,18 @@ fn search_roots() -> Vec<PathBuf> {
 fn read_trim(p: &Path) -> Result<String, RailError> {
     std::fs::read_to_string(p)
         .map(|s| s.trim().to_string())
-        .map_err(|e| RailError::Unreadable { path: p.display().to_string(), why: e.to_string() })
+        .map_err(|e| RailError::Unreadable {
+            path: p.display().to_string(),
+            why: e.to_string(),
+        })
 }
 
 fn read_f64(p: &Path) -> Result<f64, RailError> {
     let s = read_trim(p)?;
-    s.parse::<f64>()
-        .map_err(|_| RailError::Unreadable { path: p.display().to_string(), why: format!("{s:?} is not a number") })
+    s.parse::<f64>().map_err(|_| RailError::Unreadable {
+        path: p.display().to_string(),
+        why: format!("{s:?} is not a number"),
+    })
 }
 
 impl Rails {
@@ -192,7 +197,9 @@ impl Rails {
     pub fn list_at(root: &Path) -> Result<Vec<Rail>, RailError> {
         let mut rails = Rails::scan(root)?;
         if rails.is_empty() {
-            return Err(RailError::NotFound { looked_in: vec![root.display().to_string()] });
+            return Err(RailError::NotFound {
+                looked_in: vec![root.display().to_string()],
+            });
         }
         rails.sort_by(|a, b| a.label.cmp(&b.label));
         Ok(rails)
@@ -210,7 +217,9 @@ impl Rails {
     pub fn at(root: &Path) -> Result<Rails, RailError> {
         let mut rails = Rails::scan(root)?;
         if rails.is_empty() {
-            return Err(RailError::NotFound { looked_in: vec![root.display().to_string()] });
+            return Err(RailError::NotFound {
+                looked_in: vec![root.display().to_string()],
+            });
         }
         rails.sort_by(|a, b| a.label.cmp(&b.label));
         let total = rails
@@ -261,8 +270,13 @@ impl Rails {
             if seen > 4096 {
                 break;
             }
-            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
-            let mut names: Vec<PathBuf> = entries.filter_map(std::result::Result::ok).map(|e| e.path()).collect();
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            let mut names: Vec<PathBuf> = entries
+                .filter_map(std::result::Result::ok)
+                .map(|e| e.path())
+                .collect();
             names.sort();
             if depth < MAX_DEPTH {
                 for p in &names {
@@ -300,7 +314,10 @@ impl Rails {
             let label_p = dir.join(format!("rail_name_{ch}"));
             let power = dir.join(format!("in_power{ch}_input"));
             if label_p.exists() && power.exists() {
-                out.push(Rail { label: read_trim(&label_p)?, source: RailSource::Milliwatts { power } });
+                out.push(Rail {
+                    label: read_trim(&label_p)?,
+                    source: RailSource::Milliwatts { power },
+                });
             }
         }
         Ok(out)
@@ -384,16 +401,27 @@ mod tests {
         assert_eq!(r.total().label, "VDD_IN");
         // 5000 mV x 2400 mA = 12_000_000 uW = 12 W. A factor-of-1000 slip still looks plausible,
         // which is why this asserts the value rather than a range.
-        assert!((r.watts().unwrap() - 12.0).abs() < 1e-9, "{}", r.watts().unwrap());
+        assert!(
+            (r.watts().unwrap() - 12.0).abs() < 1e-9,
+            "{}",
+            r.watts().unwrap()
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn the_downstream_layout_reads_milliwatts() {
         let d = tmp("downstream");
-        write(&d, &[("rail_name_0", "VDD_IN\n"), ("in_power0_input", "7350\n")]);
+        write(
+            &d,
+            &[("rail_name_0", "VDD_IN\n"), ("in_power0_input", "7350\n")],
+        );
         let r = Rails::at(&d).expect("a labelled total rail");
-        assert!((r.watts().unwrap() - 7.35).abs() < 1e-9, "{}", r.watts().unwrap());
+        assert!(
+            (r.watts().unwrap() - 7.35).abs() < 1e-9,
+            "{}",
+            r.watts().unwrap()
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -417,7 +445,10 @@ mod tests {
             Err(RailError::NoTotalRail { found }) => {
                 assert_eq!(found.len(), 2, "it lists what it found: {found:?}");
                 let msg = RailError::NoTotalRail { found }.to_string();
-                assert!(msg.contains("NESTED"), "and says why summing is wrong: {msg}");
+                assert!(
+                    msg.contains("NESTED"),
+                    "and says why summing is wrong: {msg}"
+                );
             }
             other => panic!("nested rails must be refused, got {other:?}"),
         }
@@ -427,23 +458,43 @@ mod tests {
     #[test]
     fn an_unknown_total_rail_can_be_named_but_only_by_the_caller() {
         let d = tmp("override");
-        write(&d, &[("rail_name_0", "BOARD_INPUT\n"), ("in_power0_input", "9000\n")]);
+        write(
+            &d,
+            &[
+                ("rail_name_0", "BOARD_INPUT\n"),
+                ("in_power0_input", "9000\n"),
+            ],
+        );
         // Not a name this knows, so it refuses...
         assert!(matches!(Rails::at(&d), Err(RailError::NoTotalRail { .. })));
         // ...until a caller who knows the board says which rail is the total. Reaching the override
         // needs a Rails, which `at` refused to build, so it is reached through the error path here
         // exactly as a caller would: scan, then name.
-        let rails = Rails { rails: Rails::scan(&d).unwrap(), total: 0 };
-        let named = rails.with_total_label("board_input").expect("case-insensitive");
+        let rails = Rails {
+            rails: Rails::scan(&d).unwrap(),
+            total: 0,
+        };
+        let named = rails
+            .with_total_label("board_input")
+            .expect("case-insensitive");
         assert!((named.watts().unwrap() - 9.0).abs() < 1e-9);
-        assert!(named.with_total_label("no_such_rail").is_err(), "and an unknown name is refused");
+        assert!(
+            named.with_total_label("no_such_rail").is_err(),
+            "and an unknown name is refused"
+        );
         let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]
     fn a_file_that_is_not_a_number_says_which_file() {
         let d = tmp("garbage");
-        write(&d, &[("rail_name_0", "VDD_IN\n"), ("in_power0_input", "not-a-number\n")]);
+        write(
+            &d,
+            &[
+                ("rail_name_0", "VDD_IN\n"),
+                ("in_power0_input", "not-a-number\n"),
+            ],
+        );
         let r = Rails::at(&d).expect("it is labelled");
         match r.watts() {
             Err(RailError::Unreadable { path, why }) => {

@@ -18,41 +18,72 @@ fn main() {
     // comparison was measured at some other moment, so contention here reads as the other
     // implementation being faster. This table is the one `scripts/thrml_bench.py` is compared
     // against, so it refuses outright rather than printing with an asterisk.
-    let quiet = match host::require_quiet("a threads-vs-throughput table for comparison against THRML") {
-        Ok(q) => q,
-        Err(e) => {
-            eprintln!("{e}");
-            std::process::exit(3);
-        }
-    };
+    let quiet =
+        match host::require_quiet("a threads-vs-throughput table for comparison against THRML") {
+            Ok(q) => q,
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(3);
+            }
+        };
     if let Some(c) = quiet.caveat() {
         println!("{c}\n");
     }
     let side: Option<usize> = std::env::args().nth(1).and_then(|s| s.parse().ok());
     let (w, h) = side.map_or((576usize, 468usize), |s| (s, s));
     let g = z1_grid(w, h, 0.08, 0.0);
-    println!("Z1-topology grid {} nodes, degree 16; chromatic Gibbs throughput on this machine:", g.n);
+    println!(
+        "Z1-topology grid {} nodes, degree 16; chromatic Gibbs throughput on this machine:",
+        g.n
+    );
     match quiet {
         Quiet::Yes { load1: Some(l) } => println!("  1-minute load average {l:.2}\n"),
-        Quiet::Yes { load1: None } => println!("  1-minute load average unknown on this platform\n"),
+        Quiet::Yes { load1: None } => {
+            println!("  1-minute load average unknown on this platform\n");
+        }
         Quiet::Overridden { .. } => println!(),
     }
-    println!("  {:>10} {:>14} {:>12} {:>10}", "threads", "flips/s", "ns/flip", "speedup");
+    println!(
+        "  {:>10} {:>14} {:>12} {:>10}",
+        "threads", "flips/s", "ns/flip", "speedup"
+    );
     let mut base = 0.0;
     let cores = std::thread::available_parallelism().map_or(8, std::num::NonZero::get);
     for &t in &[1usize, 2, 4, 8, cores] {
         let mut smp = Sampler::new(&g, 0.9, 0xBE7C);
         // warmup
-        if t == 1 { smp.sweeps(3, None); } else { smp.sweeps_par(3, t, None); }
+        if t == 1 {
+            smp.sweeps(3, None);
+        } else {
+            smp.sweeps_par(3, t, None);
+        }
         let n_sweeps = if t == 1 { 30 } else { 120 };
         let t0 = Instant::now();
-        if t == 1 { smp.sweeps(n_sweeps, None); } else { smp.sweeps_par(n_sweeps, t, None); }
+        if t == 1 {
+            smp.sweeps(n_sweeps, None);
+        } else {
+            smp.sweeps_par(n_sweeps, t, None);
+        }
         let dt = t0.elapsed().as_secs_f64();
         let fps = (n_sweeps * g.n) as f64 / dt;
-        if t == 1 { base = fps; }
-        println!("  {:>10} {:>14.3e} {:>12.1} {:>9.1}x", t, fps, 1e9 / fps, fps / base);
+        if t == 1 {
+            base = fps;
+        }
+        println!(
+            "  {:>10} {:>14.3e} {:>12.1} {:>9.1}x",
+            t,
+            fps,
+            1e9 / fps,
+            fps / base
+        );
     }
-    println!("\n  browser WebGPU on this machine (measured separately, web/gibbs_bench.html): 9.35e9 flips/s");
-    println!("  published FPGA anchor (Aadit et al., Nat. Electronics 2022, VCU118): 1.44e11 flips/s");
-    println!("  Z1 SPICE projection (pre-silicon): 269,568 nodes x 2-color at 50 MHz ~ 6.7e12 flips/s");
+    println!(
+        "\n  browser WebGPU on this machine (measured separately, web/gibbs_bench.html): 9.35e9 flips/s"
+    );
+    println!(
+        "  published FPGA anchor (Aadit et al., Nat. Electronics 2022, VCU118): 1.44e11 flips/s"
+    );
+    println!(
+        "  Z1 SPICE projection (pre-silicon): 269,568 nodes x 2-color at 50 MHz ~ 6.7e12 flips/s"
+    );
 }

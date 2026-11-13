@@ -11,7 +11,7 @@
 // budget and reports how the model's visible statistics approach the data's.
 //
 // usage: cargo run --release --example dtm_scale -- <fmnist-images> [seconds] [L] [T]
-use ferrotherm::dtm::{forward_step, gamma_coupling, pattern_grid, Ebm, G12};
+use ferrotherm::dtm::{Ebm, G12, forward_step, gamma_coupling, pattern_grid};
 use ferrotherm::host::Timing;
 use ferrotherm::rng::Pcg;
 use std::time::{Duration, Instant};
@@ -26,7 +26,12 @@ fn load_images(path: &str, limit: usize) -> (Vec<Vec<i8>>, usize) {
     let mut out = Vec::with_capacity(take);
     for i in 0..take {
         let off = 16 + i * px;
-        out.push(raw[off..off + px].iter().map(|&v| if v > 127 { 1i8 } else { -1 }).collect());
+        out.push(
+            raw[off..off + px]
+                .iter()
+                .map(|&v| if v > 127 { 1i8 } else { -1 })
+                .collect(),
+        );
     }
     (out, px)
 }
@@ -63,7 +68,10 @@ fn main() {
     // defect wearing a different hat.
     let steps_wanted: usize = a.get(1).and_then(|s| s.parse().ok()).unwrap_or(2000);
     let wall_cap = Duration::from_secs(
-        std::env::var("FT_DTM_WALL_CAP").ok().and_then(|s| s.parse().ok()).unwrap_or(3600),
+        std::env::var("FT_DTM_WALL_CAP")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3600),
     );
     let l: usize = a.get(2).and_then(|s| s.parse().ok()).unwrap_or(70);
     let t_steps: usize = a.get(3).and_then(|s| s.parse().ok()).unwrap_or(8);
@@ -75,8 +83,11 @@ fn main() {
     let edges32 = pattern_grid(l, &G12);
     let n = l * l;
     let edges: Vec<(u16, u16)> = edges32.iter().map(|&(a, b)| (a as u16, b as u16)).collect();
-    println!("grid: {l}x{l} = {n} nodes, G12, {} edges (mean degree {:.1})",
-             edges.len(), 2.0 * edges.len() as f64 / n as f64);
+    println!(
+        "grid: {l}x{l} = {n} nodes, G12, {} edges (mean degree {:.1})",
+        edges.len(),
+        2.0 * edges.len() as f64 / n as f64
+    );
 
     // visible sites drawn uniformly at random, as the paper specifies
     let mut rng = Pcg::new(0xD7A1, 1);
@@ -86,11 +97,18 @@ fn main() {
         perm.swap(i, j);
     }
     let visible: Vec<usize> = perm[..px].iter().map(|&v| v as usize).collect();
-    println!("visible sites: {} of {n} (uniformly random), latent: {}", visible.len(), n - px);
+    println!(
+        "visible sites: {} of {n} (uniformly random), latent: {}",
+        visible.len(),
+        n - px
+    );
 
     let mut layers: Vec<Ebm> = (0..t_steps).map(|_| Ebm::new(n, edges.clone())).collect();
-    println!("layers: {t_steps}; bipartite: {}; parameters: {}",
-             layers[0].is_bipartite(), t_steps * (edges.len() + n));
+    println!(
+        "layers: {t_steps}; bipartite: {}; parameters: {}",
+        layers[0].is_bipartite(),
+        t_steps * (edges.len() + n)
+    );
 
     // forward-process schedule
     let gamma_x = 1.0f64;
@@ -111,23 +129,34 @@ fn main() {
     match sweep_t.as_measurement() {
         Some(secs) => {
             let per_sweep = secs / 10.0;
-            println!("\nmeasured: {:.2} ms per chromatic sweep of {n} nodes ({:.2e} node updates/s)",
-                     per_sweep * 1e3, n as f64 / per_sweep);
+            println!(
+                "\nmeasured: {:.2} ms per chromatic sweep of {n} nodes ({:.2e} node updates/s)",
+                per_sweep * 1e3,
+                n as f64 / per_sweep
+            );
             let step_cost = per_sweep * k_sweeps as f64 * 2.0 * batch as f64 * t_steps as f64;
-            println!("one training step (batch {batch}, K={k_sweeps}, both phases, {t_steps} layers): {step_cost:.2} s");
+            println!(
+                "one training step (batch {batch}, K={k_sweeps}, both phases, {t_steps} layers): {step_cost:.2} s"
+            );
         }
         None => {
             println!("\nper-sweep cost: {sweep_t}");
             if let Some(c) = sweep_t.caveat() {
                 println!("  {c}");
             }
-            println!("the training-step projection is that rate x K x 2 x batch x layers, so it is \
-                      omitted rather than multiplied by {}x.", k_sweeps * 2 * batch * t_steps);
+            println!(
+                "the training-step projection is that rate x K x 2 x batch x layers, so it is \
+                      omitted rather than multiplied by {}x.",
+                k_sweeps * 2 * batch * t_steps
+            );
         }
     }
 
     // ---- train within the budget ----
-    println!("\ntraining for {steps_wanted} steps (wall cap {} s, a safety stop only)...", wall_cap.as_secs());
+    println!(
+        "\ntraining for {steps_wanted} steps (wall cap {} s, a safety stop only)...",
+        wall_cap.as_secs()
+    );
     let lr = 0.02;
     let start = Instant::now();
     let mut steps = 0usize;
@@ -213,12 +242,17 @@ fn main() {
         }
         steps += 1;
         if steps.is_multiple_of(40) {
-            println!("  step {steps:5}  layer {t}  |J| mean {:.4}  elapsed {:.0} s",
-                     lay.j.iter().map(|v| v.abs()).sum::<f64>() / lay.j.len() as f64,
-                     start.elapsed().as_secs_f64());
+            println!(
+                "  step {steps:5}  layer {t}  |J| mean {:.4}  elapsed {:.0} s",
+                lay.j.iter().map(|v| v.abs()).sum::<f64>() / lay.j.len() as f64,
+                start.elapsed().as_secs_f64()
+            );
         }
     }
-    println!("completed {steps} steps in {:.0} s", start.elapsed().as_secs_f64());
+    println!(
+        "completed {steps} steps in {:.0} s",
+        start.elapsed().as_secs_f64()
+    );
 
     // ---- does the model reproduce the data's visible statistics? ----
     let mut data_m = vec![0.0f64; px];
@@ -233,7 +267,9 @@ fn main() {
     let n_samples = 32usize;
     let mut model_m = vec![0.0f64; px];
     for _ in 0..n_samples {
-        let mut x: Vec<i8> = (0..px).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+        let mut x: Vec<i8> = (0..px)
+            .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+            .collect();
         for t in (0..t_steps).rev() {
             let dt = times[t + 1] - times[t];
             let gam = gamma_coupling(gamma_x, dt, 2);
@@ -266,7 +302,10 @@ fn main() {
     // WHAT PRODUCED THIS NUMBER, printed beside it. A quality figure without its step count is not
     // reproducible on another machine, and that is how the published one came to be a function of
     // wall-clock speed rather than of the method.
-    println!("\nrun: {steps} steps, L={l}, T={t_steps}, {} images, lr {lr}", data.len());
+    println!(
+        "\nrun: {steps} steps, L={l}, T={t_steps}, {} images, lr {lr}",
+        data.len()
+    );
     println!("per-pixel MAE vs data:      model {mae:.3}   untrained-noise baseline {baseline:.3}");
     if truncated {
         println!(
@@ -276,9 +315,15 @@ fn main() {
             start.elapsed().as_secs_f64()
         );
     }
-    println!("verdict: {}", if mae < baseline {
-        format!("the trained chain is closer to the data than noise by {:.1}%", 100.0 * (1.0 - mae / baseline))
-    } else {
-        format!("no better than noise after {steps} steps")
-    });
+    println!(
+        "verdict: {}",
+        if mae < baseline {
+            format!(
+                "the trained chain is closer to the data than noise by {:.1}%",
+                100.0 * (1.0 - mae / baseline)
+            )
+        } else {
+            format!("no better than noise after {steps} steps")
+        }
+    );
 }

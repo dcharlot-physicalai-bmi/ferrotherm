@@ -2895,10 +2895,7 @@ mod tests {
         for pair in 0..2 {
             seq.extend(pair_order(pair));
         }
-        assert_eq!(
-            seq,
-            ["ferrotherm", "thrml", "thrml", "ferrotherm"]
-        );
+        assert_eq!(seq, ["ferrotherm", "thrml", "thrml", "ferrotherm"]);
         assert!((BRACKET_SLICES as f64 * BRACKET_SLICE_S - BRACKET_S).abs() < 1e-12);
         assert!((BRACKET_S - 1.0).abs() < 1e-12);
     }

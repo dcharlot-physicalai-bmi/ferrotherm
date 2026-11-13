@@ -74,7 +74,11 @@ use crate::rng::Pcg;
 
 /// `ln(1 + e^x)`, without overflowing for large `x` or losing the small-`x` end.
 fn softplus(x: f64) -> f64 {
-    if x > 0.0 { x + (-x).exp().ln_1p() } else { x.exp().ln_1p() }
+    if x > 0.0 {
+        x + (-x).exp().ln_1p()
+    } else {
+        x.exp().ln_1p()
+    }
 }
 
 /// `ln g(r)` from `ln r`.
@@ -201,7 +205,9 @@ impl<'g> Path<'g> {
     #[must_use]
     pub fn new(g: &'g Graph, beta: f64, seed: u64) -> Path<'g> {
         let mut rng = Pcg::new(seed, 0x2C1B);
-        let s: Vec<i8> = (0..g.n).map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 }).collect();
+        let s: Vec<i8> = (0..g.n)
+            .map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 })
+            .collect();
         Self::from_state(g, beta, s, rng)
     }
 
@@ -336,7 +342,12 @@ impl<'g> Path<'g> {
         if d > 1e-9 * self.total {
             return d;
         }
-        self.w.iter().enumerate().filter(|(i, _)| *i != k).map(|(_, v)| v).sum()
+        self.w
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != k)
+            .map(|(_, v)| v)
+            .sum()
     }
 
     /// Draw a site with probability `w_k / norm`, skipping `excl`, in `O(log n)`.
@@ -365,7 +376,9 @@ impl<'g> Path<'g> {
         (self.w[k] > 0.0).then_some(k).or_else(|| {
             // A target rounding carried past every prefix lands on the last site; if that site
             // carries no weight, the last one that does is what the scan was about to reach.
-            (0..self.g.n).rev().find(|&i| self.w[i] > 0.0 && Some(i) != excl)
+            (0..self.g.n)
+                .rev()
+                .find(|&i| self.w[i] > 0.0 && Some(i) != excl)
         })
     }
 
@@ -428,7 +441,11 @@ impl<'g> Path<'g> {
             // Zb_{t-1}: the reverse normaliser at y_t, minus the step that would undo y_{t+1} —
             // that is, minus the weight of the site the forward path is about to take.
             if t >= 1 {
-                let zb = if self.backtrack { self.total } else { self.sum_excluding(Some(k)) };
+                let zb = if self.backtrack {
+                    self.total
+                } else {
+                    self.sum_excluding(Some(k))
+                };
                 if !(zb > 0.0) || !zb.is_finite() {
                     self.rewind();
                     return None;
@@ -481,7 +498,9 @@ impl<'g> Path<'g> {
                 return false;
             }
         }
-        let Some((_, log_a)) = self.walk(None, len) else { return false };
+        let Some((_, log_a)) = self.walk(None, len) else {
+            return false;
+        };
         // ln u < ln alpha, so a path whose reverse is impossible (`log_a` = −inf) is never taken
         // and one with alpha >= 1 always is.
         let accept = self.rng.f64().ln() < log_a;
@@ -519,7 +538,11 @@ impl<'g> Path<'g> {
     /// proposal normalisers, so a high number means the proposal landscape barely moved.
     #[must_use]
     pub fn acceptance(&self) -> f64 {
-        if self.steps == 0 { 0.0 } else { self.accepted as f64 / self.steps as f64 }
+        if self.steps == 0 {
+            0.0
+        } else {
+            self.accepted as f64 / self.steps as f64
+        }
     }
 
     /// Proposals taken.
@@ -561,7 +584,9 @@ impl<'g> Langevin<'g> {
     #[must_use]
     pub fn new(g: &'g Graph, beta: f64, seed: u64) -> Langevin<'g> {
         let mut rng = Pcg::new(seed, 0x5A17);
-        let s: Vec<i8> = (0..g.n).map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 }).collect();
+        let s: Vec<i8> = (0..g.n)
+            .map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 })
+            .collect();
         Self::from_state(g, beta, s, rng)
     }
 
@@ -601,7 +626,10 @@ impl<'g> Langevin<'g> {
     /// If `alpha` is not positive and finite: the penalty is `1/(2 alpha)`.
     #[must_use]
     pub fn with_alpha(mut self, alpha: f64) -> Self {
-        assert!(alpha > 0.0 && alpha.is_finite(), "the step size must be positive and finite");
+        assert!(
+            alpha > 0.0 && alpha.is_finite(),
+            "the step size must be positive and finite"
+        );
         self.alpha = alpha;
         self
     }
@@ -637,7 +665,11 @@ impl<'g> Langevin<'g> {
     /// If the two states do not have one spin per node each.
     #[must_use]
     pub fn log_proposal(&self, from: &[i8], to: &[i8]) -> f64 {
-        assert_eq!(from.len(), to.len(), "both states must be over the same model");
+        assert_eq!(
+            from.len(),
+            to.len(),
+            "both states must be over the same model"
+        );
         let z = self.flip_logits(from);
         Self::log_q(&z, from, to)
     }
@@ -647,7 +679,11 @@ impl<'g> Langevin<'g> {
     fn log_q(z: &[f64], from: &[i8], to: &[i8]) -> f64 {
         let mut l = 0.0;
         for i in 0..z.len() {
-            l -= if to[i] == from[i] { softplus(z[i]) } else { softplus(-z[i]) };
+            l -= if to[i] == from[i] {
+                softplus(z[i])
+            } else {
+                softplus(-z[i])
+            };
         }
         l
     }
@@ -666,8 +702,7 @@ impl<'g> Langevin<'g> {
     /// Log acceptance, reusing the forward logits the proposal was drawn from.
     fn log_alpha_with(&self, z_from: &[f64], to: &[i8]) -> f64 {
         let z_to = self.flip_logits(to);
-        -self.beta * (self.g.energy(to) - self.g.energy(&self.s))
-            + Self::log_q(&z_to, to, &self.s)
+        -self.beta * (self.g.energy(to) - self.g.energy(&self.s)) + Self::log_q(&z_to, to, &self.s)
             - Self::log_q(z_from, &self.s, to)
     }
 
@@ -717,13 +752,21 @@ impl<'g> Langevin<'g> {
     /// Fraction of steps accepted. Always `1` with the correction off.
     #[must_use]
     pub fn acceptance(&self) -> f64 {
-        if self.steps == 0 { 0.0 } else { self.accepted as f64 / self.steps as f64 }
+        if self.steps == 0 {
+            0.0
+        } else {
+            self.accepted as f64 / self.steps as f64
+        }
     }
 
     /// Mean number of sites the proposal flips per step, accepted or not.
     #[must_use]
     pub fn proposed_flips(&self) -> f64 {
-        if self.steps == 0 { 0.0 } else { self.flips as f64 / self.steps as f64 }
+        if self.steps == 0 {
+            0.0
+        } else {
+            self.flips as f64 / self.steps as f64
+        }
     }
 
     /// Steps taken.
@@ -759,7 +802,10 @@ mod tests {
             b.couple(i, (i + 1) % n, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
         }
         for _ in 0..n / 4 {
-            let (i, j) = ((rng.f64() * n as f64) as usize % n, (rng.f64() * n as f64) as usize % n);
+            let (i, j) = (
+                (rng.f64() * n as f64) as usize % n,
+                (rng.f64() * n as f64) as usize % n,
+            );
             if i != j {
                 b.couple(i, j, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
             }
@@ -787,7 +833,11 @@ mod tests {
 
     /// Index of a state in the enumeration `exact_boltzmann` uses.
     fn index(s: &[i8]) -> usize {
-        s.iter().enumerate().filter(|&(_, &v)| v > 0).map(|(b, _)| 1usize << b).sum()
+        s.iter()
+            .enumerate()
+            .filter(|&(_, &v)| v > 0)
+            .map(|(b, _)| 1usize << b)
+            .sum()
     }
 
     /// The balancing condition `g(x) = x g(1/x)`, on THIS module's copy of `g`.
@@ -826,19 +876,27 @@ mod tests {
         let mut worst = 0.0f64;
         for balance in [Balance::Sqrt, Balance::Barker, Balance::Metropolis] {
             for backtrack in [false, true] {
-                let mut p = Path::new(&g, beta, 4).with_balance(balance).with_backtrack(backtrack);
+                let mut p = Path::new(&g, beta, 4)
+                    .with_balance(balance)
+                    .with_backtrack(backtrack);
                 let mut r = Pcg::new(17, 5);
                 for _ in 0..200 {
-                    let start: Vec<i8> =
-                        (0..g.n).map(|_| if r.f64() < 0.5 { -1i8 } else { 1 }).collect();
+                    let start: Vec<i8> = (0..g.n)
+                        .map(|_| if r.f64() < 0.5 { -1i8 } else { 1 })
+                        .collect();
                     p.set_state(start.clone());
                     let len = 1 + (r.next_u32() as usize) % 5;
                     let mut sites = Vec::new();
                     for _ in 0..len {
                         sites.push((r.next_u32() as usize) % g.n);
                     }
-                    let Some((log_q, log_a)) = p.path_ratio(&sites) else { continue };
-                    assert_eq!(p.s, start, "path_ratio must leave the state where it found it");
+                    let Some((log_q, log_a)) = p.path_ratio(&sites) else {
+                        continue;
+                    };
+                    assert_eq!(
+                        p.s, start,
+                        "path_ratio must leave the state where it found it"
+                    );
 
                     // The definition, rebuilt: states along the path, then every factor of the MH
                     // ratio written out.
@@ -848,26 +906,41 @@ mod tests {
                         cur[k] = -cur[k];
                         states.push(cur.clone());
                     }
-                    let ws: Vec<Vec<f64>> =
-                        states.iter().map(|y| weights(&g, beta, balance, y)).collect();
+                    let ws: Vec<Vec<f64>> = states
+                        .iter()
+                        .map(|y| weights(&g, beta, balance, y))
+                        .collect();
                     let (mut want_q, mut want_a) = (0.0f64, 0.0f64);
                     want_a += (pi(&g, beta, &states[len]) / pi(&g, beta, &start)).ln();
                     for t in 0..len {
                         let zf: f64 = ws[t].iter().sum::<f64>()
-                            - if t >= 1 && !backtrack { ws[t][sites[t - 1]] } else { 0.0 };
+                            - if t >= 1 && !backtrack {
+                                ws[t][sites[t - 1]]
+                            } else {
+                                0.0
+                            };
                         let zb: f64 = ws[t + 1].iter().sum::<f64>()
-                            - if t + 1 < len && !backtrack { ws[t + 1][sites[t + 1]] } else { 0.0 };
+                            - if t + 1 < len && !backtrack {
+                                ws[t + 1][sites[t + 1]]
+                            } else {
+                                0.0
+                            };
                         // forward: g(r_t)/Zf_t. reverse: g(1/r_t)/Zb_t, and g(1/r_t) is the weight
                         // of flipping the same site back, read off at the state after the flip.
                         want_q += ws[t][sites[t]].ln() - zf.ln();
                         want_a += ws[t + 1][sites[t]].ln() - zb.ln();
                         want_a -= ws[t][sites[t]].ln() - zf.ln();
                     }
-                    worst = worst.max((log_a - want_a).abs()).max((log_q - want_q).abs());
+                    worst = worst
+                        .max((log_a - want_a).abs())
+                        .max((log_q - want_q).abs());
                 }
             }
         }
-        assert!(worst < 1e-9, "the path ratio disagrees with its definition by {worst:e}");
+        assert!(
+            worst < 1e-9,
+            "the path ratio disagrees with its definition by {worst:e}"
+        );
     }
 
     /// The exact transition matrix of the path kernel: every length the sampler may draw, every
@@ -878,7 +951,9 @@ mod tests {
         let mut p = Path::new(g, beta, 1).with_backtrack(backtrack);
         let mut mat = vec![vec![0.0f64; m]; m];
         for x in 0..m {
-            let start: Vec<i8> = (0..g.n).map(|b| if x >> b & 1 == 1 { 1i8 } else { -1 }).collect();
+            let start: Vec<i8> = (0..g.n)
+                .map(|b| if x >> b & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             let mut stay = 0.0;
             for len in 1..=max_len {
                 let share = 1.0 / max_len as f64; // the uniform length draw
@@ -890,7 +965,9 @@ mod tests {
                         c /= g.n;
                     }
                     p.set_state(start.clone());
-                    let Some((log_q, log_a)) = p.path_ratio(&sites) else { continue };
+                    let Some((log_q, log_a)) = p.path_ratio(&sites) else {
+                        continue;
+                    };
                     let q = share * log_q.exp();
                     let a = log_a.exp().min(1.0);
                     let mut y = start.clone();
@@ -957,8 +1034,10 @@ mod tests {
         let m = 1usize << g.n;
         for max_len in [2usize, 4] {
             let mat = path_kernel(&g, 0.7, max_len, false);
-            let mut reach: Vec<Vec<bool>> =
-                mat.iter().map(|r| r.iter().map(|&v| v > 1e-15).collect()).collect();
+            let mut reach: Vec<Vec<bool>> = mat
+                .iter()
+                .map(|r| r.iter().map(|&v| v > 1e-15).collect())
+                .collect();
             // Transitive closure: m squarings cover any path length up to 2^m.
             for _ in 0..8 {
                 let mut next = reach.clone();
@@ -975,7 +1054,8 @@ mod tests {
             }
             let missed = reach.iter().flatten().filter(|&&v| !v).count();
             assert_eq!(
-                missed, 0,
+                missed,
+                0,
                 "at max length {max_len} the kernel cannot reach {missed} of the {} state pairs, \
                  so it is reversible with respect to a distribution it never sees all of",
                 m * m
@@ -1023,10 +1103,19 @@ mod tests {
                 moved.insert(d);
             }
         }
-        let most = *moved.iter().next_back().expect("no proposal was ever accepted");
-        assert!(most > 1, "every accepted move changed at most one spin: {moved:?}");
+        let most = *moved
+            .iter()
+            .next_back()
+            .expect("no proposal was ever accepted");
+        assert!(
+            most > 1,
+            "every accepted move changed at most one spin: {moved:?}"
+        );
         // A length-6 path on 16 sites should reach six distinct spins sometimes, not just twice.
-        assert!(most >= 4, "the path never went further than {most} spins from where it started");
+        assert!(
+            most >= 4,
+            "the path never went further than {most} spins from where it started"
+        );
     }
 
     /// The incremental fields, weights and total must agree with a recomputation, or the proposal
@@ -1044,8 +1133,14 @@ mod tests {
             let fresh: f64 = crate::round::sum_up(&p.w);
             worst = worst.max((p.total - fresh).abs() / fresh.max(1.0));
         }
-        assert!(worst < 1e-9, "incremental state drifted from a recomputation by {worst:e}");
-        assert!(p.since < REFRESH_FLIPS, "the loop must stop short of a refresh to test the drift");
+        assert!(
+            worst < 1e-9,
+            "incremental state drifted from a recomputation by {worst:e}"
+        );
+        assert!(
+            p.since < REFRESH_FLIPS,
+            "the loop must stop short of a refresh to test the drift"
+        );
     }
 
     /// EXACT INVARIANCE for DMALA: the proposal factorises, so every one of the `2^n` moves out of
@@ -1060,12 +1155,20 @@ mod tests {
         let exact = crate::ising::exact_boltzmann(&g, beta);
         let m = 1usize << g.n;
         let states: Vec<Vec<i8>> = (0..m)
-            .map(|x| (0..g.n).map(|b| if x >> b & 1 == 1 { 1i8 } else { -1 }).collect())
+            .map(|x| {
+                (0..g.n)
+                    .map(|b| if x >> b & 1 == 1 { 1i8 } else { -1 })
+                    .collect()
+            })
             .collect();
-        for (balance, alpha) in
-            [(Balance::Sqrt, 0.2), (Balance::Sqrt, 2.0), (Balance::Barker, 0.5)]
-        {
-            let mut l = Langevin::new(&g, beta, 1).with_balance(balance).with_alpha(alpha);
+        for (balance, alpha) in [
+            (Balance::Sqrt, 0.2),
+            (Balance::Sqrt, 2.0),
+            (Balance::Barker, 0.5),
+        ] {
+            let mut l = Langevin::new(&g, beta, 1)
+                .with_balance(balance)
+                .with_alpha(alpha);
             let mut mat = vec![vec![0.0f64; m]; m];
             for x in 0..m {
                 l.s = states[x].clone();
@@ -1131,7 +1234,9 @@ mod tests {
         let beta = 0.9;
         let alpha = 2.0;
         let run = |adjust: bool| {
-            let mut l = Langevin::new(&g, beta, 5).with_alpha(alpha).with_adjust(adjust);
+            let mut l = Langevin::new(&g, beta, 5)
+                .with_alpha(alpha)
+                .with_adjust(adjust);
             l.steps(500);
             let (mut samples, mut trace) = (Vec::new(), Vec::new());
             for _ in 0..20_000 {
@@ -1153,7 +1258,10 @@ mod tests {
         );
         crate::certify::assert_boltzmann(&corrected, beta, "dmala");
         let (b, c) = (biased.tv_exact.unwrap(), corrected.tv_exact.unwrap());
-        assert!(c * 2.0 < b, "the correction bought little: tv {c:.5} adjusted against {b:.5} not");
+        assert!(
+            c * 2.0 < b,
+            "the correction bought little: tv {c:.5} adjusted against {b:.5} not"
+        );
     }
 
     /// AND WHERE IT BUYS NOTHING, on the fixture `informed` measured itself on.

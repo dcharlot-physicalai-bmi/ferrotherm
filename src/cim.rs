@@ -296,7 +296,10 @@ impl core::fmt::Display for CimError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             CimError::NoOscillators => {
-                write!(f, "a coherent Ising machine with no oscillators has no state to read out")
+                write!(
+                    f,
+                    "a coherent Ising machine with no oscillators has no state to read out"
+                )
             }
             CimError::PumpBelowThreshold { pump_end } => write!(
                 f,
@@ -321,7 +324,11 @@ impl core::fmt::Display for CimError {
                 "chaotic amplitude control needs a positive {what}; got {value}. A non-positive \
                  rate amplifies amplitude heterogeneity instead of correcting it"
             ),
-            CimError::Diverged { step, node, amplitude } => write!(
+            CimError::Diverged {
+                step,
+                node,
+                amplitude,
+            } => write!(
                 f,
                 "oscillator {node} reached amplitude {amplitude} at step {step}. Explicit Euler on \
                  the saturation cubic is unstable for a long step; reduce dt"
@@ -388,8 +395,15 @@ impl Cim {
         let n = g.n as f64;
         let denom = (n * (n - 1.0)).max(1.0);
         let j_rms = (sum_j2 / denom).sqrt();
-        let xi = if j_rms > 0.0 && n > 0.0 { 0.5 / (j_rms * n.sqrt()) } else { 0.5 };
-        Cim { xi, ..Cim::default() }
+        let xi = if j_rms > 0.0 && n > 0.0 {
+            0.5 / (j_rms * n.sqrt())
+        } else {
+            0.5
+        };
+        Cim {
+            xi,
+            ..Cim::default()
+        }
     }
 
     /// The same run on a different seed.
@@ -403,7 +417,10 @@ impl Cim {
     /// Changes nothing else, which is what makes a plain run and a corrected run comparable.
     #[must_use]
     pub fn with_chaotic_control(self, beta: f64, target: f64) -> Self {
-        Cim { control: Control::Chaotic { beta, target }, ..self }
+        Cim {
+            control: Control::Chaotic { beta, target },
+            ..self
+        }
     }
 
     /// Refuse a configuration that cannot produce a meaningful readout.
@@ -420,30 +437,46 @@ impl Cim {
             return Err(CimError::BadStep { dt: self.dt });
         }
         if self.steps == 0 {
-            return Err(CimError::BadRun { what: "steps", value: 0.0 });
+            return Err(CimError::BadRun {
+                what: "steps",
+                value: 0.0,
+            });
         }
-        for (what, value) in
-            [("pump_start", self.pump_start), ("pump_end", self.pump_end), ("xi", self.xi)]
-        {
+        for (what, value) in [
+            ("pump_start", self.pump_start),
+            ("pump_end", self.pump_end),
+            ("xi", self.xi),
+        ] {
             if !value.is_finite() {
                 return Err(CimError::BadRun { what, value });
             }
         }
         if !(self.noise >= 0.0) || !self.noise.is_finite() {
-            return Err(CimError::BadRun { what: "noise", value: self.noise });
+            return Err(CimError::BadRun {
+                what: "noise",
+                value: self.noise,
+            });
         }
         if !(self.pump_end > 1.0) {
-            return Err(CimError::PumpBelowThreshold { pump_end: self.pump_end });
+            return Err(CimError::PumpBelowThreshold {
+                pump_end: self.pump_end,
+            });
         }
         if !(self.init.abs() > 0.0) {
             return Err(CimError::NoSeedAmplitude);
         }
         if let Control::Chaotic { beta, target } = self.control {
             if !(beta > 0.0) || !beta.is_finite() {
-                return Err(CimError::BadControl { what: "beta", value: beta });
+                return Err(CimError::BadControl {
+                    what: "beta",
+                    value: beta,
+                });
             }
             if !(target > 0.0) || !target.is_finite() {
-                return Err(CimError::BadControl { what: "target", value: target });
+                return Err(CimError::BadControl {
+                    what: "target",
+                    value: target,
+                });
             }
         }
         Ok(())
@@ -462,7 +495,9 @@ impl Cim {
         self.check(g)?;
         let n = g.n;
         let mut rng = Pcg::new(self.seed, STREAM);
-        let mut x: Vec<f64> = (0..n).map(|_| (rng.f64() - 0.5) * 2.0 * self.init).collect();
+        let mut x: Vec<f64> = (0..n)
+            .map(|_| (rng.f64() - 0.5) * 2.0 * self.init)
+            .collect();
         let mut e = vec![1.0f64; n];
         // What the controller last recorded. Seeded from the initial amplitudes so the first
         // injected field is the one an operator would have measured before the ramp began.
@@ -507,7 +542,11 @@ impl Cim {
                     e[i] += self.dt * (-beta * e[i] * (xi_now * xi_now - target));
                 }
                 if !next.is_finite() || next.abs() > DIVERGENCE {
-                    return Err(CimError::Diverged { step, node: i, amplitude: next });
+                    return Err(CimError::Diverged {
+                        step,
+                        node: i,
+                        amplitude: next,
+                    });
                 }
                 x[i] = next;
             }
@@ -523,7 +562,16 @@ impl Cim {
         let spins = readout(&x);
         let energy = g.energy(&spins);
         let energy_upper = energy_upper(g, &spins);
-        Ok(Run { spins, energy, energy_upper, best_spins: best, best_energy, best_step, x, e })
+        Ok(Run {
+            spins,
+            energy,
+            energy_upper,
+            best_spins: best,
+            best_energy,
+            best_step,
+            x,
+            e,
+        })
     }
 
     /// `restarts` runs on derived seeds, keeping the one whose **final** readout is lowest.
@@ -586,17 +634,33 @@ mod tests {
         gb.couple(2, 0, -1.0);
         let triangle = gb.build();
 
-        for (name, g, want) in
-            [("ferromagnet", &ferro, -1.0f64), ("frustrated triangle", &triangle, -1.0)]
-        {
+        for (name, g, want) in [
+            ("ferromagnet", &ferro, -1.0f64),
+            ("frustrated triangle", &triangle, -1.0),
+        ] {
             let (_, exact) = Exhaustive.solve(g);
-            assert_eq!(exact, want, "{name}: the enumeration itself, stated so it is checkable");
+            assert_eq!(
+                exact, want,
+                "{name}: the enumeration itself, stated so it is checkable"
+            );
             for coupling in [
                 Coupling::OpenLoop,
-                Coupling::MeasurementFeedback { measurement_noise: 0.005 },
+                Coupling::MeasurementFeedback {
+                    measurement_noise: 0.005,
+                },
             ] {
-                for control in [Control::Fixed, Control::Chaotic { beta: 0.3, target: 0.2 }] {
-                    let cim = Cim { coupling, control, ..Cim::for_instance(g) };
+                for control in [
+                    Control::Fixed,
+                    Control::Chaotic {
+                        beta: 0.3,
+                        target: 0.2,
+                    },
+                ] {
+                    let cim = Cim {
+                        coupling,
+                        control,
+                        ..Cim::for_instance(g)
+                    };
                     let run = cim.run(g).unwrap();
                     assert_eq!(
                         run.energy, exact,
@@ -637,7 +701,10 @@ mod tests {
     fn amplitude_heterogeneity_defeats_plain_cim_and_the_error_variable_repairs_it() {
         let g = heterogeneous_instance();
         let (_, exact) = Exhaustive.solve(&g);
-        assert_eq!(exact, -36.5, "the enumerated ground energy, stated so it is checkable");
+        assert_eq!(
+            exact, -36.5,
+            "the enumerated ground energy, stated so it is checkable"
+        );
 
         let plain = Cim::for_instance(&g);
         let corrected = plain.with_chaotic_control(0.3, 0.2);
@@ -702,8 +769,16 @@ mod tests {
             let seed = 0xC1 ^ k.wrapping_mul(0x9E37_79B9_7F4A_7C15);
             let p = plain.with_seed(seed).run(&g).unwrap();
             let c = corrected.with_seed(seed).run(&g).unwrap();
-            assert!(p.energy > exact + 1e-9, "seed {seed}: plain reached {} ", p.energy);
-            assert_eq!(c.energy, exact, "seed {seed}: corrected reached {}", c.energy);
+            assert!(
+                p.energy > exact + 1e-9,
+                "seed {seed}: plain reached {} ",
+                p.energy
+            );
+            assert_eq!(
+                c.energy, exact,
+                "seed {seed}: corrected reached {}",
+                c.energy
+            );
         }
     }
 
@@ -758,7 +833,9 @@ mod tests {
             // The starting signs are recomputed here from the generator rather than read back out
             // of the run, so this compares against the seed and not against the module.
             let mut rng = Pcg::new(cim.seed, STREAM);
-            let started: Vec<f64> = (0..g.n).map(|_| (rng.f64() - 0.5) * 2.0 * cim.init).collect();
+            let started: Vec<f64> = (0..g.n)
+                .map(|_| (rng.f64() - 0.5) * 2.0 * cim.init)
+                .collect();
             for (i, (&v, &s0)) in run.x.iter().zip(&started).enumerate() {
                 assert_eq!(
                     v > 0.0,
@@ -781,10 +858,15 @@ mod tests {
     #[test]
     fn measurement_feedback_is_a_delayed_loop_not_a_relabelled_open_loop() {
         let g = crate::ising::lattice2d(4, 1.0);
-        let base = Cim { steps: 50, ..Cim::for_instance(&g) };
+        let base = Cim {
+            steps: 50,
+            ..Cim::for_instance(&g)
+        };
         let open = base.run(&g).unwrap();
         let fed = Cim {
-            coupling: Coupling::MeasurementFeedback { measurement_noise: 0.0 },
+            coupling: Coupling::MeasurementFeedback {
+                measurement_noise: 0.0,
+            },
             ..base
         }
         .run(&g)
@@ -796,11 +878,16 @@ mod tests {
         );
         // And it still solves a ferromagnet, delay and shot noise included.
         let long = Cim {
-            coupling: Coupling::MeasurementFeedback { measurement_noise: 0.01 },
+            coupling: Coupling::MeasurementFeedback {
+                measurement_noise: 0.01,
+            },
             ..Cim::for_instance(&g)
         };
         let run = long.run(&g).unwrap();
-        assert_eq!(run.energy, -32.0, "a 4x4 periodic ferromagnet has 32 satisfied bonds");
+        assert_eq!(
+            run.energy, -32.0,
+            "a 4x4 periodic ferromagnet has 32 satisfied bonds"
+        );
     }
 
     /// A seeded run is a run: the same seed reproduces the trajectory bit for bit, a different seed
@@ -808,15 +895,23 @@ mod tests {
     #[test]
     fn a_run_is_reproducible_from_its_seed_and_moves_when_the_seed_does() {
         let g = crate::ising::lattice2d(4, -1.0);
-        let cim = Cim { noise: 0.02, ..Cim::for_instance(&g) };
+        let cim = Cim {
+            noise: 0.02,
+            ..Cim::for_instance(&g)
+        };
         let a = cim.run(&g).unwrap();
         let b = cim.run(&g).unwrap();
         assert!(
-            a.x.iter().zip(&b.x).all(|(p, q)| p.to_bits() == q.to_bits()),
+            a.x.iter()
+                .zip(&b.x)
+                .all(|(p, q)| p.to_bits() == q.to_bits()),
             "same seed must give bit-identical amplitudes, not merely equal to what prints"
         );
         let c = cim.with_seed(cim.seed ^ 0xABCD).run(&g).unwrap();
-        assert!(a.x.iter().zip(&c.x).any(|(p, q)| p != q), "a different seed must differ");
+        assert!(
+            a.x.iter().zip(&c.x).any(|(p, q)| p != q),
+            "a different seed must differ"
+        );
         let quiet = Cim { noise: 0.0, ..cim }.run(&g).unwrap();
         assert!(
             a.x.iter().zip(&quiet.x).any(|(p, q)| p != q),
@@ -841,7 +936,9 @@ mod tests {
             let mut rng = Pcg::new(0xCAC ^ inst, 5);
             // Per-node scale factors spanning 20x: the heterogeneity is in the instance, so the
             // comparison is about the control law rather than about a lucky conditioning.
-            let d: Vec<f64> = (0..12).map(|_| if rng.f64() < 0.5 { 0.25 } else { 5.0 }).collect();
+            let d: Vec<f64> = (0..12)
+                .map(|_| if rng.f64() < 0.5 { 0.25 } else { 5.0 })
+                .collect();
             let mut gb = GraphBuilder::new(12);
             for i in 0..12 {
                 for j in (i + 1)..12 {
@@ -856,7 +953,13 @@ mod tests {
             if (base.best_of(&g, 4).unwrap().energy - exact).abs() < 1e-9 {
                 plain_hits += 1;
             }
-            if (base.with_chaotic_control(0.3, 0.2).best_of(&g, 4).unwrap().energy - exact).abs()
+            if (base
+                .with_chaotic_control(0.3, 0.2)
+                .best_of(&g, 4)
+                .unwrap()
+                .energy
+                - exact)
+                .abs()
                 < 1e-9
             {
                 cac_hits += 1;
@@ -878,8 +981,15 @@ mod tests {
         let all_up = vec![1i8; g.n];
         let bound = energy_upper(&g, &all_up);
         assert_eq!(g.energy(&all_up), 72.0, "6x6 periodic lattice has 72 bonds");
-        assert!(bound >= 72.0, "a bound below the quantity it bounds is not a bound: {bound}");
-        assert!(bound - 72.0 < 1e-12, "and it must stay tight: over by {}", bound - 72.0);
+        assert!(
+            bound >= 72.0,
+            "a bound below the quantity it bounds is not a bound: {bound}"
+        );
+        assert!(
+            bound - 72.0 < 1e-12,
+            "and it must stay tight: over by {}",
+            bound - 72.0
+        );
         // And on couplings that are not representable, the bound must still be on the safe side.
         let mut gb = GraphBuilder::new(40);
         let mut rng = Pcg::new(11, 3);
@@ -919,8 +1029,17 @@ mod tests {
         }
         let g = gb.build();
         let run = Cim::for_instance(&g).run(&g).unwrap();
-        assert!(run.best_energy <= run.energy, "{} vs {}", run.best_energy, run.energy);
-        assert_eq!(run.best_energy, g.energy(&run.best_spins), "and it names its own state");
+        assert!(
+            run.best_energy <= run.energy,
+            "{} vs {}",
+            run.best_energy,
+            run.energy
+        );
+        assert_eq!(
+            run.best_energy,
+            g.energy(&run.best_spins),
+            "and it names its own state"
+        );
     }
 
     /// Every refusal is reachable, and a divergence is refused rather than returned as `NaN` spins.
@@ -933,29 +1052,59 @@ mod tests {
             CimError::NoOscillators
         );
         assert_eq!(
-            Cim { pump_end: 1.0, ..ok }.run(&g).unwrap_err(),
+            Cim {
+                pump_end: 1.0,
+                ..ok
+            }
+            .run(&g)
+            .unwrap_err(),
             CimError::PumpBelowThreshold { pump_end: 1.0 }
         );
-        assert_eq!(Cim { dt: 0.0, ..ok }.run(&g).unwrap_err(), CimError::BadStep { dt: 0.0 });
+        assert_eq!(
+            Cim { dt: 0.0, ..ok }.run(&g).unwrap_err(),
+            CimError::BadStep { dt: 0.0 }
+        );
         assert_eq!(
             Cim { steps: 0, ..ok }.run(&g).unwrap_err(),
-            CimError::BadRun { what: "steps", value: 0.0 }
+            CimError::BadRun {
+                what: "steps",
+                value: 0.0
+            }
         );
         assert_eq!(
             Cim { noise: -1.0, ..ok }.run(&g).unwrap_err(),
-            CimError::BadRun { what: "noise", value: -1.0 }
+            CimError::BadRun {
+                what: "noise",
+                value: -1.0
+            }
         );
-        assert_eq!(Cim { init: 0.0, ..ok }.run(&g).unwrap_err(), CimError::NoSeedAmplitude);
+        assert_eq!(
+            Cim { init: 0.0, ..ok }.run(&g).unwrap_err(),
+            CimError::NoSeedAmplitude
+        );
         assert_eq!(
             ok.with_chaotic_control(0.0, 0.2).run(&g).unwrap_err(),
-            CimError::BadControl { what: "beta", value: 0.0 }
+            CimError::BadControl {
+                what: "beta",
+                value: 0.0
+            }
         );
         assert_eq!(
             ok.with_chaotic_control(0.3, -1.0).run(&g).unwrap_err(),
-            CimError::BadControl { what: "target", value: -1.0 }
+            CimError::BadControl {
+                what: "target",
+                value: -1.0
+            }
         );
         // dt = 5 on a cubic: the amplitude squares itself out of the representable range.
-        let blown = Cim { dt: 5.0, pump_end: 3.0, init: 1.0, ..ok }.run(&g).unwrap_err();
+        let blown = Cim {
+            dt: 5.0,
+            pump_end: 3.0,
+            init: 1.0,
+            ..ok
+        }
+        .run(&g)
+        .unwrap_err();
         assert!(matches!(blown, CimError::Diverged { .. }), "got {blown}");
         assert!(!format!("{blown}").is_empty());
     }

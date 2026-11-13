@@ -509,8 +509,14 @@ mod tests {
                 let out = crate::sse::run(&g, &p, seed).expect("these parameters are valid");
                 // The crate's own warning: a truncated string is biased, so a disagreement below
                 // would have two possible causes and this test could not tell them apart.
-                assert_eq!(out.saturated, 0, "the operator string truncated at seed {seed}");
-                assert!(out.energy.stderr > 0.0, "a measured energy has an error bar");
+                assert_eq!(
+                    out.saturated, 0,
+                    "the operator string truncated at seed {seed}"
+                );
+                assert!(
+                    out.energy.stderr > 0.0,
+                    "a measured energy has an error bar"
+                );
                 total += (out.energy.value - exact) / out.energy.stderr;
             }
             total / seeds.len() as f64

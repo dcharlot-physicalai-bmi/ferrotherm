@@ -22,7 +22,7 @@
 //
 // run: cargo run --release --example requant_exact
 
-use ferrotherm::autocorr::{boltzmann, spins, total_variation, Kernel};
+use ferrotherm::autocorr::{Kernel, boltzmann, spins, total_variation};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -82,7 +82,11 @@ fn fixed_step(j: &[f64], h: &[f64], bits: u32) -> f64 {
 }
 
 fn kl(p: &[f64], q: &[f64]) -> f64 {
-    p.iter().zip(q).filter(|(a, _)| **a > 0.0).map(|(a, b)| a * (a / b.max(1e-300)).ln()).sum()
+    p.iter()
+        .zip(q)
+        .filter(|(a, _)| **a > 0.0)
+        .map(|(a, b)| a * (a / b.max(1e-300)).ln())
+        .sum()
 }
 
 /// Ground states of `g`: every state within 1e-9 of the minimum energy.
@@ -105,7 +109,11 @@ fn measure(j: &[f64], h: &[f64], jq: &[f64], hq: &[f64], beta: f64) -> Cell {
     let p = boltzmann(&g, beta).expect("small");
     let q = boltzmann(&gq, beta).expect("small");
     let gs = ground_states(&g);
-    Cell { tv: total_variation(&p, &q), kl_per_spin: kl(&p, &q) / N as f64, gs_mass: gs.iter().map(|&x| q[x]).sum() }
+    Cell {
+        tv: total_variation(&p, &q),
+        kl_per_spin: kl(&p, &q) / N as f64,
+        gs_mass: gs.iter().map(|&x| q[x]).sum(),
+    }
 }
 
 fn slope(xs: &[f64], ys: &[f64]) -> f64 {
@@ -121,13 +129,35 @@ fn main() {
     let ranges = [1.0f64, 4.0, 16.0, 64.0];
     let scales = [1.0f64, 0.125];
     let seeds = [1u64, 2, 3];
-    println!("REQUANTISATION, EXACTLY: TV BETWEEN THE ASKED-FOR AND THE LOADED BOLTZMANN LAWS, ON ALL 2^{N} STATES\n");
-    println!("  model    4x3 grid; |J| log-uniform in [1/R, 1] times a scale s, random signs; fields in s * [-0.2, 0.2]; {} seeds", seeds.len());
-    println!("  beta     applied to the UNscaled instance, so (s, beta / s) is the same physics as (1, beta): a matched pair");
-    println!("  Fixed    step = max|coef| / (2^(bits-1) - 1); Grid: absolute step. Each cell: TV, KL/spin (nats), P(true ground states)\n");
+    println!(
+        "REQUANTISATION, EXACTLY: TV BETWEEN THE ASKED-FOR AND THE LOADED BOLTZMANN LAWS, ON ALL 2^{N} STATES\n"
+    );
+    println!(
+        "  model    4x3 grid; |J| log-uniform in [1/R, 1] times a scale s, random signs; fields in s * [-0.2, 0.2]; {} seeds",
+        seeds.len()
+    );
+    println!(
+        "  beta     applied to the UNscaled instance, so (s, beta / s) is the same physics as (1, beta): a matched pair"
+    );
+    println!(
+        "  Fixed    step = max|coef| / (2^(bits-1) - 1); Grid: absolute step. Each cell: TV, KL/spin (nats), P(true ground states)\n"
+    );
     for &beta in &[0.5f64, 1.0, 2.0] {
         println!("  beta {beta}\n");
-        println!("  {:>4} {:>6}   {:>8}   {:>10} {:>10} {:>10} {:>10}   {:>10} {:>10} {:>10} {:>10}", "R", "scale", "", "Fixed 3b", "Fixed 4b", "Fixed 6b", "Fixed 8b", "Grid 1/4", "Grid 1/16", "Grid 1/64", "Grid 1/256");
+        println!(
+            "  {:>4} {:>6}   {:>8}   {:>10} {:>10} {:>10} {:>10}   {:>10} {:>10} {:>10} {:>10}",
+            "R",
+            "scale",
+            "",
+            "Fixed 3b",
+            "Fixed 4b",
+            "Fixed 6b",
+            "Fixed 8b",
+            "Grid 1/4",
+            "Grid 1/16",
+            "Grid 1/64",
+            "Grid 1/256"
+        );
         let mut fixed_rows: Vec<(f64, [f64; 4])> = Vec::new();
         let mut grid_rows: Vec<(f64, f64, [f64; 4])> = Vec::new();
         for &range in &ranges {
@@ -152,17 +182,44 @@ fn main() {
                         fixed_gs[k] += c.gs_mass / seeds.len() as f64;
                         fixed_kl[k] += c.kl_per_spin / seeds.len() as f64;
                     }
-                    for (k, &step) in [0.25f64, 1.0 / 16.0, 1.0 / 64.0, 1.0 / 256.0].iter().enumerate() {
+                    for (k, &step) in [0.25f64, 1.0 / 16.0, 1.0 / 64.0, 1.0 / 256.0]
+                        .iter()
+                        .enumerate()
+                    {
                         let c = measure(&j, &h, &quantise(&j, step), &quantise(&h, step), b);
                         grid[k] += c.tv / seeds.len() as f64;
                         grid_gs[k] += c.gs_mass / seeds.len() as f64;
                         grid_kl[k] += c.kl_per_spin / seeds.len() as f64;
                     }
                 }
-                let f = |v: &[f64; 4]| v.iter().map(|x| format!("{x:>10.3e}")).collect::<Vec<_>>().join(" ");
-                println!("  {range:>4.0} {scale:>6.3}   {:>8}   {}   {}", "TV", f(&fixed), f(&grid));
-                println!("  {:>4} {:>6}   {:>8}   {}   {}", "", "", "KL/spin", f(&fixed_kl), f(&grid_kl));
-                println!("  {:>4} {:>6}   {:>8}   {}   {}   (unquantised {gs_ref:.3e})", "", "", "P(GS)", f(&fixed_gs), f(&grid_gs));
+                let f = |v: &[f64; 4]| {
+                    v.iter()
+                        .map(|x| format!("{x:>10.3e}"))
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                println!(
+                    "  {range:>4.0} {scale:>6.3}   {:>8}   {}   {}",
+                    "TV",
+                    f(&fixed),
+                    f(&grid)
+                );
+                println!(
+                    "  {:>4} {:>6}   {:>8}   {}   {}",
+                    "",
+                    "",
+                    "KL/spin",
+                    f(&fixed_kl),
+                    f(&grid_kl)
+                );
+                println!(
+                    "  {:>4} {:>6}   {:>8}   {}   {}   (unquantised {gs_ref:.3e})",
+                    "",
+                    "",
+                    "P(GS)",
+                    f(&fixed_gs),
+                    f(&grid_gs)
+                );
                 if scale == 1.0 {
                     fixed_rows.push((range, fixed));
                 }
@@ -174,27 +231,54 @@ fn main() {
         let lr: Vec<f64> = fixed_rows.iter().map(|(r, _)| r.max(1.0001).ln()).collect();
         let fixed_slopes: Vec<String> = (0..4)
             .map(|k| {
-                let ys: Vec<f64> = fixed_rows.iter().map(|(_, v)| v[k].max(1e-300).ln()).collect();
+                let ys: Vec<f64> = fixed_rows
+                    .iter()
+                    .map(|(_, v)| v[k].max(1e-300).ln())
+                    .collect();
                 format!("{:.2}", slope(&lr, &ys))
             })
             .collect();
         let grid_slopes: Vec<String> = (0..4)
             .map(|k| {
                 let step = [0.25f64, 1.0 / 16.0, 1.0 / 64.0, 1.0 / 256.0][k];
-                let xs: Vec<f64> = grid_rows.iter().map(|(r, s, _)| (s / r / step).ln()).collect();
-                let ys: Vec<f64> = grid_rows.iter().map(|(_, _, v)| v[k].max(1e-300).ln()).collect();
+                let xs: Vec<f64> = grid_rows
+                    .iter()
+                    .map(|(r, s, _)| (s / r / step).ln())
+                    .collect();
+                let ys: Vec<f64> = grid_rows
+                    .iter()
+                    .map(|(_, _, v)| v[k].max(1e-300).ln())
+                    .collect();
                 format!("{:.2}", slope(&xs, &ys))
             })
             .collect();
-        println!("\n  slope of log TV vs log R (Fixed, scale 1, per bits 3/4/6/8):        {}", fixed_slopes.join("  "));
-        println!("  slope of log TV vs log(min|J|/step) (Grid, both scales, per step):   {}\n", grid_slopes.join("  "));
+        println!(
+            "\n  slope of log TV vs log R (Fixed, scale 1, per bits 3/4/6/8):        {}",
+            fixed_slopes.join("  ")
+        );
+        println!(
+            "  slope of log TV vs log(min|J|/step) (Grid, both scales, per step):   {}\n",
+            grid_slopes.join("  ")
+        );
     }
     println!("  WHAT THE TABLE SAYS.\n");
-    println!("  Under Fixed the two scales of a matched pair give the SAME cells: the step follows the largest");
-    println!("  coefficient, so the loss is a function of dynamic range and bits alone. Under Grid the same pair");
-    println!("  differs by the scale: the loss is a function of min|J| against the step, and a range-1 instance at");
-    println!("  a small scale can lose everything. The slopes are the two premises measured: a positive slope");
-    println!("  against R for Fixed is Ohno & Togawa's, a negative slope against min|J|/step for Grid is the");
-    println!("  crate's. P(GS) is the optimisation face of the same substitution: how much of the loaded law sits");
+    println!(
+        "  Under Fixed the two scales of a matched pair give the SAME cells: the step follows the largest"
+    );
+    println!(
+        "  coefficient, so the loss is a function of dynamic range and bits alone. Under Grid the same pair"
+    );
+    println!(
+        "  differs by the scale: the loss is a function of min|J| against the step, and a range-1 instance at"
+    );
+    println!(
+        "  a small scale can lose everything. The slopes are the two premises measured: a positive slope"
+    );
+    println!(
+        "  against R for Fixed is Ohno & Togawa's, a negative slope against min|J|/step for Grid is the"
+    );
+    println!(
+        "  crate's. P(GS) is the optimisation face of the same substitution: how much of the loaded law sits"
+    );
     println!("  on the ground states of the problem that was asked.");
 }

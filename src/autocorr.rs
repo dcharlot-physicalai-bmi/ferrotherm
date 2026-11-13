@@ -406,22 +406,42 @@ impl fmt::Display for AutocorrError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AutocorrError::TooManySpins { n, max } => {
-                write!(f, "{n} spins is more than the {max} an exact operator is built over")
+                write!(
+                    f,
+                    "{n} spins is more than the {max} an exact operator is built over"
+                )
             }
             AutocorrError::NoVariance => {
-                write!(f, "the observable does not vary under the Boltzmann distribution")
+                write!(
+                    f,
+                    "the observable does not vary under the Boltzmann distribution"
+                )
             }
             AutocorrError::TooManyForDense { n, max } => {
-                write!(f, "{n} spins is more than the {max} a dense operator is solved over")
+                write!(
+                    f,
+                    "{n} spins is more than the {max} a dense operator is solved over"
+                )
             }
             AutocorrError::Reducible => {
-                write!(f, "the kernel has no unique invariant law: its linear system is singular")
+                write!(
+                    f,
+                    "the kernel has no unique invariant law: its linear system is singular"
+                )
             }
-            AutocorrError::NotConverged { tau, err_est, matvecs } => write!(
+            AutocorrError::NotConverged {
+                tau,
+                err_est,
+                matvecs,
+            } => write!(
                 f,
                 "the Krylov solve used {matvecs} applications without meeting its tolerance: last iterate {tau:e}, estimated error {err_est:e}"
             ),
-            AutocorrError::AtFloor { tau, err_est, matvecs } => write!(
+            AutocorrError::AtFloor {
+                tau,
+                err_est,
+                matvecs,
+            } => write!(
                 f,
                 "the Krylov solve reached the f64 floor after {matvecs} applications: {tau:e} with estimated error {err_est:e} (a lower estimate); use tau_int_censored"
             ),
@@ -430,13 +450,22 @@ impl fmt::Display for AutocorrError {
                 "||A^-1|| >= {inv_norm:e} is past 1/u after {matvecs} applications: the slowest mode is below f64's resolution; use tau_int_censored"
             ),
             AutocorrError::LawNotInvariant { residual } => {
-                write!(f, "the law is not the kernel's: one push moves it by {residual:e} in L1")
+                write!(
+                    f,
+                    "the law is not the kernel's: one push moves it by {residual:e} in L1"
+                )
             }
             AutocorrError::BadMetastableSet => {
-                write!(f, "the metastable set is empty or names a state outside 0..2^n")
+                write!(
+                    f,
+                    "the metastable set is empty or names a state outside 0..2^n"
+                )
             }
             AutocorrError::InnerSolve { residual, pushes } => {
-                write!(f, "an inner solve of the censored chain missed its tolerance: {residual:e} after {pushes} pushes")
+                write!(
+                    f,
+                    "an inner solve of the censored chain missed its tolerance: {residual:e} after {pushes} pushes"
+                )
             }
         }
     }
@@ -469,7 +498,9 @@ pub struct Autocorrelation {
 /// State `x` as spins: bit `i` set means `s_i = +1`.
 #[must_use]
 pub fn spins(x: usize, n: usize) -> Vec<i8> {
-    (0..n).map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 }).collect()
+    (0..n)
+        .map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 })
+        .collect()
 }
 
 /// Peretto's closed form for the stationary law of [`Kernel::Synchronous`] with symmetric
@@ -484,7 +515,10 @@ pub fn spins(x: usize, n: usize) -> Vec<i8> {
 /// [`AutocorrError::TooManySpins`] above [`MAX_SPINS`].
 pub fn peretto(g: &Graph, beta: f64) -> Result<Vec<f64>, AutocorrError> {
     if g.n > MAX_SPINS {
-        return Err(AutocorrError::TooManySpins { n: g.n, max: MAX_SPINS });
+        return Err(AutocorrError::TooManySpins {
+            n: g.n,
+            max: MAX_SPINS,
+        });
     }
     let n = g.n;
     let m = 1usize << n;
@@ -531,9 +565,15 @@ pub fn peretto(g: &Graph, beta: f64) -> Result<Vec<f64>, AutocorrError> {
 /// If `q` is negative or not finite: a negative pinning pushes each spin AWAY from its own value
 /// and is not the kernel the hardware or the theorems describe.
 pub fn sca_law(g: &Graph, beta: f64, q: f64) -> Result<Vec<f64>, AutocorrError> {
-    assert!(q.is_finite() && q >= 0.0, "SCA pinning q must be finite and non-negative, got {q}");
+    assert!(
+        q.is_finite() && q >= 0.0,
+        "SCA pinning q must be finite and non-negative, got {q}"
+    );
     if g.n > MAX_SPINS {
-        return Err(AutocorrError::TooManySpins { n: g.n, max: MAX_SPINS });
+        return Err(AutocorrError::TooManySpins {
+            n: g.n,
+            max: MAX_SPINS,
+        });
     }
     let n = g.n;
     let m = 1usize << n;
@@ -564,7 +604,10 @@ pub fn sca_law(g: &Graph, beta: f64, q: f64) -> Result<Vec<f64>, AutocorrError> 
 /// [`AutocorrError::TooManySpins`] above [`MAX_SPINS`].
 pub fn boltzmann(g: &Graph, beta: f64) -> Result<Vec<f64>, AutocorrError> {
     if g.n > MAX_SPINS {
-        return Err(AutocorrError::TooManySpins { n: g.n, max: MAX_SPINS });
+        return Err(AutocorrError::TooManySpins {
+            n: g.n,
+            max: MAX_SPINS,
+        });
     }
     Ok(boltzmann_law(g, beta))
 }
@@ -617,11 +660,19 @@ fn site_pair(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> (f64, 
         Kernel::FixedFabric => site_pair(
             g,
             beta,
-            Kernel::Quantised { frac_bits: crate::hdl::FRAC, lut_bits: crate::hdl::LUT_BITS, prob_bits: 16 },
+            Kernel::Quantised {
+                frac_bits: crate::hdl::FRAC,
+                lut_bits: crate::hdl::LUT_BITS,
+                prob_bits: 16,
+            },
             i,
             s,
         ),
-        Kernel::Quantised { frac_bits, lut_bits, prob_bits } => {
+        Kernel::Quantised {
+            frac_bits,
+            lut_bits,
+            prob_bits,
+        } => {
             // The widths are powers of two in f64, not integer shifts: `1u32 << 32` wraps to 1 in
             // release and turned a 32-bit comparator into one with a single level, every site
             // certain to be -1 (found by `examples/fabric_floor.rs`, 2026-09-13). The guard is the
@@ -661,7 +712,9 @@ fn site_pair(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> (f64, 
             // power of two is exact. The comparator's complement is `1 - entry / levels` exactly.
             (entry / levels, (levels - entry) / levels)
         }
-        Kernel::SiteSpread { seed, spread } => p_pair(g.field(i, s), beta * site_factor(seed, spread, i)),
+        Kernel::SiteSpread { seed, spread } => {
+            p_pair(g.field(i, s), beta * site_factor(seed, spread, i))
+        }
         Kernel::Pimi { xi, eta } => {
             let z = ((beta * g.field(i, s)).tanh() + xi * f64::from(s[i])) / eta;
             normal_tails(z)
@@ -671,15 +724,24 @@ fn site_pair(g: &Graph, beta: f64, kernel: Kernel, i: usize, s: &[i8]) -> (f64, 
         // and the whole sweep would read as "the law does not move with p" -- the paper's claim,
         // produced by our own omission.
         Kernel::TickRandom { p } => {
-            assert!((0.0..=1.0).contains(&p), "TickRandom p is a probability, got {p}");
+            assert!(
+                (0.0..=1.0).contains(&p),
+                "TickRandom p is a probability, got {p}"
+            );
             let stay = if s[i] > 0 { 1.0 } else { 0.0 };
             let (up, down) = p_pair(g.field(i, s), beta);
-            ((1.0 - p) * stay + p * up, (1.0 - p) * (1.0 - stay) + p * down)
+            (
+                (1.0 - p) * stay + p * up,
+                (1.0 - p) * (1.0 - stay) + p * down,
+            )
         }
         // EXPLICIT for the same reason: the catch-all would run SCA as the synchronous sweep at
         // the full field, with no pinning -- a different kernel with a different law.
         Kernel::Sca { q } => {
-            assert!(q.is_finite() && q >= 0.0, "SCA pinning q must be finite and non-negative, got {q}");
+            assert!(
+                q.is_finite() && q >= 0.0,
+                "SCA pinning q must be finite and non-negative, got {q}"
+            );
             p_pair(0.5 * beta * g.field(i, s) + q * f64::from(s[i]), 1.0)
         }
         _ => p_pair(g.field(i, s), beta),
@@ -845,7 +907,10 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
     let m = 1usize << n;
     assert_eq!(v.len(), m, "a function over states has 2^n entries");
     match kernel {
-        Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::SiteSpread { .. } => {
+        Kernel::ChromaticGibbs
+        | Kernel::FixedFabric
+        | Kernel::Quantised { .. }
+        | Kernel::SiteSpread { .. } => {
             let mut cur = v.to_vec();
             let mut next = vec![0.0f64; m];
             for class in g.classes.iter().rev() {
@@ -891,7 +956,10 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             });
             out
         }
-        Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } | Kernel::Sca { .. } => {
+        Kernel::Synchronous
+        | Kernel::Pimi { .. }
+        | Kernel::TickRandom { .. }
+        | Kernel::Sca { .. } => {
             // (P v)(x) = E[v(y)] under the product law y_i ~ Bernoulli(q_i(x)), every q_i from the
             // PREVIOUS state x. Per x, contract v one site at a time under that product, from the
             // top bit down, so the block that remains keeps its bit layout.
@@ -941,7 +1009,9 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
             let weight = |s_k: f64, f_k: f64| balance_weight(balance, -2.0 * beta * s_k * f_k);
             // Z(x) for every state first, since the acceptance needs Z at the neighbour too.
             let mut z = vec![0.0f64; m];
-            for_each_state(n, |x, s| z[x] = (0..n).map(|k| weight(f64::from(s[k]), g.field(k, s))).sum());
+            for_each_state(n, |x, s| {
+                z[x] = (0..n).map(|k| weight(f64::from(s[k]), g.field(k, s))).sum();
+            });
             let mut next = vec![0.0f64; m];
             for_each_state(n, |x, s| {
                 let mut stay = 1.0;
@@ -949,7 +1019,11 @@ pub fn apply(g: &Graph, beta: f64, kernel: Kernel, v: &[f64]) -> Vec<f64> {
                 if z[x] > 0.0 {
                     for k in 0..n {
                         let y = x ^ (1usize << k);
-                        let alpha = if z[y] > 0.0 { (z[x] / z[y]).min(1.0) } else { 1.0 };
+                        let alpha = if z[y] > 0.0 {
+                            (z[x] / z[y]).min(1.0)
+                        } else {
+                            1.0
+                        };
                         let p = weight(f64::from(s[k]), g.field(k, s)) / z[x] * alpha;
                         stay -= p;
                         acc += p * v[y];
@@ -996,7 +1070,10 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             }
             cur
         }
-        Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::SiteSpread { .. } => {
+        Kernel::ChromaticGibbs
+        | Kernel::FixedFabric
+        | Kernel::Quantised { .. }
+        | Kernel::SiteSpread { .. } => {
             // One site at a time within a class, as in `apply`: the class sites' conditionals
             // depend only on the OTHER sites, so their updates commute.
             let mut cur = mu.to_vec();
@@ -1025,13 +1102,20 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
                     let bit = 1usize << i;
                     let (p, p_down) = p_pair(g.field(i, s), beta);
                     let pooled = mu[y | bit] + mu[y & !bit];
-                    acc += if y & bit != 0 { p * pooled } else { p_down * pooled };
+                    acc += if y & bit != 0 {
+                        p * pooled
+                    } else {
+                        p_down * pooled
+                    };
                 }
                 out[y] = acc / n as f64;
             });
             out
         }
-        Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } | Kernel::Sca { .. } => {
+        Kernel::Synchronous
+        | Kernel::Pimi { .. }
+        | Kernel::TickRandom { .. }
+        | Kernel::Sca { .. } => {
             // (mu P)(y) = sum_x mu(x) prod_i q_i^x(y_i): each source state lays its product law
             // over every target, built by doubling one site at a time (bit i set gets q_i).
             let mut out = vec![0.0f64; m];
@@ -1093,7 +1177,9 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
             // field at k, opposite spin), both from x's own spins.
             let weight = |s_k: f64, f_k: f64| balance_weight(balance, -2.0 * beta * s_k * f_k);
             let mut z = vec![0.0f64; m];
-            for_each_state(n, |x, s| z[x] = (0..n).map(|k| weight(f64::from(s[k]), g.field(k, s))).sum());
+            for_each_state(n, |x, s| {
+                z[x] = (0..n).map(|k| weight(f64::from(s[k]), g.field(k, s))).sum();
+            });
             let mut next = vec![0.0f64; m];
             for_each_state(n, |x, s| {
                 // Mass arriving from each neighbour y_k, plus what stays.
@@ -1103,11 +1189,19 @@ pub fn apply_distribution(g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> V
                     let y = x ^ (1usize << k);
                     let (s_k, f_k) = (f64::from(s[k]), g.field(k, s));
                     if z[x] > 0.0 {
-                        let alpha = if z[y] > 0.0 { (z[x] / z[y]).min(1.0) } else { 1.0 };
+                        let alpha = if z[y] > 0.0 {
+                            (z[x] / z[y]).min(1.0)
+                        } else {
+                            1.0
+                        };
                         stay -= weight(s_k, f_k) / z[x] * alpha;
                     }
                     if z[y] > 0.0 {
-                        let alpha = if z[x] > 0.0 { (z[y] / z[x]).min(1.0) } else { 1.0 };
+                        let alpha = if z[x] > 0.0 {
+                            (z[y] / z[x]).min(1.0)
+                        } else {
+                            1.0
+                        };
                         acc += mu[y] * weight(-s_k, f_k) / z[y] * alpha;
                     }
                 }
@@ -1137,7 +1231,10 @@ pub fn stationary(
     max_steps: usize,
 ) -> Result<(Vec<f64>, usize), AutocorrError> {
     if g.n > MAX_SPINS {
-        return Err(AutocorrError::TooManySpins { n: g.n, max: MAX_SPINS });
+        return Err(AutocorrError::TooManySpins {
+            n: g.n,
+            max: MAX_SPINS,
+        });
     }
     let m = 1usize << g.n;
     let mut mu = vec![1.0 / m as f64; m];
@@ -1255,7 +1352,10 @@ fn kernel_rows(g: &Graph, beta: f64, kernel: Kernel, mut visit: impl FnMut(usize
 /// fabric whose flip probability rounds to exactly zero can be one.
 pub fn stationary_solved(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, AutocorrError> {
     if g.n > MAX_DENSE_SPINS {
-        return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
+        return Err(AutocorrError::TooManyForDense {
+            n: g.n,
+            max: MAX_DENSE_SPINS,
+        });
     }
     let m = 1usize << g.n;
     // A = (I - P)^T with its last row replaced by the normalisation; b = e_last.
@@ -1314,7 +1414,10 @@ pub fn tau_int_fundamental(
     observable: impl Fn(&[i8]) -> f64,
 ) -> Result<Autocorrelation, AutocorrError> {
     if g.n > MAX_DENSE_SPINS {
-        return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
+        return Err(AutocorrError::TooManyForDense {
+            n: g.n,
+            max: MAX_DENSE_SPINS,
+        });
     }
     let pi = match kernel {
         Kernel::FixedFabric
@@ -1322,9 +1425,7 @@ pub fn tau_int_fundamental(
         | Kernel::Pimi { .. }
         | Kernel::Stale { .. }
         | Kernel::SiteSpread { .. }
-        | Kernel::TickRandom { .. } => {
-            stationary_solved(g, beta, kernel)?
-        }
+        | Kernel::TickRandom { .. } => stationary_solved(g, beta, kernel)?,
         Kernel::Synchronous => peretto(g, beta)?,
         Kernel::Sca { q } => sca_law(g, beta, q)?,
         _ => boltzmann(g, beta)?,
@@ -1359,7 +1460,15 @@ pub fn tau_int_fundamental(
         let ck: f64 = pi.iter().zip(&e).zip(&v).map(|((p, x), y)| p * x * y).sum();
         rho.push(ck / c0);
     }
-    Ok(Autocorrelation { tau_int: tau, lags: 0, rho, variance: c0, route: Route::Dense, matvecs: m + 64, err_est: None })
+    Ok(Autocorrelation {
+        tau_int: tau,
+        lags: 0,
+        rho,
+        variance: c0,
+        route: Route::Dense,
+        matvecs: m + 64,
+        err_est: None,
+    })
 }
 
 /// Kemeny's constant of the kernel: `K = sum_{i >= 2} 1 / (1 - lambda_i)` over the non-unit
@@ -1379,7 +1488,10 @@ pub fn tau_int_fundamental(
 /// a kernel without a unique invariant law.
 pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, AutocorrError> {
     if g.n > MAX_DENSE_SPINS {
-        return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
+        return Err(AutocorrError::TooManyForDense {
+            n: g.n,
+            max: MAX_DENSE_SPINS,
+        });
     }
     let pi = match kernel {
         Kernel::FixedFabric
@@ -1387,9 +1499,7 @@ pub fn kemeny_constant(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, Auto
         | Kernel::Pimi { .. }
         | Kernel::Stale { .. }
         | Kernel::SiteSpread { .. }
-        | Kernel::TickRandom { .. } => {
-            stationary_solved(g, beta, kernel)?
-        }
+        | Kernel::TickRandom { .. } => stationary_solved(g, beta, kernel)?,
         Kernel::Synchronous => peretto(g, beta)?,
         Kernel::Sca { q } => sca_law(g, beta, q)?,
         _ => boltzmann(g, beta)?,
@@ -1431,9 +1541,7 @@ pub fn own_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, Autocor
         | Kernel::Pimi { .. }
         | Kernel::Stale { .. }
         | Kernel::SiteSpread { .. }
-        | Kernel::TickRandom { .. } => {
-            stationary_solved(g, beta, kernel)
-        }
+        | Kernel::TickRandom { .. } => stationary_solved(g, beta, kernel),
         Kernel::Synchronous => peretto(g, beta),
         Kernel::Sca { q } => sca_law(g, beta, q),
         _ => boltzmann(g, beta),
@@ -1477,12 +1585,17 @@ pub fn own_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, Autocor
 /// kernel, since the dense operator is built.
 pub fn entropy_production(g: &Graph, beta: f64, kernel: Kernel) -> Result<f64, AutocorrError> {
     if g.n > MAX_DENSE_SPINS {
-        return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
+        return Err(AutocorrError::TooManyForDense {
+            n: g.n,
+            max: MAX_DENSE_SPINS,
+        });
     }
     let pi = own_law(g, beta, kernel)?;
     let m = 1usize << g.n;
     let mut p = vec![0.0f64; m * m];
-    kernel_rows(g, beta, kernel, |x, row| p[x * m..(x + 1) * m].copy_from_slice(row));
+    kernel_rows(g, beta, kernel, |x, row| {
+        p[x * m..(x + 1) * m].copy_from_slice(row);
+    });
     let mut sigma = 0.0;
     for x in 0..m {
         for y in 0..m {
@@ -1588,7 +1701,10 @@ pub fn nested_population_curve(
 ) -> Result<Vec<NestedPopulation>, AutocorrError> {
     use std::collections::VecDeque;
     if g.n > MAX_SPINS {
-        return Err(AutocorrError::TooManySpins { n: g.n, max: MAX_SPINS });
+        return Err(AutocorrError::TooManySpins {
+            n: g.n,
+            max: MAX_SPINS,
+        });
     }
     let n = g.n;
     let m = 1usize << n;
@@ -1599,7 +1715,11 @@ pub fn nested_population_curve(
 
     let pi = own_law(g, beta, kernel)?;
     let mu_pi: f64 = pi.iter().zip(&fv).map(|(p, v)| p * v).sum();
-    let var_pi: f64 = pi.iter().zip(&fv).map(|(p, v)| p * (v - mu_pi).powi(2)).sum();
+    let var_pi: f64 = pi
+        .iter()
+        .zip(&fv)
+        .map(|(p, v)| p * (v - mu_pi).powi(2))
+        .sum();
     let bolt = boltzmann(g, beta)?;
     let mu_b: f64 = bolt.iter().zip(&fv).map(|(p, v)| p * v).sum();
 
@@ -1632,7 +1752,8 @@ pub fn nested_population_curve(
         // law once per REPORT, not per tick, keeps it at start P^(w + 1).
         law = apply_distribution(g, beta, kernel, &law);
         // The window now covers draws at ticks w + 1 ..= w + draws, with w = tick - draws.
-        let (mut sum_f, mut sum_f2, mut cross) = (vec![0.0f64; m], vec![0.0f64; m], vec![0.0f64; m]);
+        let (mut sum_f, mut sum_f2, mut cross) =
+            (vec![0.0f64; m], vec![0.0f64; m], vec![0.0f64; m]);
         for s in &windows[0] {
             sum_f.iter_mut().zip(s).for_each(|(a, b)| *a += b);
         }
@@ -1646,15 +1767,30 @@ pub fn nested_population_curve(
             }
         }
         let mean_path: Vec<f64> = sum_f.iter().map(|s| s / nd).collect();
-        let second: Vec<f64> = sum_f2.iter().zip(&cross).map(|(a, c)| (a + 2.0 * c) / (nd * nd)).collect();
-        let chain_var: Vec<f64> = second.iter().zip(&mean_path).map(|(s, mu)| s - mu * mu).collect();
+        let second: Vec<f64> = sum_f2
+            .iter()
+            .zip(&cross)
+            .map(|(a, c)| (a + 2.0 * c) / (nd * nd))
+            .collect();
+        let chain_var: Vec<f64> = second
+            .iter()
+            .zip(&mean_path)
+            .map(|(s, mu)| s - mu * mu)
+            .collect();
         let within_chain = if draws > 1 {
-            expect(&sum_f2.iter().zip(&second).map(|(a, s)| (a - nd * s) / (nd - 1.0)).collect::<Vec<_>>())
+            expect(
+                &sum_f2
+                    .iter()
+                    .zip(&second)
+                    .map(|(a, s)| (a - nd * s) / (nd - 1.0))
+                    .collect::<Vec<_>>(),
+            )
         } else {
             0.0
         };
         let mean_all = expect(&mean_path);
-        let nonstationary = expect(&mean_path.iter().map(|v| v * v).collect::<Vec<_>>()) - mean_all * mean_all;
+        let nonstationary =
+            expect(&mean_path.iter().map(|v| v * v).collect::<Vec<_>>()) - mean_all * mean_all;
         let e_chain_var = expect(&chain_var);
         let persistent = e_chain_var / chains as f64;
         let within = within_chain + if chains > 1 { e_chain_var } else { 0.0 };
@@ -1710,9 +1846,7 @@ pub fn tau_int_exact(
         | Kernel::Pimi { .. }
         | Kernel::Stale { .. }
         | Kernel::SiteSpread { .. }
-        | Kernel::TickRandom { .. } => {
-            stationary(g, beta, kernel, 1e-14, 500_000)?.0
-        }
+        | Kernel::TickRandom { .. } => stationary(g, beta, kernel, 1e-14, 500_000)?.0,
         Kernel::Synchronous => peretto(g, beta)?,
         Kernel::Sca { q } => sca_law(g, beta, q)?,
         _ => boltzmann(g, beta)?,
@@ -1749,7 +1883,15 @@ pub fn tau_int_exact(
             quiet = 0;
         }
     }
-    Ok(Autocorrelation { tau_int: tau, lags, rho, variance: c0, route: Route::LagSum, matvecs: lags, err_est: None })
+    Ok(Autocorrelation {
+        tau_int: tau,
+        lags,
+        rho,
+        variance: c0,
+        route: Route::LagSum,
+        matvecs: lags,
+        err_est: None,
+    })
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1830,7 +1972,10 @@ pub enum Metastable<'a> {
 #[must_use]
 pub fn max_krylov_spins(kernel: Kernel) -> usize {
     match kernel {
-        Kernel::Synchronous | Kernel::Pimi { .. } | Kernel::TickRandom { .. } | Kernel::Sca { .. } => 14,
+        Kernel::Synchronous
+        | Kernel::Pimi { .. }
+        | Kernel::TickRandom { .. }
+        | Kernel::Sca { .. } => 14,
         Kernel::Stale { .. } => MAX_DENSE_SPINS,
         Kernel::ChromaticGibbs
         | Kernel::SequentialGibbs
@@ -1873,9 +2018,10 @@ pub fn reversible(kernel: Kernel, g: &Graph) -> bool {
 /// a tau `6.2e-4` and `13.7%` off.
 fn solve_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, AutocorrError> {
     match kernel {
-        Kernel::ChromaticGibbs | Kernel::SequentialGibbs | Kernel::RandomScan | Kernel::Informed(_) => {
-            Ok(boltzmann_law(g, beta))
-        }
+        Kernel::ChromaticGibbs
+        | Kernel::SequentialGibbs
+        | Kernel::RandomScan
+        | Kernel::Informed(_) => Ok(boltzmann_law(g, beta)),
         Kernel::Synchronous | Kernel::Sca { .. } => own_law(g, beta, kernel),
         Kernel::FixedFabric
         | Kernel::Quantised { .. }
@@ -1893,7 +2039,12 @@ fn checked_law(g: &Graph, beta: f64, kernel: Kernel) -> Result<Vec<f64>, Autocor
 
 /// `pi` if one push moves it by at most [`LAW_TOLERANCE`] in L1, [`AutocorrError::LawNotInvariant`]
 /// otherwise.
-fn check_law(g: &Graph, beta: f64, kernel: Kernel, pi: Vec<f64>) -> Result<Vec<f64>, AutocorrError> {
+fn check_law(
+    g: &Graph,
+    beta: f64,
+    kernel: Kernel,
+    pi: Vec<f64>,
+) -> Result<Vec<f64>, AutocorrError> {
     let pushed = apply_distribution(g, beta, kernel, &pi);
     let residual: f64 = pushed.iter().zip(&pi).map(|(a, b)| (a - b).abs()).sum();
     if residual <= LAW_TOLERANCE {
@@ -1935,7 +2086,11 @@ fn axpy(y: &mut [f64], a: f64, x: &[f64]) {
 /// The centred observable `e = f - <f>_pi` and `C0 = <e, e>_pi`, the mean removed twice: the first
 /// pass leaves the rounding of a `2^n`-term mean in `e`, and a residual mean of `1e-6` in `e` sent
 /// GMRES without the rank-one term to `1.3e21` (scout, `failures.txt` (c)).
-fn centred(n: usize, pi: &[f64], observable: impl Fn(&[i8]) -> f64) -> Result<(Vec<f64>, f64), AutocorrError> {
+fn centred(
+    n: usize,
+    pi: &[f64],
+    observable: impl Fn(&[i8]) -> f64,
+) -> Result<(Vec<f64>, f64), AutocorrError> {
     let mut e = vec![0.0f64; 1usize << n];
     for_each_state(n, |x, s| e[x] = observable(s));
     let mean = mean_pi(pi, &e);
@@ -2011,14 +2166,20 @@ fn lanczos_min(alphas: &[f64], betas: &[f64]) -> f64 {
     let mut d = vec![0.0f64; k];
     let mut o = vec![0.0f64; k.saturating_sub(1)];
     for j in 0..k {
-        d[j] = 1.0 / alphas[j] + if j > 0 { betas[j - 1] / alphas[j - 1] } else { 0.0 };
+        d[j] = 1.0 / alphas[j]
+            + if j > 0 {
+                betas[j - 1] / alphas[j - 1]
+            } else {
+                0.0
+            };
         if j + 1 < k {
             o[j] = betas[j].sqrt() / alphas[j];
         }
     }
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
     for j in 0..k {
-        let rad = if j > 0 { o[j - 1].abs() } else { 0.0 } + if j + 1 < k { o[j].abs() } else { 0.0 };
+        let rad =
+            if j > 0 { o[j - 1].abs() } else { 0.0 } + if j + 1 < k { o[j].abs() } else { 0.0 };
         lo = lo.min(d[j] - rad);
         hi = hi.max(d[j] + rad);
     }
@@ -2073,7 +2234,15 @@ type Solved = Result<(f64, f64), AutocorrError>;
 /// `max(||r||^2 / C0, u ||z|| / ||e||) / theta_min` with `theta_min` the smallest Ritz value so far
 /// -- the second term is the rounding floor, below which a computed residual is noise. Accepted
 /// only on a TRUE residual, recomputed with one extra application.
-fn solve_cg(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>, count: &std::cell::Cell<usize>, rtol: f64, max_matvecs: usize) -> Solved {
+fn solve_cg(
+    pi: &[f64],
+    e: &[f64],
+    c0: f64,
+    a_op: &dyn Fn(&[f64]) -> Vec<f64>,
+    count: &std::cell::Cell<usize>,
+    rtol: f64,
+    max_matvecs: usize,
+) -> Solved {
     let enorm = c0.sqrt();
     let mut z = vec![0.0f64; e.len()];
     let mut r = e.to_vec();
@@ -2102,7 +2271,10 @@ fn solve_cg(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>, c
             rr = rr_next;
             inv_norm = inv_norm.max(1.0 / lanczos_min(&alphas, &betas));
             if past_f64(inv_norm) {
-                return Err(AutocorrError::BeyondF64 { inv_norm, matvecs: count.get() });
+                return Err(AutocorrError::BeyondF64 {
+                    inv_norm,
+                    matvecs: count.get(),
+                });
             }
             let tau = dot_pi(pi, e, &z) / c0 - 0.5;
             let floor = f64::EPSILON * norm_pi(pi, &z) / enorm;
@@ -2127,10 +2299,18 @@ fn solve_cg(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>, c
             return Ok((tau, est));
         }
         if count.get() >= max_matvecs {
-            return Err(AutocorrError::NotConverged { tau, err_est: est, matvecs: count.get() });
+            return Err(AutocorrError::NotConverged {
+                tau,
+                err_est: est,
+                matvecs: count.get(),
+            });
         }
         if true_rel <= floor || prev_true.is_some_and(|q| true_rel > 0.5 * q) {
-            return Err(AutocorrError::AtFloor { tau, err_est: est, matvecs: count.get() });
+            return Err(AutocorrError::AtFloor {
+                tau,
+                err_est: est,
+                matvecs: count.get(),
+            });
         }
         prev_true = Some(true_rel);
         r = rt;
@@ -2144,7 +2324,15 @@ fn solve_cg(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>, c
 /// `u ||z||` is what the f64 product `A z` can resolve -- without that floor term the first rule
 /// accepted a residual of `4.1e-11` under a floor of `2.0e-10` and reported `5.3e-11` for a realised
 /// `4.7e-10` (scout, `failures.txt` (g)). Accepted only on a TRUE residual at the end of a cycle.
-fn solve_gmres(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>, count: &std::cell::Cell<usize>, rtol: f64, max_matvecs: usize) -> Solved {
+fn solve_gmres(
+    pi: &[f64],
+    e: &[f64],
+    c0: f64,
+    a_op: &dyn Fn(&[f64]) -> Vec<f64>,
+    count: &std::cell::Cell<usize>,
+    rtol: f64,
+    max_matvecs: usize,
+) -> Solved {
     let enorm = c0.sqrt();
     let restart = GMRES_RESTART;
     let ld = restart + 1;
@@ -2199,16 +2387,23 @@ fn solve_gmres(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>
                 if k % 5 == 0 || breakdown {
                     inv_norm = inv_norm.max(1.0 / sigma_min_upper(&h, ld, k));
                     if past_f64(inv_norm) {
-                        return Err(AutocorrError::BeyondF64 { inv_norm, matvecs: count.get() });
+                        return Err(AutocorrError::BeyondF64 {
+                            inv_norm,
+                            matvecs: count.get(),
+                        });
                     }
                     let y = back_substitute(&h, ld, &gv, k);
                     let tau = (ez + y.iter().zip(&ev).map(|(a, b)| a * b).sum::<f64>()) / c0 - 0.5;
                     let rel = gv[k].abs() / enorm;
                     // ||z + V y|| <= ||z|| + ||y||, V orthonormal.
-                    let floor = f64::EPSILON * (zn0 + y.iter().map(|a| a * a).sum::<f64>().sqrt()) / enorm;
+                    let floor =
+                        f64::EPSILON * (zn0 + y.iter().map(|a| a * a).sum::<f64>().sqrt()) / enorm;
                     // Below a tenth of the floor the recursive residual no longer describes the true
                     // one: end the cycle and look.
-                    if inv_norm * rel.max(floor) <= rtol * (tau + 0.5) || rel <= 0.1 * floor || breakdown {
+                    if inv_norm * rel.max(floor) <= rtol * (tau + 0.5)
+                        || rel <= 0.1 * floor
+                        || breakdown
+                    {
                         break;
                     }
                 }
@@ -2216,7 +2411,10 @@ fn solve_gmres(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>
             if k > 0 {
                 inv_norm = inv_norm.max(1.0 / sigma_min_upper(&h, ld, k));
                 if past_f64(inv_norm) {
-                    return Err(AutocorrError::BeyondF64 { inv_norm, matvecs: count.get() });
+                    return Err(AutocorrError::BeyondF64 {
+                        inv_norm,
+                        matvecs: count.get(),
+                    });
                 }
                 let y = back_substitute(&h, ld, &gv, k);
                 for (i, yi) in y.iter().enumerate() {
@@ -2234,12 +2432,20 @@ fn solve_gmres(pi: &[f64], e: &[f64], c0: f64, a_op: &dyn Fn(&[f64]) -> Vec<f64>
             return Ok((tau, est));
         }
         if count.get() >= max_matvecs {
-            return Err(AutocorrError::NotConverged { tau, err_est: est, matvecs: count.get() });
+            return Err(AutocorrError::NotConverged {
+                tau,
+                err_est: est,
+                matvecs: count.get(),
+            });
         }
         // A cycle that does not halve the TRUE residual, or a true residual at `u ||z|| / ||e||`,
         // is the f64 floor: the tolerance asked for is not reachable for this chain.
         if true_rel <= floor || prev_true.is_some_and(|q| true_rel > 0.5 * q) || k == 0 {
-            return Err(AutocorrError::AtFloor { tau, err_est: est, matvecs: count.get() });
+            return Err(AutocorrError::AtFloor {
+                tau,
+                err_est: est,
+                matvecs: count.get(),
+            });
         }
         prev_true = Some(true_rel);
     }
@@ -2302,12 +2508,26 @@ pub fn tau_int_krylov(
         v.iter().zip(&pv).map(|(x, y)| x - y + s).collect()
     };
     let (route, solved) = if reversible(kernel, g) {
-        (Route::Cg, solve_cg(&pi, &e, c0, &a_op, &count, rtol, max_matvecs))
+        (
+            Route::Cg,
+            solve_cg(&pi, &e, c0, &a_op, &count, rtol, max_matvecs),
+        )
     } else {
-        (Route::Gmres, solve_gmres(&pi, &e, c0, &a_op, &count, rtol, max_matvecs))
+        (
+            Route::Gmres,
+            solve_gmres(&pi, &e, c0, &a_op, &count, rtol, max_matvecs),
+        )
     };
     let (tau, est) = solved?;
-    Ok(Autocorrelation { tau_int: tau, lags: 0, rho: Vec::new(), variance: c0, route, matvecs: count.get(), err_est: Some(est) })
+    Ok(Autocorrelation {
+        tau_int: tau,
+        lags: 0,
+        rho: Vec::new(),
+        variance: c0,
+        route,
+        matvecs: count.get(),
+        err_est: Some(est),
+    })
 }
 
 /// The states of `set`, sorted and distinct, checked to be states of `g`.
@@ -2346,7 +2566,12 @@ fn metastable_states(g: &Graph, set: Metastable<'_>) -> Result<Vec<usize>, Autoc
 /// Restarted GMRES with classical Gram-Schmidt twice, EUCLIDEAN inner product, on `op x = b`, to a
 /// relative TRUE residual `rtol` or `max_iter` applications. Returns `x` and its true relative
 /// residual. The inner solve of [`tau_int_censored`].
-fn gmres_euclid(op: &dyn Fn(&[f64]) -> Vec<f64>, b: &[f64], rtol: f64, max_iter: usize) -> (Vec<f64>, f64) {
+fn gmres_euclid(
+    op: &dyn Fn(&[f64]) -> Vec<f64>,
+    b: &[f64],
+    rtol: f64,
+    max_iter: usize,
+) -> (Vec<f64>, f64) {
     let dot = |u: &[f64], v: &[f64]| -> f64 {
         let mut acc = [0.0f64; 4];
         for (k, (a, c)) in u.iter().zip(v).enumerate() {
@@ -2507,9 +2732,14 @@ impl SweepTable {
         }
         let order: Vec<usize> = match kernel {
             Kernel::SequentialGibbs => (0..g.n).collect(),
-            Kernel::ChromaticGibbs | Kernel::FixedFabric | Kernel::Quantised { .. } | Kernel::SiteSpread { .. } => {
-                g.classes.iter().flat_map(|c| c.iter().map(|&i| i as usize)).collect()
-            }
+            Kernel::ChromaticGibbs
+            | Kernel::FixedFabric
+            | Kernel::Quantised { .. }
+            | Kernel::SiteSpread { .. } => g
+                .classes
+                .iter()
+                .flat_map(|c| c.iter().map(|&i| i as usize))
+                .collect(),
             _ => return None,
         };
         let m = 1usize << g.n;
@@ -2538,7 +2768,11 @@ impl SweepTable {
             let (up, down) = (&self.up[k], &self.down[k]);
             for x in 0..mu.len() {
                 let pooled = cur[x | bit] + cur[x & !bit];
-                next[x] = if x & bit != 0 { up[x] * pooled } else { down[x] * pooled };
+                next[x] = if x & bit != 0 {
+                    up[x] * pooled
+                } else {
+                    down[x] * pooled
+                };
             }
             std::mem::swap(&mut cur, &mut next);
         }
@@ -2547,7 +2781,13 @@ impl SweepTable {
 }
 
 /// `mu P` through the table when there is one, [`apply_distribution`] otherwise.
-fn push_with(table: Option<&SweepTable>, g: &Graph, beta: f64, kernel: Kernel, mu: &[f64]) -> Vec<f64> {
+fn push_with(
+    table: Option<&SweepTable>,
+    g: &Graph,
+    beta: f64,
+    kernel: Kernel,
+    mu: &[f64],
+) -> Vec<f64> {
     match table {
         Some(t) => t.push(mu),
         None => apply_distribution(g, beta, kernel, mu),
@@ -2568,14 +2808,29 @@ struct Censor<'a> {
 }
 
 impl<'a> Censor<'a> {
-    fn new(g: &'a Graph, beta: f64, kernel: Kernel, set: Metastable<'_>, inner_rtol: f64) -> Result<Self, AutocorrError> {
+    fn new(
+        g: &'a Graph,
+        beta: f64,
+        kernel: Kernel,
+        set: Metastable<'_>,
+        inner_rtol: f64,
+    ) -> Result<Self, AutocorrError> {
         let fset = metastable_states(g, set)?;
         let mut in_f = vec![usize::MAX; 1usize << g.n];
         for (k, &f) in fset.iter().enumerate() {
             in_f[f] = k;
         }
         let table = SweepTable::new(g, beta, kernel);
-        Ok(Censor { g, beta, kernel, fset, in_f, inner_rtol, pushes: std::cell::Cell::new(0), table })
+        Ok(Censor {
+            g,
+            beta,
+            kernel,
+            fset,
+            in_f,
+            inner_rtol,
+            pushes: std::cell::Cell::new(0),
+            table,
+        })
     }
 
     fn in_t(&self, x: usize) -> bool {
@@ -2590,16 +2845,27 @@ impl<'a> Censor<'a> {
     /// `v` with `v (I - P_TT) = r|_T`: restarted GMRES on pushes restricted to `T`, to a relative
     /// true residual `inner_rtol`.
     fn solve_t(&self, r: &[f64]) -> Result<Vec<f64>, AutocorrError> {
-        let rhs: Vec<f64> = r.iter().enumerate().map(|(x, &v)| if self.in_t(x) { v } else { 0.0 }).collect();
+        let rhs: Vec<f64> = r
+            .iter()
+            .enumerate()
+            .map(|(x, &v)| if self.in_t(x) { v } else { 0.0 })
+            .collect();
         let op = |u: &[f64]| -> Vec<f64> {
             let up = self.push(u);
-            u.iter().zip(&up).enumerate().map(|(x, (a, b))| if self.in_t(x) { a - b } else { 0.0 }).collect()
+            u.iter()
+                .zip(&up)
+                .enumerate()
+                .map(|(x, (a, b))| if self.in_t(x) { a - b } else { 0.0 })
+                .collect()
         };
         let (v, res) = gmres_euclid(&op, &rhs, self.inner_rtol, 4_000);
         if res <= self.inner_rtol {
             Ok(v)
         } else {
-            Err(AutocorrError::InnerSolve { residual: res, pushes: self.pushes.get() })
+            Err(AutocorrError::InnerSolve {
+                residual: res,
+                pushes: self.pushes.get(),
+            })
         }
     }
 
@@ -2637,7 +2903,10 @@ impl<'a> Censor<'a> {
                 let v = rate[a * nf + c];
                 if v < 0.0 {
                     if -v > 1e-12 * top {
-                        return Err(AutocorrError::InnerSolve { residual: -v / top, pushes: self.pushes.get() });
+                        return Err(AutocorrError::InnerSolve {
+                            residual: -v / top,
+                            pushes: self.pushes.get(),
+                        });
                     }
                     rate[a * nf + c] = 0.0;
                 }
@@ -2696,13 +2965,20 @@ pub fn tau_int_censored(
     let c = Censor::new(g, beta, kernel, set, inner_rtol)?;
     let (m, nf) = (1usize << g.n, c.fset.len());
     let (rate, proj) = c.rows(&[&e])?;
-    let bf: Vec<f64> = c.fset.iter().enumerate().map(|(k, &f)| e[f] + proj[k][0]).collect();
+    let bf: Vec<f64> = c
+        .fset
+        .iter()
+        .enumerate()
+        .map(|(k, &f)| e[f] + proj[k][0])
+        .collect();
     let pe: Vec<f64> = pi.iter().zip(&e).map(|(p, x)| p * x).collect();
     let w = c.solve_t(&pe)?;
     let wp = c.push(&w);
     let we: f64 = (0..m).filter(|&x| c.in_t(x)).map(|x| w[x] * e[x]).sum();
     // F is never empty (`metastable_states` refuses an empty set), so the 0 is never read.
-    let keep = (0..nf).max_by(|&a, &b| pi[c.fset[a]].total_cmp(&pi[c.fset[b]])).unwrap_or(0);
+    let keep = (0..nf)
+        .max_by(|&a, &b| pi[c.fset[a]].total_cmp(&pi[c.fset[b]]))
+        .unwrap_or(0);
     let zf = gth_poisson(&rate, &bf, nf, keep).ok_or(AutocorrError::Reducible)?;
     let mut total = we;
     for (k, &f) in c.fset.iter().enumerate() {
@@ -2886,7 +3162,13 @@ pub fn time_to_mass(
     for k in 1..=max_pushes {
         mu = push_with(table.as_ref(), g, beta, kernel, &mu);
         if holds(mass_of(&mu)) {
-            return Ok(MassTime { steps: k as f64, stationary, route: MassRoute::Pushed, handover: 0.0, pushes: 1 + k });
+            return Ok(MassTime {
+                steps: k as f64,
+                stationary,
+                route: MassRoute::Pushed,
+                handover: 0.0,
+                pushes: 1 + k,
+            });
         }
     }
     // The slow scale: labels on the metastable set, run in real time.
@@ -2895,14 +3177,21 @@ pub fn time_to_mass(
     let ones = vec![1.0f64; m];
     let (rate, proj) = c.rows(&[&ones, &tgt])?;
     let cycle: Vec<f64> = (0..nf).map(|k| 1.0 + proj[k][0]).collect();
-    let obs: Vec<f64> = c.fset.iter().enumerate().map(|(k, &f)| (tgt[f] + proj[k][1]) / cycle[k]).collect();
+    let obs: Vec<f64> = c
+        .fset
+        .iter()
+        .enumerate()
+        .map(|(k, &f)| (tgt[f] + proj[k][1]) / cycle[k])
+        .collect();
     let arrive = c.solve_t(&mu)?;
     let into = c.push(&arrive);
     let a0: Vec<f64> = c.fset.iter().map(|&f| mu[f] + into[f]).collect();
     let slow_mass = |a: &[f64]| a.iter().zip(&obs).map(|(x, o)| x * o).sum::<f64>();
     let handover = (mass_of(&mu) - slow_mass(&a0)).abs();
     let real: Vec<f64> = (0..nf * nf).map(|i| rate[i] / cycle[i / nf]).collect();
-    let lambda = (0..nf).map(|f| (0..nf).map(|g2| real[f * nf + g2]).sum::<f64>()).fold(0.0f64, f64::max);
+    let lambda = (0..nf)
+        .map(|f| (0..nf).map(|g2| real[f * nf + g2]).sum::<f64>())
+        .fold(0.0f64, f64::max);
     if !(lambda > 0.0) {
         return Err(AutocorrError::Reducible);
     }
@@ -2933,7 +3222,11 @@ pub fn time_to_mass(
     }
     let pushes = 1 + max_pushes + c.pushes.get();
     if !found {
-        return Err(AutocorrError::NotConverged { tau: max_pushes as f64 + hi, err_est: f64::INFINITY, matvecs: pushes });
+        return Err(AutocorrError::NotConverged {
+            tau: max_pushes as f64 + hi,
+            err_est: f64::INFINITY,
+            matvecs: pushes,
+        });
     }
     // Bisect (lo, hi]: the mass holds at hi and not at lo.
     for _ in 0..200 {
@@ -2949,7 +3242,13 @@ pub fn time_to_mass(
             a_lo = a_mid;
         }
     }
-    Ok(MassTime { steps: max_pushes as f64 + hi, stationary, route: MassRoute::SlowScale, handover, pushes })
+    Ok(MassTime {
+        steps: max_pushes as f64 + hi,
+        stationary,
+        route: MassRoute::SlowScale,
+        handover,
+        pushes,
+    })
 }
 
 /// The exact tau by the route that can deliver it: [`tau_int_krylov`] first, and
@@ -3015,8 +3314,15 @@ mod tests {
             let mut b = GraphBuilder::new(1);
             b.bias(0, h);
             let g = b.build();
-            let a = tau_int_exact(&g, beta, Kernel::ChromaticGibbs, |s| f64::from(s[0]), 1e-15, 100)
-                .unwrap();
+            let a = tau_int_exact(
+                &g,
+                beta,
+                Kernel::ChromaticGibbs,
+                |s| f64::from(s[0]),
+                1e-15,
+                100,
+            )
+            .unwrap();
             assert_eq!(a.tau_int, 0.5, "h={h} beta={beta}: {:?}", a.rho);
             // Every lag is zero, and the sum stops after QUIET_LAGS of them in a row.
             assert_eq!(a.lags, QUIET_LAGS);
@@ -3054,7 +3360,14 @@ mod tests {
                 (Kernel::RandomScan, 1.0, heat),
                 (Kernel::Synchronous, 1.0, heat),
                 (Kernel::Stale { p: 0.3 }, 1.0, heat),
-                (Kernel::SiteSpread { seed: 3, spread: 0.0 }, 1.0, heat),
+                (
+                    Kernel::SiteSpread {
+                        seed: 3,
+                        spread: 0.0,
+                    },
+                    1.0,
+                    heat,
+                ),
                 (Kernel::TickRandom { p: 0.5 }, 1.0, 0.5 * heat),
                 // SCA reads half the field: at beta 2 its tail is the heat bath's at beta 1.
                 (Kernel::Sca { q: 0.0 }, 2.0, heat),
@@ -3069,9 +3382,15 @@ mod tests {
                 let pushed = apply_distribution(&g, beta, kernel, &[0.0, 1.0])[0];
                 let pulled = apply(&g, beta, kernel, &[1.0, 0.0])[1];
                 for (route, got) in [("apply_distribution", pushed), ("apply", pulled)] {
-                    assert!(got > 0.0, "{kernel:?} at 2 beta h = {x}: {route} gives {got}, a down-flip made impossible");
+                    assert!(
+                        got > 0.0,
+                        "{kernel:?} at 2 beta h = {x}: {route} gives {got}, a down-flip made impossible"
+                    );
                     let rel = (got - want).abs() / want;
-                    assert!(rel < 1e-14, "{kernel:?} at 2 beta h = {x}: {route} {got:e} against {want:e}, rel {rel:e}");
+                    assert!(
+                        rel < 1e-14,
+                        "{kernel:?} at 2 beta h = {x}: {route} {got:e} against {want:e}, rel {rel:e}"
+                    );
                 }
             }
         }
@@ -3098,11 +3417,22 @@ mod tests {
         for &(z, lower) in &exact {
             let (up, down) = normal_tails(z);
             let rel = (down - lower).abs() / lower;
-            assert!(rel < 4e-15, "Phi(-{z}) = {down:e} against {lower:e}, rel {rel:e}");
+            assert!(
+                rel < 4e-15,
+                "Phi(-{z}) = {down:e} against {lower:e}, rel {rel:e}"
+            );
             let (up_neg, down_neg) = normal_tails(-z);
-            assert_eq!(up_neg.to_bits(), down.to_bits(), "Phi(-z) must be the same number from either side at {z}");
+            assert_eq!(
+                up_neg.to_bits(),
+                down.to_bits(),
+                "Phi(-z) must be the same number from either side at {z}"
+            );
             assert_eq!(down_neg.to_bits(), up.to_bits());
-            assert!((up + down - 1.0).abs() <= f64::EPSILON, "tails at {z} sum to {}", up + down);
+            assert!(
+                (up + down - 1.0).abs() <= f64::EPSILON,
+                "tails at {z} sum to {}",
+                up + down
+            );
         }
     }
 
@@ -3116,7 +3446,11 @@ mod tests {
         let beta = 1.1;
         let m = 1usize << g.n;
         let pi = boltzmann(&g, beta).unwrap();
-        for kernel in [Kernel::ChromaticGibbs, Kernel::Informed(Balance::Barker), Kernel::Informed(Balance::Sqrt)] {
+        for kernel in [
+            Kernel::ChromaticGibbs,
+            Kernel::Informed(Balance::Barker),
+            Kernel::Informed(Balance::Sqrt),
+        ] {
             // pi P = pi, computed through the adjoint: (pi P)(y) = sum_x pi(x) P(x -> y). Apply P
             // to every basis vector is 2^n applications; instead check <pi, P f> = <pi, f> for a
             // family of f, which is the same statement tested on that family.
@@ -3126,12 +3460,18 @@ mod tests {
                 let pf = apply(&g, beta, kernel, &f);
                 let lhs: f64 = pi.iter().zip(&pf).map(|(p, v)| p * v).sum();
                 let rhs: f64 = pi.iter().zip(&f).map(|(p, v)| p * v).sum();
-                assert!((lhs - rhs).abs() < 1e-12, "{kernel:?}: <pi, P f> = {lhs} vs <pi, f> = {rhs}");
+                assert!(
+                    (lhs - rhs).abs() < 1e-12,
+                    "{kernel:?}: <pi, P f> = {lhs} vs <pi, f> = {rhs}"
+                );
             }
             let ones = vec![1.0f64; m];
             let p1 = apply(&g, beta, kernel, &ones);
             let worst = p1.iter().map(|v| (v - 1.0).abs()).fold(0.0f64, f64::max);
-            assert!(worst < 1e-12, "{kernel:?}: rows do not sum to one, worst {worst:e}");
+            assert!(
+                worst < 1e-12,
+                "{kernel:?}: rows do not sum to one, worst {worst:e}"
+            );
         }
     }
 
@@ -3192,7 +3532,11 @@ mod tests {
         let free = apply(&g, beta, Kernel::ChromaticGibbs, &v);
         for x in 0..m {
             let pv: f64 = (0..m).map(|y| dense[x][y] * v[y]).sum();
-            assert!((free[x] - pv).abs() < 1e-13, "state {x}: {} vs {pv}", free[x]);
+            assert!(
+                (free[x] - pv).abs() < 1e-13,
+                "state {x}: {} vs {pv}",
+                free[x]
+            );
         }
     }
 
@@ -3217,7 +3561,15 @@ mod tests {
             }
             tau_int(&trace)
         };
-        let hot = tau_int_exact(&g, 0.4, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 100_000).unwrap();
+        let hot = tau_int_exact(
+            &g,
+            0.4,
+            Kernel::ChromaticGibbs,
+            |s| g.energy(s),
+            1e-12,
+            100_000,
+        )
+        .unwrap();
         let est = run(0.4, 200_000);
         assert!(
             (est / hot.tau_int - 1.0).abs() < 0.15,
@@ -3225,8 +3577,20 @@ mod tests {
             hot.tau_int,
             hot.lags
         );
-        let cold = tau_int_exact(&g, 1.6, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 200_000).unwrap();
-        assert!(cold.tau_int > 5.0 * hot.tau_int, "the cold chain must actually be slow: {:?}", cold.tau_int);
+        let cold = tau_int_exact(
+            &g,
+            1.6,
+            Kernel::ChromaticGibbs,
+            |s| g.energy(s),
+            1e-12,
+            200_000,
+        )
+        .unwrap();
+        assert!(
+            cold.tau_int > 5.0 * hot.tau_int,
+            "the cold chain must actually be slow: {:?}",
+            cold.tau_int
+        );
         let len = (300.0 * cold.tau_int) as usize;
         let est_cold = run(1.6, len);
         assert!(
@@ -3258,7 +3622,10 @@ mod tests {
             Kernel::Synchronous,
             Kernel::Pimi { xi: 0.3, eta: 0.7 },
             Kernel::Stale { p: 0.3 },
-            Kernel::SiteSpread { seed: 2, spread: 0.3 },
+            Kernel::SiteSpread {
+                seed: 2,
+                spread: 0.3,
+            },
         ] {
             for _ in 0..4 {
                 let mut mu: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
@@ -3267,9 +3634,20 @@ mod tests {
                     *p /= z;
                 }
                 let v: Vec<f64> = (0..m).map(|_| rng.f64() - 0.5).collect();
-                let lhs: f64 = apply_distribution(&g, beta, kernel, &mu).iter().zip(&v).map(|(a, b)| a * b).sum();
-                let rhs: f64 = mu.iter().zip(apply(&g, beta, kernel, &v)).map(|(a, b)| a * b).sum();
-                assert!((lhs - rhs).abs() < 1e-12, "{kernel:?}: <mu P, v> = {lhs} vs <mu, P v> = {rhs}");
+                let lhs: f64 = apply_distribution(&g, beta, kernel, &mu)
+                    .iter()
+                    .zip(&v)
+                    .map(|(a, b)| a * b)
+                    .sum();
+                let rhs: f64 = mu
+                    .iter()
+                    .zip(apply(&g, beta, kernel, &v))
+                    .map(|(a, b)| a * b)
+                    .sum();
+                assert!(
+                    (lhs - rhs).abs() < 1e-12,
+                    "{kernel:?}: <mu P, v> = {lhs} vs <mu, P v> = {rhs}"
+                );
                 // Mass is conserved.
                 let total: f64 = apply_distribution(&g, beta, kernel, &mu).iter().sum();
                 assert!((total - 1.0).abs() < 1e-12, "{kernel:?}: mass {total}");
@@ -3280,7 +3658,9 @@ mod tests {
             let law = match kernel {
                 Kernel::FixedFabric => None,
                 Kernel::Synchronous => Some(peretto(&g, beta).unwrap()),
-                Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => Some(stationary_solved(&g, beta, kernel).unwrap()),
+                Kernel::Pimi { .. } | Kernel::Stale { .. } | Kernel::SiteSpread { .. } => {
+                    Some(stationary_solved(&g, beta, kernel).unwrap())
+                }
                 _ => Some(pi.clone()),
             };
             if let Some(law) = law {
@@ -3318,7 +3698,10 @@ mod tests {
         assert!(steps < 100_000, "the fabric law must converge");
         let pi = boltzmann(&g, beta).unwrap();
         let gap = total_variation(&fab, &pi);
-        assert!(gap > 1e-6, "Q.8 and a 1,024-entry ROM must be visible: TV {gap:e}");
+        assert!(
+            gap > 1e-6,
+            "Q.8 and a 1,024-entry ROM must be visible: TV {gap:e}"
+        );
         assert!(gap < 0.05, "and small: TV {gap}");
 
         // The emulator, histogrammed over 300,000 sweeps after a burn-in.
@@ -3330,19 +3713,31 @@ mod tests {
         let mut counts = vec![0u32; 1 << n];
         for _ in 0..sweeps {
             f.sweep();
-            let x = f.s.iter().enumerate().fold(0usize, |a, (i, &b)| a | (usize::from(b) << i));
+            let x =
+                f.s.iter()
+                    .enumerate()
+                    .fold(0usize, |a, (i, &b)| a | (usize::from(b) << i));
             counts[x] += 1;
         }
-        let hist: Vec<f64> = counts.iter().map(|&c| f64::from(c) / sweeps as f64).collect();
+        let hist: Vec<f64> = counts
+            .iter()
+            .map(|&c| f64::from(c) / sweeps as f64)
+            .collect();
         let to_fab = total_variation(&hist, &fab);
         // Noise on a 64-cell histogram from an autocorrelated chain: about sqrt(64 * 2 tau / N)
         // in TV, tau a few sweeps here; 0.02 is an order above that.
-        assert!(to_fab < 0.02, "emulator histogram is {to_fab} from the kernel's stationary law");
+        assert!(
+            to_fab < 0.02,
+            "emulator histogram is {to_fab} from the kernel's stationary law"
+        );
         // And the kernel's law is the BETTER description of the emulator than Boltzmann is, when
         // the gap is above the histogram's own noise.
         let to_pi = total_variation(&hist, &pi);
         if gap > 3.0 * to_fab {
-            assert!(to_fab < to_pi, "the emulator should sit nearer its own law ({to_fab}) than Boltzmann ({to_pi})");
+            assert!(
+                to_fab < to_pi,
+                "the emulator should sit nearer its own law ({to_fab}) than Boltzmann ({to_pi})"
+            );
         }
     }
 
@@ -3365,7 +3760,11 @@ mod tests {
         let g = b.build();
         let beta = 1.3;
         let m = 1usize << n;
-        let shipped = Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 16 };
+        let shipped = Kernel::Quantised {
+            frac_bits: 8,
+            lut_bits: 10,
+            prob_bits: 16,
+        };
         let mut mu: Vec<f64> = (0..m).map(|_| rng.f64()).collect();
         let z: f64 = mu.iter().sum();
         for p in &mut mu {
@@ -3373,15 +3772,26 @@ mod tests {
         }
         let a = apply_distribution(&g, beta, Kernel::FixedFabric, &mu);
         let q = apply_distribution(&g, beta, shipped, &mu);
-        assert_eq!(a, q, "Quantised {{8, 10, 16}} must be the fabric's kernel exactly");
+        assert_eq!(
+            a, q,
+            "Quantised {{8, 10, 16}} must be the fabric's kernel exactly"
+        );
 
         let pi = boltzmann(&g, beta).unwrap();
         let gap = |frac: u32| {
-            let k = Kernel::Quantised { frac_bits: frac, lut_bits: 10, prob_bits: 16 };
+            let k = Kernel::Quantised {
+                frac_bits: frac,
+                lut_bits: 10,
+                prob_bits: 16,
+            };
             total_variation(&stationary(&g, beta, k, 1e-13, 100_000).unwrap().0, &pi)
         };
         let gaps: Vec<f64> = [4u32, 5, 6, 7, 8, 10, 12].iter().map(|&f| gap(f)).collect();
-        assert!(gaps[0] > 1e-3, "four bits must be resolvably off Boltzmann: {:e}", gaps[0]);
+        assert!(
+            gaps[0] > 1e-3,
+            "four bits must be resolvably off Boltzmann: {:e}",
+            gaps[0]
+        );
         // MEASURED, and not what the first version of this test assumed. Field bits are NOT a
         // monotone knob per instance: on this ring at beta 1.3 the gaps are 2.6e-3 at 4 bits,
         // 3.8e-2 at 5, 1.1e-2 at 6, then 9.8e-3 from 7 bits on. Four bits happen to round this
@@ -3391,16 +3801,41 @@ mod tests {
         // honest assertion is the envelope: the finest setting must sit at or under the worst of
         // the coarse ones, and the plateau must be flat once the ROM binds.
         let coarse_worst = gaps[..4].iter().copied().fold(0.0f64, f64::max);
-        assert!(gaps[6] <= coarse_worst, "twelve bits must not be worse than the worst coarse setting: {gaps:?}");
-        assert!((gaps[4] - gaps[6]).abs() < 1e-9, "past the ROM's resolution the field grid must not matter: {gaps:?}");
+        assert!(
+            gaps[6] <= coarse_worst,
+            "twelve bits must not be worse than the worst coarse setting: {gaps:?}"
+        );
+        assert!(
+            (gaps[4] - gaps[6]).abs() < 1e-9,
+            "past the ROM's resolution the field grid must not matter: {gaps:?}"
+        );
         // The ROM and the probability width are the other two knobs; each finer setting must
         // strictly beat a much coarser one, at a field precision fine enough not to be the limit.
-        let gap_k = |k: Kernel| total_variation(&stationary(&g, beta, k, 1e-13, 100_000).unwrap().0, &pi);
-        let coarse_rom = gap_k(Kernel::Quantised { frac_bits: 12, lut_bits: 6, prob_bits: 16 });
-        let fine_rom = gap_k(Kernel::Quantised { frac_bits: 12, lut_bits: 12, prob_bits: 16 });
-        assert!(fine_rom < coarse_rom, "a finer ROM must beat a coarser one: {fine_rom:e} vs {coarse_rom:e}");
-        let coarse_p = gap_k(Kernel::Quantised { frac_bits: 12, lut_bits: 12, prob_bits: 4 });
-        assert!(fine_rom < coarse_p, "a 4-bit probability must be worse than 16: {coarse_p:e} vs {fine_rom:e}");
+        let gap_k =
+            |k: Kernel| total_variation(&stationary(&g, beta, k, 1e-13, 100_000).unwrap().0, &pi);
+        let coarse_rom = gap_k(Kernel::Quantised {
+            frac_bits: 12,
+            lut_bits: 6,
+            prob_bits: 16,
+        });
+        let fine_rom = gap_k(Kernel::Quantised {
+            frac_bits: 12,
+            lut_bits: 12,
+            prob_bits: 16,
+        });
+        assert!(
+            fine_rom < coarse_rom,
+            "a finer ROM must beat a coarser one: {fine_rom:e} vs {coarse_rom:e}"
+        );
+        let coarse_p = gap_k(Kernel::Quantised {
+            frac_bits: 12,
+            lut_bits: 12,
+            prob_bits: 4,
+        });
+        assert!(
+            fine_rom < coarse_p,
+            "a 4-bit probability must be worse than 16: {coarse_p:e} vs {fine_rom:e}"
+        );
     }
 
     /// The sequential sweep is a different kernel from the chromatic one -- same stationary law,
@@ -3409,8 +3844,24 @@ mod tests {
     fn the_sequential_and_chromatic_sweeps_are_different_kernels_with_the_same_law() {
         let g = grid_glass(3, 3, 8);
         let beta = 1.2;
-        let a = tau_int_exact(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 100_000).unwrap();
-        let b = tau_int_exact(&g, beta, Kernel::SequentialGibbs, |s| g.energy(s), 1e-12, 100_000).unwrap();
+        let a = tau_int_exact(
+            &g,
+            beta,
+            Kernel::ChromaticGibbs,
+            |s| g.energy(s),
+            1e-12,
+            100_000,
+        )
+        .unwrap();
+        let b = tau_int_exact(
+            &g,
+            beta,
+            Kernel::SequentialGibbs,
+            |s| g.energy(s),
+            1e-12,
+            100_000,
+        )
+        .unwrap();
         assert!(
             (a.tau_int - b.tau_int).abs() > 1e-6,
             "two different orders should not give bit-identical taus: {} vs {}",
@@ -3428,13 +3879,28 @@ mod tests {
                 tv.push(total_variation(&mu, &pi));
             }
             assert!(tv[0] > tv[399], "{kernel:?}: the distance must fall");
-            assert!(tv[399] < 1e-6, "{kernel:?}: TV after 400 sweeps {:e}", tv[399]);
-            assert!(tv.windows(2).all(|w| w[1] <= w[0] + 1e-12), "{kernel:?}: TV must not rise");
+            assert!(
+                tv[399] < 1e-6,
+                "{kernel:?}: TV after 400 sweeps {:e}",
+                tv[399]
+            );
+            assert!(
+                tv.windows(2).all(|w| w[1] <= w[0] + 1e-12),
+                "{kernel:?}: TV must not rise"
+            );
         }
         let mut b1 = GraphBuilder::new(1);
         b1.bias(0, 0.4);
         let g1 = b1.build();
-        let s = tau_int_exact(&g1, 2.0, Kernel::SequentialGibbs, |s| f64::from(s[0]), 1e-15, 10).unwrap();
+        let s = tau_int_exact(
+            &g1,
+            2.0,
+            Kernel::SequentialGibbs,
+            |s| f64::from(s[0]),
+            1e-15,
+            10,
+        )
+        .unwrap();
         assert_eq!(s.tau_int, 0.5);
     }
 
@@ -3455,20 +3921,32 @@ mod tests {
         // last bits (2026-09-28, the complement and the site-by-site class contraction), when the
         // same solve landed at 2.5e-12: the bound was below the solve's own floor, not the kernel's.
         let floor = f64::EPSILON * kemeny_constant(&g, beta, Kernel::ChromaticGibbs).unwrap();
-        assert!(gap < 16.0 * floor, "direct solve vs Boltzmann: {gap}, attainable about {floor:e}");
+        assert!(
+            gap < 16.0 * floor,
+            "direct solve vs Boltzmann: {gap}, attainable about {floor:e}"
+        );
         let solved = stationary_solved(&g, beta, Kernel::FixedFabric).unwrap();
         // A stationary law is one the kernel leaves where it is: the test that needs no reference.
         let pushed = apply_distribution(&g, beta, Kernel::FixedFabric, &solved);
         let drift = total_variation(&pushed, &solved);
-        assert!(drift < 1e-11, "the solved fabric law must be invariant under the fabric kernel: {drift}");
+        assert!(
+            drift < 1e-11,
+            "the solved fabric law must be invariant under the fabric kernel: {drift}"
+        );
         // The iteration halts when a step moves less than `tol`, which leaves it about
         // `tol x relaxation time` short of the fixed point -- 1.2e-10 here -- so it is the LESS
         // accurate of the two and the agreement is held to its floor, not the solve's.
         let (iterated, steps) = stationary(&g, beta, Kernel::FixedFabric, 1e-14, 500_000).unwrap();
-        assert!(steps < 500_000, "the iteration must converge for this test to have a reference");
+        assert!(
+            steps < 500_000,
+            "the iteration must converge for this test to have a reference"
+        );
         let gap = total_variation(&solved, &iterated);
         assert!(gap < 1e-9, "direct solve vs iterated fabric law: {gap}");
-        assert!(total_variation(&solved, &pi) > 1e-7, "the fabric's law must not be Boltzmann");
+        assert!(
+            total_variation(&solved, &pi) > 1e-7,
+            "the fabric's law must not be Boltzmann"
+        );
     }
 
     /// The fundamental-matrix tau is the lag sum where the lag sum converges -- on the chromatic,
@@ -3478,7 +3956,11 @@ mod tests {
     #[test]
     fn the_fundamental_matrix_tau_agrees_with_the_lag_sum_and_needs_no_lags() {
         let g = grid_glass(3, 2, 9);
-        for kernel in [Kernel::ChromaticGibbs, Kernel::SequentialGibbs, Kernel::FixedFabric] {
+        for kernel in [
+            Kernel::ChromaticGibbs,
+            Kernel::SequentialGibbs,
+            Kernel::FixedFabric,
+        ] {
             let summed = tau_int_exact(&g, 1.0, kernel, |s| g.energy(s), 1e-15, 1_000_000).unwrap();
             assert!(summed.lags < 1_000_000);
             let solved = tau_int_fundamental(&g, 1.0, kernel, |s| g.energy(s)).unwrap();
@@ -3496,12 +3978,21 @@ mod tests {
         let mut b = GraphBuilder::new(1);
         b.bias(0, 0.3);
         let one = b.build();
-        let single = tau_int_fundamental(&one, 1.0, Kernel::ChromaticGibbs, |s| f64::from(s[0])).unwrap();
-        assert!((single.tau_int - 0.5).abs() < 1e-12, "single site: {}", single.tau_int);
+        let single =
+            tau_int_fundamental(&one, 1.0, Kernel::ChromaticGibbs, |s| f64::from(s[0])).unwrap();
+        assert!(
+            (single.tau_int - 0.5).abs() < 1e-12,
+            "single site: {}",
+            single.tau_int
+        );
         // Cold: the lag sum stops at its budget and under-reports; the solve does not.
         let g = grid_glass(3, 3, 5);
-        let cut = tau_int_exact(&g, 4.0, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 100).unwrap();
-        assert_eq!(cut.lags, 100, "the cold chain must exhaust the lag budget for this half to test anything");
+        let cut =
+            tau_int_exact(&g, 4.0, Kernel::ChromaticGibbs, |s| g.energy(s), 1e-12, 100).unwrap();
+        assert_eq!(
+            cut.lags, 100,
+            "the cold chain must exhaust the lag budget for this half to test anything"
+        );
         let solved = tau_int_fundamental(&g, 4.0, Kernel::ChromaticGibbs, |s| g.energy(s)).unwrap();
         assert!(
             solved.tau_int.is_finite() && solved.tau_int > cut.tau_int,
@@ -3529,11 +4020,17 @@ mod tests {
         let free = b.build();
         for kernel in [Kernel::ChromaticGibbs, Kernel::SequentialGibbs] {
             let k = kemeny_constant(&free, 1.0, kernel).unwrap();
-            assert!((k - 7.0).abs() < 1e-11, "{kernel:?} on three free sites: {k}");
+            assert!(
+                (k - 7.0).abs() < 1e-11,
+                "{kernel:?} on three free sites: {k}"
+            );
         }
         let g = grid_glass(2, 2, 3);
         let k = kemeny_constant(&g, 1.0, Kernel::ChromaticGibbs).unwrap();
-        assert!(k > 15.0, "a coupled 2x2 grid must be slower than memoryless: K = {k}");
+        assert!(
+            k > 15.0,
+            "a coupled 2x2 grid must be slower than memoryless: K = {k}"
+        );
     }
 
     /// With 40 field bits, a 2^40-entry ROM and a 52-bit comparator the quantised arithmetic is the
@@ -3545,9 +4042,21 @@ mod tests {
         let g = grid_glass(3, 2, 4);
         let beta = 1.5;
         let m = 1usize << g.n;
-        let full = Kernel::Quantised { frac_bits: 40, lut_bits: 40, prob_bits: 52 };
-        let p24 = Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 24 };
-        let p32 = Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 32 };
+        let full = Kernel::Quantised {
+            frac_bits: 40,
+            lut_bits: 40,
+            prob_bits: 52,
+        };
+        let p24 = Kernel::Quantised {
+            frac_bits: 8,
+            lut_bits: 10,
+            prob_bits: 24,
+        };
+        let p32 = Kernel::Quantised {
+            frac_bits: 8,
+            lut_bits: 10,
+            prob_bits: 32,
+        };
         let mut worst_full = 0.0f64;
         let mut worst_wide = 0.0f64;
         for x in 0..m {
@@ -3555,11 +4064,19 @@ mod tests {
             for i in 0..g.n {
                 let exact = p_up(g.field(i, &s), beta);
                 worst_full = worst_full.max((site_pair(&g, beta, full, i, &s).0 - exact).abs());
-                worst_wide = worst_wide.max((site_pair(&g, beta, p32, i, &s).0 - site_pair(&g, beta, p24, i, &s).0).abs());
+                worst_wide = worst_wide.max(
+                    (site_pair(&g, beta, p32, i, &s).0 - site_pair(&g, beta, p24, i, &s).0).abs(),
+                );
             }
         }
-        assert!(worst_full < 1e-9, "full precision vs the exact heat bath: {worst_full:.3e}");
-        assert!(worst_wide < 1e-7, "32 vs 24 comparator bits: {worst_wide:.3e}");
+        assert!(
+            worst_full < 1e-9,
+            "full precision vs the exact heat bath: {worst_full:.3e}"
+        );
+        assert!(
+            worst_wide < 1e-7,
+            "32 vs 24 comparator bits: {worst_wide:.3e}"
+        );
     }
 
     /// Peretto's closed form is invariant under the synchronous kernel to floating point, differs
@@ -3573,9 +4090,15 @@ mod tests {
         let pi = peretto(&g, beta).unwrap();
         let pushed = apply_distribution(&g, beta, Kernel::Synchronous, &pi);
         let drift = total_variation(&pushed, &pi);
-        assert!(drift < 1e-13, "Peretto's law must be invariant under the synchronous sweep: {drift:.3e}");
+        assert!(
+            drift < 1e-13,
+            "Peretto's law must be invariant under the synchronous sweep: {drift:.3e}"
+        );
         let b = boltzmann(&g, beta).unwrap();
-        assert!(total_variation(&pi, &b) > 1e-2, "the synchronous law must not be Boltzmann here");
+        assert!(
+            total_variation(&pi, &b) > 1e-2,
+            "the synchronous law must not be Boltzmann here"
+        );
         let solved = stationary_solved(&g, beta, Kernel::Synchronous).unwrap();
         let gap = total_variation(&solved, &pi);
         assert!(gap < 1e-10, "direct solve vs closed form: {gap:.3e}");
@@ -3584,8 +4107,14 @@ mod tests {
             free.bias(i, 0.15 * (i as f64 + 1.0));
         }
         let free = free.build();
-        let gap = total_variation(&peretto(&free, beta).unwrap(), &boltzmann(&free, beta).unwrap());
-        assert!(gap < 1e-14, "free sites: Peretto must be Boltzmann: {gap:.3e}");
+        let gap = total_variation(
+            &peretto(&free, beta).unwrap(),
+            &boltzmann(&free, beta).unwrap(),
+        );
+        assert!(
+            gap < 1e-14,
+            "free sites: Peretto must be Boltzmann: {gap:.3e}"
+        );
     }
 
     /// One site under the PIMI rule is a two-state chain with `q_+ = Phi((tanh(beta h) + xi) / eta)`
@@ -3607,9 +4136,16 @@ mod tests {
         for xi in [0.0, 0.6] {
             let law = stationary_solved(&g, beta, Kernel::Pimi { xi, eta }).unwrap();
             let want = closed(xi);
-            assert!((law[1] - want).abs() < 1e-12, "xi {xi}: solved {} vs closed form {want}", law[1]);
+            assert!(
+                (law[1] - want).abs() < 1e-12,
+                "xi {xi}: solved {} vs closed form {want}",
+                law[1]
+            );
         }
-        assert!((closed(0.6) - closed(0.0)).abs() > 1e-2, "inertia must move the single-site law");
+        assert!(
+            (closed(0.6) - closed(0.0)).abs() > 1e-2,
+            "inertia must move the single-site law"
+        );
     }
 
     /// The stale-read kernel is bracketed by two closed forms: at `p = 0` it is the sequential
@@ -3630,17 +4166,32 @@ mod tests {
             }
             let fresh = apply_distribution(&g, beta, Kernel::Stale { p: 0.0 }, &mu);
             let seq = apply_distribution(&g, beta, Kernel::SequentialGibbs, &mu);
-            assert!(total_variation(&fresh, &seq) < 1e-13, "p = 0 must be the sequential sweep");
+            assert!(
+                total_variation(&fresh, &seq) < 1e-13,
+                "p = 0 must be the sequential sweep"
+            );
             let stale = apply_distribution(&g, beta, Kernel::Stale { p: 1.0 }, &mu);
             let sync = apply_distribution(&g, beta, Kernel::Synchronous, &mu);
-            assert!(total_variation(&stale, &sync) < 1e-13, "p = 1 must be the synchronous sweep");
+            assert!(
+                total_variation(&stale, &sync) < 1e-13,
+                "p = 1 must be the synchronous sweep"
+            );
         }
         let law = stationary_solved(&g, beta, Kernel::Stale { p: 0.3 }).unwrap();
         let b = boltzmann(&g, beta).unwrap();
         let pe = peretto(&g, beta).unwrap();
-        assert!(total_variation(&law, &b) > 1e-3, "p = 0.3 must not be Boltzmann");
-        assert!(total_variation(&law, &pe) > 1e-3, "p = 0.3 must not be Peretto");
-        assert!(total_variation(&law, &b) < total_variation(&pe, &b), "p = 0.3 must sit nearer Boltzmann than p = 1");
+        assert!(
+            total_variation(&law, &b) > 1e-3,
+            "p = 0.3 must not be Boltzmann"
+        );
+        assert!(
+            total_variation(&law, &pe) > 1e-3,
+            "p = 0.3 must not be Peretto"
+        );
+        assert!(
+            total_variation(&law, &b) < total_variation(&pe, &b),
+            "p = 0.3 must sit nearer Boltzmann than p = 1"
+        );
     }
 
     /// Zero spread is the chromatic sweep operator for operator; free sites at their own
@@ -3657,13 +4208,30 @@ mod tests {
         for q in &mut mu {
             *q /= z;
         }
-        let none = apply_distribution(&g, beta, Kernel::SiteSpread { seed: 7, spread: 0.0 }, &mu);
+        let none = apply_distribution(
+            &g,
+            beta,
+            Kernel::SiteSpread {
+                seed: 7,
+                spread: 0.0,
+            },
+            &mu,
+        );
         let sweep = apply_distribution(&g, beta, Kernel::ChromaticGibbs, &mu);
-        assert!(total_variation(&none, &sweep) < 1e-13, "zero spread must be the chromatic sweep");
-        let spread = Kernel::SiteSpread { seed: 7, spread: 0.3 };
+        assert!(
+            total_variation(&none, &sweep) < 1e-13,
+            "zero spread must be the chromatic sweep"
+        );
+        let spread = Kernel::SiteSpread {
+            seed: 7,
+            spread: 0.3,
+        };
         let law = stationary_solved(&g, beta, spread).unwrap();
         let b = boltzmann(&g, beta).unwrap();
-        assert!(total_variation(&law, &b) > 1e-3, "a spread of 0.3 must move the law off Boltzmann");
+        assert!(
+            total_variation(&law, &b) > 1e-3,
+            "a spread of 0.3 must move the law off Boltzmann"
+        );
         let mut fb = GraphBuilder::new(4);
         for i in 0..4 {
             fb.bias(i, 0.2 * (i as f64 + 1.0));
@@ -3675,10 +4243,17 @@ mod tests {
             let want: f64 = (0..4)
                 .map(|i| {
                     let b = beta * site_factor(7, 0.3, i);
-                    if s[i] > 0 { p_up(free.h[i], b) } else { p_up(-free.h[i], b) }
+                    if s[i] > 0 {
+                        p_up(free.h[i], b)
+                    } else {
+                        p_up(-free.h[i], b)
+                    }
                 })
                 .product();
-            assert!((lx - want).abs() < 1e-12, "state {x}: solved {lx} vs product {want}");
+            assert!(
+                (lx - want).abs() < 1e-12,
+                "state {x}: solved {lx} vs product {want}"
+            );
         }
     }
 
@@ -3688,11 +4263,15 @@ mod tests {
     /// fixed-order chromatic sweep on a coupled grid is invariant but not reversible, so it
     /// produces entropy while sampling the right law.
     #[test]
-    fn entropy_production_is_zero_for_reversible_kernels_and_positive_for_a_correct_fixed_order_sweep() {
+    fn entropy_production_is_zero_for_reversible_kernels_and_positive_for_a_correct_fixed_order_sweep()
+     {
         let g = grid_glass(3, 3, 6);
         let beta = 1.1;
         let sync = entropy_production(&g, beta, Kernel::Synchronous).unwrap();
-        assert!(sync.abs() < 1e-12, "synchronous (reversible w.r.t. Peretto): {sync:.3e}");
+        assert!(
+            sync.abs() < 1e-12,
+            "synchronous (reversible w.r.t. Peretto): {sync:.3e}"
+        );
         let mut b = GraphBuilder::new(2);
         b.bias(0, 0.3);
         b.bias(1, -0.5);
@@ -3700,10 +4279,16 @@ mod tests {
         let seq = entropy_production(&free, beta, Kernel::SequentialGibbs).unwrap();
         assert!(seq.abs() < 1e-12, "two free sites, sequential: {seq:.3e}");
         let chrom = entropy_production(&g, beta, Kernel::ChromaticGibbs).unwrap();
-        assert!(chrom.is_finite() && chrom > 1e-6, "a fixed-order sweep of exact updates must produce entropy: {chrom:.3e}");
+        assert!(
+            chrom.is_finite() && chrom > 1e-6,
+            "a fixed-order sweep of exact updates must produce entropy: {chrom:.3e}"
+        );
         let law = own_law(&g, beta, Kernel::ChromaticGibbs).unwrap();
         let pushed = apply_distribution(&g, beta, Kernel::ChromaticGibbs, &law);
-        assert!(total_variation(&pushed, &law) < 1e-13, "and still be invariant");
+        assert!(
+            total_variation(&pushed, &law) < 1e-13,
+            "and still be invariant"
+        );
     }
 
     /// On a cold grid the smallest stationary masses are far below the solve's absolute accuracy,
@@ -3717,7 +4302,10 @@ mod tests {
         let beta = 3.0;
         let law = stationary_solved(&g, beta, Kernel::ChromaticGibbs).unwrap();
         let smallest = law.iter().copied().fold(f64::INFINITY, f64::min);
-        assert!(smallest > 0.0, "a state with positive inflow has positive mass, not {smallest:e}");
+        assert!(
+            smallest > 0.0,
+            "a state with positive inflow has positive mass, not {smallest:e}"
+        );
         // The solve's absolute accuracy is the machine epsilon times the chain's conditioning,
         // and at beta 3 this grid's relaxation time is in the millions of sweeps, so the law is
         // Boltzmann to 1e-7 or so here, not to the 1e-12 of the warm tests.
@@ -3725,13 +4313,19 @@ mod tests {
         let gap = total_variation(&law, &b);
         assert!(gap < 1e-6, "cold solve vs Boltzmann: {gap:e}");
         let sigma = entropy_production(&g, beta, Kernel::ChromaticGibbs).unwrap();
-        assert!(sigma.is_finite(), "the exact sweep has no forbidden flip at any beta; Sigma = {sigma}");
+        assert!(
+            sigma.is_finite(),
+            "the exact sweep has no forbidden flip at any beta; Sigma = {sigma}"
+        );
         // Stale reads mix heat-bath probabilities, all in (0, 1), so every transition has a
         // reverse and the +inf this reported at beta 2 was the clamp. (The fabric's +inf there is
         // real: its comparator forbids a flip once 2 beta f > 11.8, which a field of 2.95 reaches
         // at beta 2.)
         let sigma = entropy_production(&g, 2.0, Kernel::Stale { p: 0.1 }).unwrap();
-        assert!(sigma.is_finite(), "stale reads at beta 2 have no forbidden flip; Sigma = {sigma}");
+        assert!(
+            sigma.is_finite(),
+            "stale reads at beta 2 have no forbidden flip; Sigma = {sigma}"
+        );
     }
 
     /// The ROM entry is evaluated at the CENTRE of its cell, not its edge: a field that lands
@@ -3743,12 +4337,22 @@ mod tests {
         let mut b = GraphBuilder::new(1);
         b.bias(0, 0.5);
         let g = b.build();
-        let k = Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 52 };
+        let k = Kernel::Quantised {
+            frac_bits: 8,
+            lut_bits: 10,
+            prob_bits: 52,
+        };
         let got = site_pair(&g, 1.0, k, 0, &[-1]).0;
         let centre = p_up(0.5 + 1.0 / 128.0, 1.0);
         let edge = p_up(0.5, 1.0);
-        assert!((got - centre).abs() < 1e-12, "ROM read {got} vs centre {centre}");
-        assert!((got - edge).abs() > 1e-3, "ROM read {got} must not be the cell edge {edge}");
+        assert!(
+            (got - centre).abs() < 1e-12,
+            "ROM read {got} vs centre {centre}"
+        );
+        assert!(
+            (got - edge).abs() > 1e-3,
+            "ROM read {got} must not be the cell edge {edge}"
+        );
     }
 
     /// Build the 10-spin fixtures the tick-random test uses: a 5x2 grid (bipartite) and a 10-ring
@@ -3847,33 +4451,50 @@ mod tests {
             (0usize, 0.0f64, f64::INFINITY, f64::INFINITY);
         for g in [&grid, &ring] {
             for &beta in &betas {
-                let one = stationary_solved(g, beta, Kernel::TickRandom { p: 1.0 }).expect("solvable");
+                let one =
+                    stationary_solved(g, beta, Kernel::TickRandom { p: 1.0 }).expect("solvable");
                 // p = 1 IS the synchronous kernel -- every site, every tick, from the previous
                 // state. Held against that kernel and not against `peretto`, because the closed
                 // form carries its own conditioning: the same comparison against `peretto` needs a
                 // 1e-5 tolerance at beta = 3 on 12 spins, where this one is exact.
                 let sync = stationary_solved(g, beta, Kernel::Synchronous).expect("solvable");
                 let identity = total_variation(&one, &sync);
-                assert_eq!(identity, 0.0, "TickRandom p=1 must BE Synchronous, got TV {identity:e} at beta {beta}");
+                assert_eq!(
+                    identity, 0.0,
+                    "TickRandom p=1 must BE Synchronous, got TV {identity:e} at beta {beta}"
+                );
                 worst_identity = worst_identity.max(identity);
 
                 for (k, &p) in reused.iter().enumerate() {
-                    let law = stationary_solved(g, beta, Kernel::TickRandom { p }).expect("solvable");
+                    let law =
+                        stationary_solved(g, beta, Kernel::TickRandom { p }).expect("solvable");
                     let moved = total_variation(&law, &one);
                     smallest_move = smallest_move.min(moved);
                     if (p - 1.0 / 3.0).abs() < 1e-12 {
                         smallest_at_c3 = smallest_at_c3.min(moved);
                     }
-                    assert!(moved > 0.10, "reuse must move the law: beta {beta}, p index {k}, TV {moved}");
+                    assert!(
+                        moved > 0.10,
+                        "reuse must move the law: beta {beta}, p index {k}, TV {moved}"
+                    );
                     cells += 1;
                 }
             }
         }
         assert_eq!(cells, 40, "2 fixtures x 4 betas x 5 reuse factors");
-        assert_eq!(worst_identity, 0.0, "the p=1 identity is exact in every cell, not merely close");
+        assert_eq!(
+            worst_identity, 0.0,
+            "the p=1 identity is exact in every cell, not merely close"
+        );
         // Measured 0.1359 (ring, beta = 3, c = 1.25) and 0.2354 (ring, beta = 3, c = 3).
-        assert!(smallest_move > 0.13, "smallest movement over all 40 cells: {smallest_move}");
-        assert!(smallest_at_c3 > 0.23, "smallest movement at the paper's own c = 3: {smallest_at_c3}");
+        assert!(
+            smallest_move > 0.13,
+            "smallest movement over all 40 cells: {smallest_move}"
+        );
+        assert!(
+            smallest_at_c3 > 0.23,
+            "smallest movement at the paper's own c = 3: {smallest_at_c3}"
+        );
 
         // THE CONTROL, and the mechanism. Same fields, no couplings, so no adjacent pair can move
         // together -- and the law stops depending on p. Without this the test could not tell "the
@@ -3881,9 +4502,13 @@ mod tests {
         for &beta in &betas {
             let bolt = boltzmann(&uncoupled, beta).expect("small");
             for &p in [1.0f64].iter().chain(reused.iter()) {
-                let law = stationary_solved(&uncoupled, beta, Kernel::TickRandom { p }).expect("solvable");
+                let law = stationary_solved(&uncoupled, beta, Kernel::TickRandom { p })
+                    .expect("solvable");
                 let tv = total_variation(&law, &bolt);
-                assert!(tv < 1e-13, "uncoupled sites cannot feel the mask: beta {beta}, p {p}, TV {tv}");
+                assert!(
+                    tv < 1e-13,
+                    "uncoupled sites cannot feel the mask: beta {beta}, p {p}, TV {tv}"
+                );
             }
         }
 
@@ -3891,7 +4516,9 @@ mod tests {
         // return whatever a singular solve leaves in the buffer.
         match stationary_solved(&ring, 1.0, Kernel::TickRandom { p: 0.0 }) {
             Err(AutocorrError::Reducible) => {}
-            other => panic!("p = 0 is the identity map and must be refused as reducible, got {other:?}"),
+            other => {
+                panic!("p = 0 is the identity map and must be refused as reducible, got {other:?}")
+            }
         }
 
         // The movement is FIRST ORDER in p with no intercept: TV -> 0 as p -> 0, but TV/p tends to
@@ -3907,9 +4534,15 @@ mod tests {
         }
         // Measured 0.1439, 0.1447, 0.1473, 0.1520 -- a finite non-zero limit, not a collapse.
         for (r, p) in ratios.iter().zip([0.01f64, 0.02, 0.05, 0.1]) {
-            assert!((0.13..0.16).contains(r), "TV/p must tend to a finite non-zero limit: p {p}, TV/p {r}");
+            assert!(
+                (0.13..0.16).contains(r),
+                "TV/p must tend to a finite non-zero limit: p {p}, TV/p {r}"
+            );
         }
-        assert!(ratios[3] > ratios[0], "and it approaches that limit from below: {ratios:?}");
+        assert!(
+            ratios[3] > ratios[0],
+            "and it approaches that limit from below: {ratios:?}"
+        );
     }
 
     /// A Sherrington-Kirkpatrick instance: every pair coupled, `J ~ N(0, 1/n)`, fields `N(0, 0.01)`.
@@ -3966,11 +4599,17 @@ mod tests {
         let phi: Vec<f64> = (0..bolt.len())
             .map(|x| {
                 let s = spins(x, g.n);
-                (0..g.n).map(|i| (-beta * g.field(i, &s) * f64::from(s[i])).exp()).sum()
+                (0..g.n)
+                    .map(|i| (-beta * g.field(i, &s) * f64::from(s[i])).exp())
+                    .sum()
             })
             .collect();
         let mean: f64 = bolt.iter().zip(&phi).map(|(p, f)| p * f).sum();
-        0.5 * bolt.iter().zip(&phi).map(|(p, f)| p * (f - mean).abs()).sum::<f64>()
+        0.5 * bolt
+            .iter()
+            .zip(&phi)
+            .map(|(p, f)| p * (f - mean).abs())
+            .sum::<f64>()
     }
 
     /// **SCA's law, three ways, and the kernel keeps it.** [`sca_law`] is held to (1) the marginal
@@ -4018,7 +4657,11 @@ mod tests {
                         marginal[z & mask] += p;
                     }
                     let tv = total_variation(&law, &marginal);
-                    assert!(tv < 1e-13, "SCA law vs the double's marginal: n {}, beta {beta}, q {q}, TV {tv:e}", g.n);
+                    assert!(
+                        tv < 1e-13,
+                        "SCA law vs the double's marginal: n {}, beta {beta}, q {q}, TV {tv:e}",
+                        g.n
+                    );
                     worst_double = worst_double.max(tv);
                     cells += 1;
                 }
@@ -4029,8 +4672,14 @@ mod tests {
         let (grid, ring, _) = tick_fixtures();
         for g in [&grid, &ring] {
             for &beta in &[0.5f64, 1.0, 2.0] {
-                let tv0 = total_variation(&sca_law(g, beta, 0.0).expect("small"), &peretto(g, 0.5 * beta).expect("small"));
-                assert!(tv0 < 1e-14, "q = 0 is the synchronous sweep at beta / 2: beta {beta}, TV {tv0:e}");
+                let tv0 = total_variation(
+                    &sca_law(g, beta, 0.0).expect("small"),
+                    &peretto(g, 0.5 * beta).expect("small"),
+                );
+                assert!(
+                    tv0 < 1e-14,
+                    "q = 0 is the synchronous sweep at beta / 2: beta {beta}, TV {tv0:e}"
+                );
                 let bolt = boltzmann(g, beta).expect("small");
                 for &q in &[0.5f64, 1.5, 3.0] {
                     let law = sca_law(g, beta, q).expect("small");
@@ -4042,21 +4691,32 @@ mod tests {
                         .map(|(x, p)| {
                             let s = spins(x, g.n);
                             p * (0..g.n)
-                                .map(|i| 1.0 + delta * (-beta * g.field(i, &s) * f64::from(s[i])).exp())
+                                .map(|i| {
+                                    1.0 + delta * (-beta * g.field(i, &s) * f64::from(s[i])).exp()
+                                })
                                 .product::<f64>()
                         })
                         .collect();
                     let z: f64 = factored.iter().sum();
                     factored.iter_mut().for_each(|v| *v /= z);
                     let tvf = total_variation(&law, &factored);
-                    assert!(tvf < 1e-13, "factorised form: beta {beta}, q {q}, TV {tvf:e}");
+                    assert!(
+                        tvf < 1e-13,
+                        "factorised form: beta {beta}, q {q}, TV {tvf:e}"
+                    );
 
                     let pushed = apply_distribution(g, beta, Kernel::Sca { q }, &law);
                     let drift = total_variation(&pushed, &law);
-                    assert!(drift < 1e-14, "one SCA tick must leave its law in place: beta {beta}, q {q}, TV {drift:e}");
+                    assert!(
+                        drift < 1e-14,
+                        "one SCA tick must leave its law in place: beta {beta}, q {q}, TV {drift:e}"
+                    );
                     let solved = stationary_solved(g, beta, Kernel::Sca { q }).expect("solvable");
                     let tvs = total_variation(&solved, &law);
-                    assert!(tvs < 1e-10, "the kernel's solved law is the closed form: beta {beta}, q {q}, TV {tvs:e}");
+                    assert!(
+                        tvs < 1e-10,
+                        "the kernel's solved law is the closed form: beta {beta}, q {q}, TV {tvs:e}"
+                    );
                 }
             }
         }
@@ -4067,10 +4727,16 @@ mod tests {
         // this is also what fails if that dispatch hands SCA any law but its own.
         for &q in &[0.5f64, 2.0] {
             let sigma = entropy_production(&ring, 1.0, Kernel::Sca { q }).expect("dense");
-            assert!(sigma < 1e-12, "SCA is reversible w.r.t. its law: q {q}, Sigma {sigma:e}");
+            assert!(
+                sigma < 1e-12,
+                "SCA is reversible w.r.t. its law: q {q}, Sigma {sigma:e}"
+            );
         }
         let masked = entropy_production(&ring, 1.0, Kernel::TickRandom { p: 0.5 }).expect("dense");
-        assert!(masked > 1e-4, "the control: a tick-random mask is not reversible: Sigma {masked:e}");
+        assert!(
+            masked > 1e-4,
+            "the control: a tick-random mask is not reversible: Sigma {masked:e}"
+        );
     }
 
     /// **SCA approaches the Boltzmann law at exactly its first-order rate.** From the factorised
@@ -4089,12 +4755,27 @@ mod tests {
             for &beta in &[1.0f64, 2.0] {
                 let bolt = boltzmann(g, beta).expect("small");
                 let c = sca_first_order_constant(g, beta);
-                assert!(c > 0.1, "a coupled graph has a non-trivial first-order constant: {c}");
-                let ratio = |q: f64| total_variation(&sca_law(g, beta, q).expect("small"), &bolt) * (2.0 * q).exp() / c;
+                assert!(
+                    c > 0.1,
+                    "a coupled graph has a non-trivial first-order constant: {c}"
+                );
+                let ratio = |q: f64| {
+                    total_variation(&sca_law(g, beta, q).expect("small"), &bolt) * (2.0 * q).exp()
+                        / c
+                };
                 let (r4, r6) = (ratio(4.0), ratio(6.0));
-                assert!((r4 - 1.0).abs() < 1e-3, "TV e^2q / c at q = 4: beta {beta}, {r4}");
-                assert!((r6 - 1.0).abs() < 2e-5, "TV e^2q / c at q = 6: beta {beta}, {r6}");
-                assert!((r6 - 1.0).abs() < (r4 - 1.0).abs(), "and it converges: {r4} then {r6}");
+                assert!(
+                    (r4 - 1.0).abs() < 1e-3,
+                    "TV e^2q / c at q = 4: beta {beta}, {r4}"
+                );
+                assert!(
+                    (r6 - 1.0).abs() < 2e-5,
+                    "TV e^2q / c at q = 6: beta {beta}, {r6}"
+                );
+                assert!(
+                    (r6 - 1.0).abs() < (r4 - 1.0).abs(),
+                    "and it converges: {r4} then {r6}"
+                );
                 cells += 1;
             }
         }
@@ -4143,7 +4824,11 @@ mod tests {
             }
             hi
         };
-        let tau_e = |g: &Graph, kernel: Kernel| tau_int_fundamental(g, beta, kernel, |s| g.energy(s)).expect("dense").tau_int;
+        let tau_e = |g: &Graph, kernel: Kernel| {
+            tau_int_fundamental(g, beta, kernel, |s| g.energy(s))
+                .expect("dense")
+                .tau_int
+        };
 
         let mut ratios = Vec::new();
         for g in [&ring, &sk] {
@@ -4157,15 +4842,25 @@ mod tests {
         }
         let (ring_chi, ring) = &ratios[0];
         let (sk_chi, sk) = &ratios[1];
-        assert_eq!((*ring_chi, *sk_chi), (3.0, 10.0), "the ring colours in three, SK in ten");
+        assert_eq!(
+            (*ring_chi, *sk_chi),
+            (3.0, 10.0),
+            "the ring colours in three, SK in ten"
+        );
         // Measured 1.54 and 18.86 (ring); 0.59 and 6.17 (SK).
         assert!(ring[0] > 1.2, "sparse: SCA loses even at TV 1e-1: {ring:?}");
         assert!(sk[0] < 0.8, "dense: SCA wins at TV 1e-1: {sk:?}");
-        assert!(ring[1] > 10.0 && sk[1] > 4.0, "and both lose by 4x or more at TV 1e-2: ring {ring:?}, SK {sk:?}");
+        assert!(
+            ring[1] > 10.0 && sk[1] > 4.0,
+            "and both lose by 4x or more at TV 1e-2: ring {ring:?}, SK {sk:?}"
+        );
         // Each factor of ten in accuracy costs close to ten in ticks, on both.
         for (name, r) in [("ring", ring), ("SK", sk)] {
             let step = r[1] / r[0];
-            assert!((8.0..14.0).contains(&step), "{name}: tenfold accuracy costs {step}x");
+            assert!(
+                (8.0..14.0).contains(&step),
+                "{name}: tenfold accuracy costs {step}x"
+            );
         }
     }
 
@@ -4186,7 +4881,11 @@ mod tests {
         let energy = |s: &[i8]| g.energy(s);
         let fv: Vec<f64> = (0..m).map(|x| g.energy(&spins(x, g.n))).collect();
         let mut cells = 0usize;
-        for kernel in [Kernel::ChromaticGibbs, Kernel::FixedFabric, Kernel::Sca { q: 1.0 }] {
+        for kernel in [
+            Kernel::ChromaticGibbs,
+            Kernel::FixedFabric,
+            Kernel::Sca { q: 1.0 },
+        ] {
             for &(beta, warmup) in &[(0.7f64, 0usize), (1.5, 3)] {
                 let pi = own_law(&g, beta, kernel).expect("small");
                 let mu: f64 = pi.iter().zip(&fv).map(|(p, v)| p * v).sum();
@@ -4195,12 +4894,17 @@ mod tests {
                     q = apply_distribution(&g, beta, kernel, &q);
                 }
                 // One draw.
-                let one = nested_population(&g, beta, kernel, energy, &start, warmup, 1, 1).expect("small");
+                let one = nested_population(&g, beta, kernel, energy, &start, warmup, 1, 1)
+                    .expect("small");
                 let mse1: f64 = q.iter().zip(&fv).map(|(p, v)| p * (v - mu).powi(2)).sum();
                 let sum1 = one.squared_bias + one.nonstationary + one.persistent;
-                assert!((sum1 - mse1).abs() < 1e-10 * mse1.max(1.0), "{kernel:?} beta {beta}: {sum1} vs {mse1}");
+                assert!(
+                    (sum1 - mse1).abs() < 1e-10 * mse1.max(1.0),
+                    "{kernel:?} beta {beta}: {sum1} vs {mse1}"
+                );
                 // Two draws.
-                let two = nested_population(&g, beta, kernel, energy, &start, warmup, 2, 1).expect("small");
+                let two = nested_population(&g, beta, kernel, energy, &start, warmup, 2, 1)
+                    .expect("small");
                 let q2 = apply_distribution(&g, beta, kernel, &q);
                 let pf = apply(&g, beta, kernel, &fv);
                 let e1: f64 = q.iter().zip(&fv).map(|(p, v)| p * v).sum();
@@ -4210,11 +4914,18 @@ mod tests {
                 let c12: f64 = (0..m).map(|x| q[x] * fv[x] * pf[x]).sum();
                 let mse2 = 0.25 * (s1 + s2 + 2.0 * c12) - mu * (e1 + e2) + mu * mu;
                 let sum2 = two.squared_bias + two.nonstationary + two.persistent;
-                assert!((sum2 - mse2).abs() < 1e-10 * mse2.max(1.0), "{kernel:?} beta {beta}: {sum2} vs {mse2}");
+                assert!(
+                    (sum2 - mse2).abs() < 1e-10 * mse2.max(1.0),
+                    "{kernel:?} beta {beta}: {sum2} vs {mse2}"
+                );
                 // The law at the FIRST draw is start P^(warmup + 1) however many draws follow it.
                 let tv = total_variation(&q, &pi);
                 for p in [&one, &two] {
-                    assert!((p.tv_first_draw - tv).abs() < 1e-14, "{kernel:?} beta {beta}: {} vs {tv}", p.tv_first_draw);
+                    assert!(
+                        (p.tv_first_draw - tv).abs() < 1e-14,
+                        "{kernel:?} beta {beta}: {} vs {tv}",
+                        p.tv_first_draw
+                    );
                 }
                 cells += 1;
             }
@@ -4240,8 +4951,22 @@ mod tests {
         let mag = |s: &[i8]| s.iter().map(|&v| f64::from(v)).sum::<f64>();
         for &chains in &[1usize, 4, 16] {
             for &draws in &[1usize, 3] {
-                let p = nested_population(&g, 1.3, Kernel::ChromaticGibbs, mag, &start, 0, draws, chains).expect("small");
-                assert!(p.nonstationary.abs() < 1e-13, "independent draws carry no memory of the start: {}", p.nonstationary);
+                let p = nested_population(
+                    &g,
+                    1.3,
+                    Kernel::ChromaticGibbs,
+                    mag,
+                    &start,
+                    0,
+                    draws,
+                    chains,
+                )
+                .expect("small");
+                assert!(
+                    p.nonstationary.abs() < 1e-13,
+                    "independent draws carry no memory of the start: {}",
+                    p.nonstationary
+                );
                 // Persistent variance over W: sigma^2/(M N) over sigma^2 (N > 1) plus sigma^2/N (M > 1).
                 let (mm, nn) = (chains as f64, draws as f64);
                 let floor = match (chains, draws) {
@@ -4252,10 +4977,16 @@ mod tests {
                 let got = p.rhat * p.rhat - 1.0;
                 if chains == 1 && draws == 1 {
                     // W has neither a within-chain nor a between-chain part: nothing to scale by.
-                    assert!(got.is_infinite() || got.is_nan(), "one draw of one chain has W = 0: {got}");
+                    assert!(
+                        got.is_infinite() || got.is_nan(),
+                        "one draw of one chain has W = 0: {got}"
+                    );
                     continue;
                 }
-                assert!((got - floor).abs() < 1e-12, "M {chains}, N {draws}: R^2 - 1 = {got}, floor {floor}");
+                assert!(
+                    (got - floor).abs() < 1e-12,
+                    "M {chains}, N {draws}: R^2 - 1 = {got}, floor {floor}"
+                );
             }
         }
     }
@@ -4274,10 +5005,22 @@ mod tests {
         let (superchains, per, warmup, draws) = (4000usize, 4usize, 0usize, 2usize);
         let m = 1usize << g.n;
         let uniform = vec![1.0 / m as f64; m];
-        let pop = nested_population(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s), &uniform, warmup, draws, per)
-            .expect("small");
+        let pop = nested_population(
+            &g,
+            beta,
+            Kernel::ChromaticGibbs,
+            |s| g.energy(s),
+            &uniform,
+            warmup,
+            draws,
+            per,
+        )
+        .expect("small");
         let floor = 1.0 / (per as f64 * (draws as f64 + 1.0));
-        assert!(pop.rhat * pop.rhat - 1.0 > 3.0 * floor, "the fixture must be far from its floor: {pop:?}");
+        assert!(
+            pop.rhat * pop.rhat - 1.0 > 3.0 * floor,
+            "the fixture must be far from its floor: {pop:?}"
+        );
 
         let mut chains = Vec::with_capacity(superchains * per);
         let mut ids = Vec::with_capacity(superchains * per);
@@ -4299,7 +5042,10 @@ mod tests {
         let sampled = nested_rhat(&chains, &ids);
         let (got, want) = (sampled * sampled - 1.0, pop.rhat * pop.rhat - 1.0);
         // Measured 0.3196 sampled against 0.3205 in the population, over a floor of 0.0833.
-        assert!((got / want - 1.0).abs() < 0.1, "sampled R^2 - 1 = {got}, population {want}");
+        assert!(
+            (got / want - 1.0).abs() < 0.1,
+            "sampled R^2 - 1 = {got}, population {want}"
+        );
     }
 
     /// **What nested R-hat's pass does and does not certify, on a p-bit array's regime** -- one
@@ -4327,15 +5073,34 @@ mod tests {
         reset[0] = 1.0;
 
         // 1. A shared start: exactly the floor, at every warmup.
-        let curve = nested_population_curve(&glass, 2.0, Kernel::ChromaticGibbs, |s| glass.energy(s), &reset, 30, 1, M)
-            .expect("small");
+        let curve = nested_population_curve(
+            &glass,
+            2.0,
+            Kernel::ChromaticGibbs,
+            |s| glass.energy(s),
+            &reset,
+            30,
+            1,
+            M,
+        )
+        .expect("small");
         for (w, p) in curve.iter().enumerate() {
-            assert!(p.nonstationary.abs() < 1e-12, "w {w}: nothing can differ between identical starts");
-            assert!((p.rhat * p.rhat - 1.0 - 1.0 / M as f64).abs() < 1e-12, "w {w}: R^2 - 1 = {}", p.rhat * p.rhat - 1.0);
+            assert!(
+                p.nonstationary.abs() < 1e-12,
+                "w {w}: nothing can differ between identical starts"
+            );
+            assert!(
+                (p.rhat * p.rhat - 1.0 - 1.0 / M as f64).abs() < 1e-12,
+                "w {w}: R^2 - 1 = {}",
+                p.rhat * p.rhat - 1.0
+            );
         }
         assert!(curve[0].rhat <= threshold, "and so it passes at warmup 0");
         let bias0 = curve[0].squared_bias / curve[0].stationary_variance;
-        assert!(bias0 > 3.0, "while the energy is far from its law: bias^2/Var {bias0} (measured 4.455)");
+        assert!(
+            bias0 > 3.0,
+            "while the energy is far from its law: bias^2/Var {bias0} (measured 4.455)"
+        );
 
         // 2. A shared bias: the ferromagnet's energy passes before its bias is within tolerance.
         let mut b = GraphBuilder::new(10);
@@ -4351,24 +5116,66 @@ mod tests {
             }
         }
         let ferro = b.build();
-        let curve = nested_population_curve(&ferro, 2.0, Kernel::ChromaticGibbs, |s| ferro.energy(s), &uniform, 150, 1, M)
-            .expect("small");
-        let pass = curve.iter().position(|p| p.rhat <= threshold).expect("it passes");
-        let honest = curve.iter().position(|p| p.squared_bias / p.stationary_variance <= 0.01).expect("it gets there");
+        let curve = nested_population_curve(
+            &ferro,
+            2.0,
+            Kernel::ChromaticGibbs,
+            |s| ferro.energy(s),
+            &uniform,
+            150,
+            1,
+            M,
+        )
+        .expect("small");
+        let pass = curve
+            .iter()
+            .position(|p| p.rhat <= threshold)
+            .expect("it passes");
+        let honest = curve
+            .iter()
+            .position(|p| p.squared_bias / p.stationary_variance <= 0.01)
+            .expect("it gets there");
         let at_pass = curve[pass].squared_bias / curve[pass].stationary_variance;
         // Measured: pass at 101 with bias^2/Var 3.04e-2; within tolerance from 117.
         assert!((95..=110).contains(&pass), "pass at {pass}");
-        assert!(at_pass > 0.02, "the bias at the pass is several tau: {at_pass}");
-        assert!(honest > pass + 10, "the tolerance is met well after the pass: {honest} vs {pass}");
+        assert!(
+            at_pass > 0.02,
+            "the bias at the pass is several tau: {at_pass}"
+        );
+        assert!(
+            honest > pass + 10,
+            "the tolerance is met well after the pass: {honest} vs {pass}"
+        );
 
         // 3. The wrong law, reached: synchronous passes, and the energy is off Boltzmann by a lot.
-        let curve = nested_population_curve(&glass, 1.0, Kernel::Synchronous, |s| glass.energy(s), &uniform, 60, 1, M)
-            .expect("small");
-        let pass = curve.iter().position(|p| p.rhat <= threshold).expect("it passes");
-        assert!((18..=28).contains(&pass), "synchronous passes at {pass} (measured 23)");
-        assert!(curve[pass].squared_bias / curve[pass].stationary_variance < 0.01, "against its OWN law it is converged");
+        let curve = nested_population_curve(
+            &glass,
+            1.0,
+            Kernel::Synchronous,
+            |s| glass.energy(s),
+            &uniform,
+            60,
+            1,
+            M,
+        )
+        .expect("small");
+        let pass = curve
+            .iter()
+            .position(|p| p.rhat <= threshold)
+            .expect("it passes");
+        assert!(
+            (18..=28).contains(&pass),
+            "synchronous passes at {pass} (measured 23)"
+        );
+        assert!(
+            curve[pass].squared_bias / curve[pass].stationary_variance < 0.01,
+            "against its OWN law it is converged"
+        );
         let off = curve[60].boltzmann_bias.powi(2) / curve[60].stationary_variance;
-        assert!(off > 1.2, "against Boltzmann the energy is > 1 sd off: bias^2/Var {off} (measured 1.411)");
+        assert!(
+            off > 1.2,
+            "against Boltzmann the energy is > 1 sd off: bias^2/Var {off} (measured 1.411)"
+        );
     }
 
     /// **A fixed visiting order costs about half the site updates of a random one.** First the
@@ -4396,13 +5203,27 @@ mod tests {
             raw.iter().map(|v| v / z).collect()
         };
         let v: Vec<f64> = (0..m).map(|_| rng.f64() - 0.5).collect();
-        let left: f64 = apply_distribution(&grid, beta, Kernel::RandomScan, &mu).iter().zip(&v).map(|(a, b)| a * b).sum();
-        let right: f64 = mu.iter().zip(&apply(&grid, beta, Kernel::RandomScan, &v)).map(|(a, b)| a * b).sum();
+        let left: f64 = apply_distribution(&grid, beta, Kernel::RandomScan, &mu)
+            .iter()
+            .zip(&v)
+            .map(|(a, b)| a * b)
+            .sum();
+        let right: f64 = mu
+            .iter()
+            .zip(&apply(&grid, beta, Kernel::RandomScan, &v))
+            .map(|(a, b)| a * b)
+            .sum();
         assert!((left - right).abs() < 1e-14, "adjoint: {left} vs {right}");
         let solved = stationary_solved(&grid, beta, Kernel::RandomScan).expect("solvable");
         assert!(total_variation(&solved, &boltzmann(&grid, beta).expect("small")) < 1e-12);
-        assert!(entropy_production(&grid, beta, Kernel::RandomScan).expect("dense") < 1e-12, "random scan is reversible");
-        assert!(entropy_production(&grid, beta, Kernel::SequentialGibbs).expect("dense") > 1e-3, "a fixed order is not");
+        assert!(
+            entropy_production(&grid, beta, Kernel::RandomScan).expect("dense") < 1e-12,
+            "random scan is reversible"
+        );
+        assert!(
+            entropy_production(&grid, beta, Kernel::SequentialGibbs).expect("dense") > 1e-3,
+            "a fixed order is not"
+        );
 
         let n = uncoupled.n as f64;
         let mag = |s: &[i8]| s.iter().map(|&x| f64::from(x)).sum::<f64>();
@@ -4410,10 +5231,19 @@ mod tests {
             let t = tau_int_fundamental(g, beta, k, mag).expect("dense").tau_int;
             if sweeps_are_n { t * g.n as f64 } else { t }
         };
-        let ratio = per_update(&uncoupled, Kernel::RandomScan, false) / per_update(&uncoupled, Kernel::SequentialGibbs, true);
-        assert!((ratio - (2.0 - 1.0 / n)).abs() < 1e-9, "uncoupled: ratio {ratio}, closed form {}", 2.0 - 1.0 / n);
-        let sweep_ep = entropy_production(&uncoupled, beta, Kernel::SequentialGibbs).expect("dense");
-        assert!(sweep_ep < 1e-12, "uncoupled, a sweep is a fresh draw and reversible, yet the ratio is 2 - 1/n: {sweep_ep:.3e}");
+        let ratio = per_update(&uncoupled, Kernel::RandomScan, false)
+            / per_update(&uncoupled, Kernel::SequentialGibbs, true);
+        assert!(
+            (ratio - (2.0 - 1.0 / n)).abs() < 1e-9,
+            "uncoupled: ratio {ratio}, closed form {}",
+            2.0 - 1.0 / n
+        );
+        let sweep_ep =
+            entropy_production(&uncoupled, beta, Kernel::SequentialGibbs).expect("dense");
+        assert!(
+            sweep_ep < 1e-12,
+            "uncoupled, a sweep is a fresh draw and reversible, yet the ratio is 2 - 1/n: {sweep_ep:.3e}"
+        );
 
         // Coupled, the ferromagnet: every site pulls on its neighbours and the factor survives.
         let mut b = GraphBuilder::new(10);
@@ -4429,14 +5259,26 @@ mod tests {
             }
         }
         let ferro = b.build();
-        let coupled = per_update(&ferro, Kernel::RandomScan, false) / per_update(&ferro, Kernel::SequentialGibbs, true);
+        let coupled = per_update(&ferro, Kernel::RandomScan, false)
+            / per_update(&ferro, Kernel::SequentialGibbs, true);
         // Measured 1.888 at beta = 1.
-        assert!((1.8..2.0).contains(&coupled), "coupled ferromagnet, magnetisation: ratio {coupled}");
+        assert!(
+            (1.8..2.0).contains(&coupled),
+            "coupled ferromagnet, magnetisation: ratio {coupled}"
+        );
         // Colder it keeps falling, which "at every temperature" (first measured over beta 0.2 to 1.5)
         // did not say: 1.824 at beta = 3.
-        let cold = |k: Kernel| tau_int_fundamental(&ferro, 3.0, k, mag).expect("dense").tau_int;
-        let cold_ratio = cold(Kernel::RandomScan) / (cold(Kernel::SequentialGibbs) * ferro.n as f64);
-        assert!((1.80..1.85).contains(&cold_ratio) && cold_ratio < coupled, "ferromagnet at beta 3: ratio {cold_ratio}");
+        let cold = |k: Kernel| {
+            tau_int_fundamental(&ferro, 3.0, k, mag)
+                .expect("dense")
+                .tau_int
+        };
+        let cold_ratio =
+            cold(Kernel::RandomScan) / (cold(Kernel::SequentialGibbs) * ferro.n as f64);
+        assert!(
+            (1.80..1.85).contains(&cold_ratio) && cold_ratio < coupled,
+            "ferromagnet at beta 3: ratio {cold_ratio}"
+        );
     }
 
     /// THE LAG SUM MUST NOT STOP AT A ZERO CROSSING. Two spins coupled at `beta J = 1`, zero field,
@@ -4452,10 +5294,26 @@ mod tests {
         let g = b.build();
         // 0.5 + t^2 / (1 - t^2) at t = tanh(1), mpmath at 40 digits.
         let want = 1.8810978455418157;
-        let a = tau_int_exact(&g, 1.0, Kernel::Synchronous, |s| f64::from(s[0]), 1e-12, 10_000).unwrap();
+        let a = tau_int_exact(
+            &g,
+            1.0,
+            Kernel::Synchronous,
+            |s| f64::from(s[0]),
+            1e-12,
+            10_000,
+        )
+        .unwrap();
         assert!(a.rho[0].abs() < 1e-15, "rho(1) is zero: {}", a.rho[0]);
-        assert!((a.rho[1] - 1.0f64.tanh().powi(2)).abs() < 1e-14, "rho(2) = t^2: {}", a.rho[1]);
-        assert!((a.tau_int - want).abs() < 1e-12, "tau {} against the closed form {want}", a.tau_int);
+        assert!(
+            (a.rho[1] - 1.0f64.tanh().powi(2)).abs() < 1e-14,
+            "rho(2) = t^2: {}",
+            a.rho[1]
+        );
+        assert!(
+            (a.tau_int - want).abs() < 1e-12,
+            "tau {} against the closed form {want}",
+            a.tau_int
+        );
         assert!(a.lags > QUIET_LAGS && a.lags < 10_000, "lags {}", a.lags);
     }
 
@@ -4488,15 +5346,26 @@ mod tests {
         let s1 = |s: &[i8]| f64::from(s[1]);
         for &(x, want) in &exact {
             let g = cold_pair(x);
-            for set in [Metastable::LocalMinima, Metastable::LocalMinimaAndNeighbours] {
+            for set in [
+                Metastable::LocalMinima,
+                Metastable::LocalMinimaAndNeighbours,
+            ] {
                 let a = tau_int_censored(&g, 1.0, Kernel::SequentialGibbs, s1, set, 1e-13).unwrap();
                 assert_eq!(a.route, Route::Censored);
                 let rel = (a.tau_int - want).abs() / want;
-                assert!(rel < 1e-13, "2 beta J = {x}, {set:?}: {:e} against {want:e}, rel {rel:e}", a.tau_int);
+                assert!(
+                    rel < 1e-13,
+                    "2 beta J = {x}, {set:?}: {:e} against {want:e}, rel {rel:e}",
+                    a.tau_int
+                );
             }
             let krylov = tau_int_krylov(&g, 1.0, Kernel::SequentialGibbs, s1, 1e-8, 1_000);
             let solved = tau_int_solved(&g, 1.0, Kernel::SequentialGibbs, s1, 1e-8, 1_000).unwrap();
-            assert!((solved.tau_int - want).abs() <= 1e-8 * want, "2 beta J = {x}: tau_int_solved {:e}", solved.tau_int);
+            assert!(
+                (solved.tau_int - want).abs() <= 1e-8 * want,
+                "2 beta J = {x}: tau_int_solved {:e}",
+                solved.tau_int
+            );
             if x >= 40.0 {
                 assert!(
                     matches!(krylov, Err(AutocorrError::BeyondF64 { inv_norm, .. }) if inv_norm * f64::EPSILON > 1.0),
@@ -4506,12 +5375,20 @@ mod tests {
             }
             if x == 16.0 {
                 let k = krylov.expect("tau 2.2e6 is inside what f64 can certify at 1e-8");
-                assert!((k.tau_int - want).abs() <= 1e-8 * want, "Krylov at 16: {:e}", k.tau_int);
+                assert!(
+                    (k.tau_int - want).abs() <= 1e-8 * want,
+                    "Krylov at 16: {:e}",
+                    k.tau_int
+                );
                 // A tolerance below what f64 can certify here (u ||A^-1|| is about 5e-10) is met or
                 // refused, never claimed: the estimate's `u ||z||` term is what stops a residual
                 // that is only rounding from reading as convergence.
                 match tau_int_krylov(&g, 1.0, Kernel::SequentialGibbs, s1, 1e-12, 1_000) {
-                    Ok(k) => assert!((k.tau_int - want).abs() <= 2e-12 * want, "claimed 1e-12, realised {:e}", (k.tau_int - want).abs() / want),
+                    Ok(k) => assert!(
+                        (k.tau_int - want).abs() <= 2e-12 * want,
+                        "claimed 1e-12, realised {:e}",
+                        (k.tau_int - want).abs() / want
+                    ),
                     Err(AutocorrError::AtFloor { .. }) => {}
                     other => panic!("2 beta J = 16 at rtol 1e-12: {other:?}"),
                 }
@@ -4577,9 +5454,16 @@ mod tests {
             Kernel::Stale { p: 0.1 },
             Kernel::TickRandom { p: 0.5 },
             Kernel::Sca { q: 1.0 },
-            Kernel::SiteSpread { seed: 3, spread: 0.2 },
+            Kernel::SiteSpread {
+                seed: 3,
+                spread: 0.2,
+            },
             Kernel::FixedFabric,
-            Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 20 },
+            Kernel::Quantised {
+                frac_bits: 8,
+                lut_bits: 10,
+                prob_bits: 20,
+            },
             Kernel::Informed(Balance::Barker),
             Kernel::Informed(Balance::Sqrt),
             Kernel::Informed(Balance::Metropolis),
@@ -4589,7 +5473,11 @@ mod tests {
                 let dense = tau_int_fundamental(&g, beta, kernel, |s| g.energy(s)).unwrap();
                 let k = tau_int_krylov(&g, beta, kernel, |s| g.energy(s), rtol, 5_000)
                     .unwrap_or_else(|e| panic!("{kernel:?} at beta {beta}: {e}"));
-                let want = if reversible(kernel, &g) { Route::Cg } else { Route::Gmres };
+                let want = if reversible(kernel, &g) {
+                    Route::Cg
+                } else {
+                    Route::Gmres
+                };
                 assert_eq!(k.route, want, "{kernel:?}");
                 let kemeny = kemeny_constant(&g, beta, kernel).unwrap();
                 let tol = k.err_est.unwrap() + 16.0 * f64::EPSILON * kemeny * (dense.tau_int + 0.5);
@@ -4600,7 +5488,11 @@ mod tests {
                     k.tau_int,
                     dense.tau_int
                 );
-                assert!(k.matvecs < 200, "{kernel:?} at beta {beta}: {} applications", k.matvecs);
+                assert!(
+                    k.matvecs < 200,
+                    "{kernel:?} at beta {beta}: {} applications",
+                    k.matvecs
+                );
             }
         }
 
@@ -4653,17 +5545,45 @@ mod tests {
         let g = grid_glass(7, 2, 11);
         let beta = 0.5;
         assert!(tau_int_fundamental(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s)).is_err());
-        for kernel in [Kernel::ChromaticGibbs, Kernel::SequentialGibbs, Kernel::RandomScan, Kernel::Informed(Balance::Barker)] {
+        for kernel in [
+            Kernel::ChromaticGibbs,
+            Kernel::SequentialGibbs,
+            Kernel::RandomScan,
+            Kernel::Informed(Balance::Barker),
+        ] {
             let k = tau_int_krylov(&g, beta, kernel, |s| g.energy(s), 1e-12, 2_000).unwrap();
             let lag = tau_int_exact(&g, beta, kernel, |s| g.energy(s), 1e-15, 100_000).unwrap();
-            assert!(lag.lags < 100_000, "{kernel:?}: the lag sum must converge to be a reference");
+            assert!(
+                lag.lags < 100_000,
+                "{kernel:?}: the lag sum must converge to be a reference"
+            );
             let rel = (k.tau_int - lag.tau_int).abs() / lag.tau_int;
-            assert!(rel < 1e-11, "{kernel:?}: Krylov {} lag sum {} ({} lags), rel {rel:e}", k.tau_int, lag.tau_int, lag.lags);
+            assert!(
+                rel < 1e-11,
+                "{kernel:?}: Krylov {} lag sum {} ({} lags), rel {rel:e}",
+                k.tau_int,
+                lag.tau_int,
+                lag.lags
+            );
         }
-        for kernel in [Kernel::FixedFabric, Kernel::Quantised { frac_bits: 8, lut_bits: 10, prob_bits: 20 }, Kernel::SiteSpread { seed: 1, spread: 0.1 }] {
+        for kernel in [
+            Kernel::FixedFabric,
+            Kernel::Quantised {
+                frac_bits: 8,
+                lut_bits: 10,
+                prob_bits: 20,
+            },
+            Kernel::SiteSpread {
+                seed: 1,
+                spread: 0.1,
+            },
+        ] {
             assert_eq!(
                 tau_int_krylov(&g, beta, kernel, |s| g.energy(s), 1e-10, 100),
-                Err(AutocorrError::TooManyForDense { n: 14, max: MAX_DENSE_SPINS }),
+                Err(AutocorrError::TooManyForDense {
+                    n: 14,
+                    max: MAX_DENSE_SPINS
+                }),
                 "{kernel:?}"
             );
         }
@@ -4685,9 +5605,14 @@ mod tests {
         let g = grid_glass(3, 3, 5);
         for kernel in [Kernel::FixedFabric, Kernel::TickRandom { p: 0.5 }] {
             let own = stationary_solved(&g, 1.0, kernel).unwrap();
-            assert!(check_law(&g, 1.0, kernel, own).is_ok(), "{kernel:?}'s own law");
+            assert!(
+                check_law(&g, 1.0, kernel, own).is_ok(),
+                "{kernel:?}'s own law"
+            );
             match check_law(&g, 1.0, kernel, boltzmann(&g, 1.0).unwrap()) {
-                Err(AutocorrError::LawNotInvariant { residual }) => assert!(residual > 1e-6, "{kernel:?}: {residual:e}"),
+                Err(AutocorrError::LawNotInvariant { residual }) => {
+                    assert!(residual > 1e-6, "{kernel:?}: {residual:e}");
+                }
                 other => panic!("{kernel:?} handed Boltzmann: {other:?}"),
             }
         }
@@ -4701,9 +5626,15 @@ mod tests {
         let g = grid_glass(3, 3, 5);
         for kernel in [Kernel::ChromaticGibbs, Kernel::RandomScan] {
             let floor = tau_int_krylov(&g, 2.0, kernel, |s| g.energy(s), 1e-14, 5_000);
-            assert!(matches!(floor, Err(AutocorrError::AtFloor { .. })), "{kernel:?} at rtol 1e-14: {floor:?}");
+            assert!(
+                matches!(floor, Err(AutocorrError::AtFloor { .. })),
+                "{kernel:?} at rtol 1e-14: {floor:?}"
+            );
             let short = tau_int_krylov(&g, 2.0, kernel, |s| g.energy(s), 1e-8, 4);
-            assert!(matches!(short, Err(AutocorrError::NotConverged { .. })), "{kernel:?} with 4 applications: {short:?}");
+            assert!(
+                matches!(short, Err(AutocorrError::NotConverged { .. })),
+                "{kernel:?} with 4 applications: {short:?}"
+            );
         }
     }
     /// THE SLOW-SCALE MASS TIME IS THE PUSHED ONE WHERE BOTH RUN, and closes on it as the barrier
@@ -4726,23 +5657,79 @@ mod tests {
         let mut last = f64::INFINITY;
         for (j, tol) in [(5.0, 1e-3), (6.0, 1e-4), (7.0, 1e-5)] {
             let g = pair(j);
-            let pushed = time_to_mass(&g, 1.0, Kernel::SequentialGibbs, &start, |x| x == 3, 0.01, 10_000_000, Metastable::LocalMinima).unwrap();
+            let pushed = time_to_mass(
+                &g,
+                1.0,
+                Kernel::SequentialGibbs,
+                &start,
+                |x| x == 3,
+                0.01,
+                10_000_000,
+                Metastable::LocalMinima,
+            )
+            .unwrap();
             assert_eq!(pushed.route, MassRoute::Pushed);
-            for set in [Metastable::LocalMinima, Metastable::LocalMinimaAndNeighbours] {
-                let slow = time_to_mass(&g, 1.0, Kernel::SequentialGibbs, &start, |x| x == 3, 0.01, 50, set).unwrap();
+            for set in [
+                Metastable::LocalMinima,
+                Metastable::LocalMinimaAndNeighbours,
+            ] {
+                let slow = time_to_mass(
+                    &g,
+                    1.0,
+                    Kernel::SequentialGibbs,
+                    &start,
+                    |x| x == 3,
+                    0.01,
+                    50,
+                    set,
+                )
+                .unwrap();
                 assert_eq!(slow.route, MassRoute::SlowScale);
                 let rel = (slow.steps - pushed.steps).abs() / pushed.steps;
-                assert!(rel < tol, "J {j}, {set:?}: slow {} against pushed {}, rel {rel:e}", slow.steps, pushed.steps);
+                assert!(
+                    rel < tol,
+                    "J {j}, {set:?}: slow {} against pushed {}, rel {rel:e}",
+                    slow.steps,
+                    pushed.steps
+                );
                 if set == Metastable::LocalMinima {
-                    assert!(rel < last, "J {j}: the reduction must close on the pushed time as the barrier grows");
+                    assert!(
+                        rel < last,
+                        "J {j}: the reduction must close on the pushed time as the barrier grows"
+                    );
                     last = rel;
                 }
             }
         }
         let g = pair(20.0);
-        let a = time_to_mass(&g, 1.0, Kernel::SequentialGibbs, &start, |x| x == 3, 0.01, 50, Metastable::LocalMinima).unwrap();
-        let b = time_to_mass(&g, 1.0, Kernel::SequentialGibbs, &start, |x| x == 3, 0.01, 50, Metastable::LocalMinimaAndNeighbours).unwrap();
-        assert!(a.steps > 1e17 && (a.steps - b.steps).abs() < 1e-9 * a.steps, "J 20: {} and {}", a.steps, b.steps);
+        let a = time_to_mass(
+            &g,
+            1.0,
+            Kernel::SequentialGibbs,
+            &start,
+            |x| x == 3,
+            0.01,
+            50,
+            Metastable::LocalMinima,
+        )
+        .unwrap();
+        let b = time_to_mass(
+            &g,
+            1.0,
+            Kernel::SequentialGibbs,
+            &start,
+            |x| x == 3,
+            0.01,
+            50,
+            Metastable::LocalMinimaAndNeighbours,
+        )
+        .unwrap();
+        assert!(
+            a.steps > 1e17 && (a.steps - b.steps).abs() < 1e-9 * a.steps,
+            "J 20: {} and {}",
+            a.steps,
+            b.steps
+        );
     }
     /// The tabled push the censored routes use is `apply_distribution` to the bit, for every sweep
     /// kernel it tables, and there is no table for a kernel that is not a sweep.
@@ -4755,13 +5742,24 @@ mod tests {
             Kernel::SequentialGibbs,
             Kernel::ChromaticGibbs,
             Kernel::FixedFabric,
-            Kernel::SiteSpread { seed: 3, spread: 0.2 },
+            Kernel::SiteSpread {
+                seed: 3,
+                spread: 0.2,
+            },
         ] {
             let t = SweepTable::new(&g, 1.3, kernel).expect("a sweep kernel is tabled");
             let (a, b) = (t.push(&mu), apply_distribution(&g, 1.3, kernel, &mu));
-            assert!(a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()), "{kernel:?}");
+            assert!(
+                a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()),
+                "{kernel:?}"
+            );
         }
-        for kernel in [Kernel::RandomScan, Kernel::Synchronous, Kernel::Informed(Balance::Barker), Kernel::Stale { p: 0.1 }] {
+        for kernel in [
+            Kernel::RandomScan,
+            Kernel::Synchronous,
+            Kernel::Informed(Balance::Barker),
+            Kernel::Stale { p: 0.1 },
+        ] {
             assert!(SweepTable::new(&g, 1.3, kernel).is_none(), "{kernel:?}");
         }
     }

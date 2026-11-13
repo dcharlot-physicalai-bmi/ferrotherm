@@ -104,7 +104,8 @@ pub fn conditional_log_z(g: &Graph, beta: f64, fixed: &[Option<i8>]) -> Result<f
             union(&mut parent, k, apex);
         }
     }
-    let mut members: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
+    let mut members: std::collections::BTreeMap<usize, Vec<usize>> =
+        std::collections::BTreeMap::new();
     for v in 0..total {
         let r = find(&mut parent, v);
         members.entry(r).or_default().push(v);
@@ -140,7 +141,11 @@ pub fn conditional_log_z(g: &Graph, beta: f64, fixed: &[Option<i8>]) -> Result<f
         }
         let sub = b.build();
         let lz = pfaffian::log_partition(&sub, beta)?;
-        log_z += if has_apex { lz - std::f64::consts::LN_2 } else { lz };
+        log_z += if has_apex {
+            lz - std::f64::consts::LN_2
+        } else {
+            lz
+        };
     }
     Ok(log_z)
 }
@@ -201,7 +206,11 @@ fn chain(g: &Graph, beta: f64, mut choose: impl FnMut(usize, f64) -> i8) -> Resu
         log_prob += chosen - lse;
         parent = chosen;
     }
-    Ok(Draw { s: fixed.iter().map(|x| x.expect("every spin fixed")).collect(), log_prob, residual })
+    Ok(Draw {
+        s: fixed.iter().map(|x| x.expect("every spin fixed")).collect(),
+        log_prob,
+        residual,
+    })
 }
 
 /// An exact independent draw.
@@ -234,10 +243,18 @@ mod tests {
             for x in 0..w {
                 let i = y * w + x;
                 if x + 1 < w {
-                    b.couple(i, i + 1, if rng.f64() < 0.5 { -1.0 } else { 1.0 } * (0.5 + rng.f64()));
+                    b.couple(
+                        i,
+                        i + 1,
+                        if rng.f64() < 0.5 { -1.0 } else { 1.0 } * (0.5 + rng.f64()),
+                    );
                 }
                 if y + 1 < h {
-                    b.couple(i, i + w, if rng.f64() < 0.5 { -1.0 } else { 1.0 } * (0.5 + rng.f64()));
+                    b.couple(
+                        i,
+                        i + w,
+                        if rng.f64() < 0.5 { -1.0 } else { 1.0 } * (0.5 + rng.f64()),
+                    );
                 }
             }
         }
@@ -247,7 +264,9 @@ mod tests {
     fn enumerate_log_z(g: &Graph, beta: f64, fixed: &[Option<i8>]) -> f64 {
         let mut terms = Vec::new();
         for x in 0..(1usize << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 })
+                .collect();
             if fixed.iter().zip(&s).all(|(f, v)| f.is_none_or(|a| a == *v)) {
                 terms.push(-beta * g.energy(&s));
             }
@@ -272,9 +291,13 @@ mod tests {
                 for (k, &v) in order[..len].iter().enumerate() {
                     fixed[v] = Some(if (bits >> k) & 1 == 1 { 1 } else { -1 });
                 }
-                let got = conditional_log_z(&g, beta, &fixed).expect("a connected prefix is planar");
+                let got =
+                    conditional_log_z(&g, beta, &fixed).expect("a connected prefix is planar");
                 let want = enumerate_log_z(&g, beta, &fixed);
-                assert!((got - want).abs() < 1e-9, "prefix {len}, bits {bits:b}: {got} vs {want}");
+                assert!(
+                    (got - want).abs() < 1e-9,
+                    "prefix {len}, bits {bits:b}: {got} vs {want}"
+                );
                 checked += 1;
             }
         }
@@ -300,7 +323,9 @@ mod tests {
         let ln_z = enumerate_log_z(&g, beta, &fixed);
         let mut worst = 0.0f64;
         for x in 0..(1usize << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 })
+                .collect();
             let lp = chain_log_prob(&g, beta, &s).expect("planar");
             worst = worst.max((lp - (-beta * g.energy(&s) - ln_z)).abs());
         }
@@ -316,7 +341,10 @@ mod tests {
     fn fields_and_non_planar_graphs_are_refused() {
         let mut g = grid2d(3, 3, 1.0);
         g.h[4] = 0.3;
-        assert!(matches!(conditional_log_z(&g, 1.0, &[None; 9]), Err(Error::HasFields { node: 4, .. })));
+        assert!(matches!(
+            conditional_log_z(&g, 1.0, &[None; 9]),
+            Err(Error::HasFields { node: 4, .. })
+        ));
         let mut b = GraphBuilder::new(5);
         for i in 0..5 {
             for j in i + 1..5 {
@@ -324,6 +352,9 @@ mod tests {
             }
         }
         let k5 = b.build();
-        assert!(matches!(conditional_log_z(&k5, 1.0, &[None; 5]), Err(Error::NotEmbeddable(_))));
+        assert!(matches!(
+            conditional_log_z(&k5, 1.0, &[None; 5]),
+            Err(Error::NotEmbeddable(_))
+        ));
     }
 }

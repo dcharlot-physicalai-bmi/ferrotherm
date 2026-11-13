@@ -175,7 +175,9 @@ impl Gauge {
                 return Err(GaugeError::NotASign { index, value });
             }
         }
-        Ok(Gauge { signs: signs.to_vec() })
+        Ok(Gauge {
+            signs: signs.to_vec(),
+        })
     }
 
     /// A uniformly random gauge: each spin reversed with probability one half.
@@ -189,7 +191,9 @@ impl Gauge {
     /// on one stream and is reproducible from one seed.
     #[must_use]
     pub fn draw(n: usize, rng: &mut Pcg) -> Gauge {
-        Gauge { signs: (0..n).map(|_| rng.spin(0.5)).collect() }
+        Gauge {
+            signs: (0..n).map(|_| rng.spin(0.5)).collect(),
+        }
     }
 
     /// Spins this gauge covers.
@@ -238,7 +242,10 @@ impl Gauge {
     /// [`GaugeError::WrongWidth`] if the gauge is not over this model's spins.
     pub fn apply(&self, g: &Graph) -> Result<Graph, GaugeError> {
         if self.signs.len() != g.n {
-            return Err(GaugeError::WrongWidth { gauge: self.signs.len(), model: g.n });
+            return Err(GaugeError::WrongWidth {
+                gauge: self.signs.len(),
+                model: g.n,
+            });
         }
         let mut b = GraphBuilder::new(g.n);
         for i in 0..g.n {
@@ -278,7 +285,10 @@ impl Gauge {
 
     fn map(&self, s: &[i8]) -> Result<Vec<i8>, GaugeError> {
         if s.len() != self.signs.len() {
-            return Err(GaugeError::WrongWidth { gauge: self.signs.len(), model: s.len() });
+            return Err(GaugeError::WrongWidth {
+                gauge: self.signs.len(),
+                model: s.len(),
+            });
         }
         Ok(self.map_unchecked(s))
     }
@@ -318,7 +328,12 @@ impl Gauge {
 /// If `s` is shorter than the model's spin count.
 #[must_use]
 pub fn energy_upper_bound(g: &Graph, s: &[i8]) -> f64 {
-    assert!(s.len() >= g.n, "a state of {} spins for a {}-spin model", s.len(), g.n);
+    assert!(
+        s.len() >= g.n,
+        "a state of {} spins for a {}-spin model",
+        s.len(),
+        g.n
+    );
     let mut terms = Vec::with_capacity(g.n + g.n_edges);
     for i in 0..g.n {
         let si = f64::from(s[i]);
@@ -444,12 +459,19 @@ where
     let mut best_energy = f64::INFINITY;
 
     for k in 0..gauges {
-        let gauge = if k == 0 { Gauge::identity(g.n) } else { Gauge::draw(g.n, &mut rng) };
+        let gauge = if k == 0 {
+            Gauge::identity(g.n)
+        } else {
+            Gauge::draw(g.n, &mut rng)
+        };
         let gauged = gauge.apply(g)?;
         let sub_seed = rng.next_u64();
         let answer = solve(&gauged, sub_seed);
         if answer.len() != g.n {
-            return Err(GaugeError::SolverWidth { expected: g.n, got: answer.len() });
+            return Err(GaugeError::SolverWidth {
+                expected: g.n,
+                got: answer.len(),
+            });
         }
         let s = gauge.map_unchecked(&answer);
         let e = g.energy(&s);
@@ -465,7 +487,13 @@ where
     }
 
     let mean_spin = total.iter().map(|t| t / gauges as f64).collect();
-    Ok(GaugeAverage { best, best_energy, energies, mean_spin, flips })
+    Ok(GaugeAverage {
+        best,
+        best_energy,
+        energies,
+        mean_spin,
+        flips,
+    })
 }
 
 /// Why a set of chains, or a sample read through them, was refused.
@@ -522,18 +550,35 @@ impl core::fmt::Display for ChainError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ChainError::EmptyChain { variable } => {
-                write!(f, "variable {variable} has no sites, so it has no value to resolve")
+                write!(
+                    f,
+                    "variable {variable} has no sites, so it has no value to resolve"
+                )
             }
-            ChainError::SiteOutOfRange { variable, site, sites } => {
-                write!(f, "variable {variable} uses site {site}, past the {sites} the machine has")
+            ChainError::SiteOutOfRange {
+                variable,
+                site,
+                sites,
+            } => {
+                write!(
+                    f,
+                    "variable {variable} uses site {site}, past the {sites} the machine has"
+                )
             }
-            ChainError::SiteShared { site, first, second } => write!(
+            ChainError::SiteShared {
+                site,
+                first,
+                second,
+            } => write!(
                 f,
                 "site {site} is claimed by both variable {first} and variable {second}; one site \
                  carries one spin, so the two would always read back equal"
             ),
             ChainError::StateTooShort { sites, given } => {
-                write!(f, "the chains reach {sites} sites and the sample carries {given} spins")
+                write!(
+                    f,
+                    "the chains reach {sites} sites and the sample carries {given} spins"
+                )
             }
             ChainError::NotASpin { site, value } => write!(
                 f,
@@ -541,7 +586,10 @@ impl core::fmt::Display for ChainError {
                  else would invent a value for the variable rather than resolve one"
             ),
             ChainError::GaugeWidth { gauge, sites } => {
-                write!(f, "the gauge covers {gauge} spins and the sample has {sites} sites")
+                write!(
+                    f,
+                    "the gauge covers {gauge} spins and the sample has {sites} sites"
+                )
             }
         }
     }
@@ -603,7 +651,11 @@ impl Chains {
     ///
     /// [`ChainError::EmptyChain`] or [`ChainError::SiteShared`].
     pub fn new(chains: &[Vec<usize>]) -> Result<Chains, ChainError> {
-        let sites = chains.iter().flat_map(|c| c.iter().copied()).max().map_or(0, |m| m + 1);
+        let sites = chains
+            .iter()
+            .flat_map(|c| c.iter().copied())
+            .max()
+            .map_or(0, |m| m + 1);
         Chains::assemble(chains, sites, vec![1.0; sites])
     }
 
@@ -636,7 +688,11 @@ impl Chains {
                     });
                 }
                 if owner[site] != usize::MAX && owner[site] != v {
-                    return Err(ChainError::SiteShared { site, first: owner[site], second: v });
+                    return Err(ChainError::SiteShared {
+                        site,
+                        first: owner[site],
+                        second: v,
+                    });
                 }
                 owner[site] = v;
             }
@@ -674,10 +730,18 @@ impl Chains {
             }
             for &site in chain {
                 if site >= sites {
-                    return Err(ChainError::SiteOutOfRange { variable: v, site, sites });
+                    return Err(ChainError::SiteOutOfRange {
+                        variable: v,
+                        site,
+                        sites,
+                    });
                 }
                 if owner[site] != usize::MAX && owner[site] != v {
-                    return Err(ChainError::SiteShared { site, first: owner[site], second: v });
+                    return Err(ChainError::SiteShared {
+                        site,
+                        first: owner[site],
+                        second: v,
+                    });
                 }
                 owner[site] = v;
             }
@@ -686,7 +750,11 @@ impl Chains {
             c.dedup();
             sorted.push(c);
         }
-        Ok(Chains { chains: sorted, weld, sites })
+        Ok(Chains {
+            chains: sorted,
+            weld,
+            sites,
+        })
     }
 
     /// Logical variables.
@@ -740,12 +808,18 @@ impl Chains {
     /// [`ChainError::StateTooShort`] or [`ChainError::NotASpin`].
     pub fn resolve(&self, state: &[i8], policy: ChainBreak) -> Result<Readout, ChainError> {
         if state.len() < self.sites {
-            return Err(ChainError::StateTooShort { sites: self.sites, given: state.len() });
+            return Err(ChainError::StateTooShort {
+                sites: self.sites,
+                given: state.len(),
+            });
         }
         for chain in &self.chains {
             for &site in chain {
                 if state[site] != 1 && state[site] != -1 {
-                    return Err(ChainError::NotASpin { site, value: state[site] });
+                    return Err(ChainError::NotASpin {
+                        site,
+                        value: state[site],
+                    });
                 }
             }
         }
@@ -797,7 +871,10 @@ impl Chains {
         policy: ChainBreak,
     ) -> Result<Readout, ChainError> {
         if gauge.n() != state.len() {
-            return Err(ChainError::GaugeWidth { gauge: gauge.n(), sites: state.len() });
+            return Err(ChainError::GaugeWidth {
+                gauge: gauge.n(),
+                sites: state.len(),
+            });
         }
         let decoded = gauge.map_unchecked(state);
         self.resolve(&decoded, policy)
@@ -817,7 +894,10 @@ impl Chains {
         for s in states {
             readouts.push(self.resolve(s, policy)?);
         }
-        Ok(Survey { readouts, chains: self.chains.len() })
+        Ok(Survey {
+            readouts,
+            chains: self.chains.len(),
+        })
     }
 }
 
@@ -946,8 +1026,11 @@ mod tests {
 
     /// Every state of an `n`-spin model, `n` small.
     fn all_states(n: usize) -> impl Iterator<Item = Vec<i8>> {
-        (0u32..(1u32 << n))
-            .map(move |m| (0..n).map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 }).collect())
+        (0u32..(1u32 << n)).map(move |m| {
+            (0..n)
+                .map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 })
+                .collect()
+        })
     }
 
     /// Greedy descent from all-up: the ordinary biased solver, and deterministic.
@@ -1005,10 +1088,18 @@ mod tests {
 
         // A gauge that reverses nothing, or a model whose couplings all sit on unreversed pairs,
         // would pass on an implementation that does nothing at all.
-        assert!(gauge.flips() > 0 && gauge.flips() < n, "the gauge must be non-trivial");
+        assert!(
+            gauge.flips() > 0 && gauge.flips() < n,
+            "the gauge must be non-trivial"
+        );
         let gauged = gauge.apply(&g).unwrap();
-        let flipped = (0..gauged.w.len()).filter(|&k| gauged.w[k] != g.w[k]).count();
-        assert!(flipped > 0, "no coupling changed sign, so this asserts nothing");
+        let flipped = (0..gauged.w.len())
+            .filter(|&k| gauged.w[k] != g.w[k])
+            .count();
+        assert!(
+            flipped > 0,
+            "no coupling changed sign, so this asserts nothing"
+        );
         let fields = (0..n).filter(|&i| gauged.h[i] != g.h[i]).count();
         assert!(fields > 0, "no field changed sign, so this asserts nothing");
 
@@ -1017,7 +1108,10 @@ mod tests {
         for s in all_states(n) {
             let e = g.energy(&s);
             let e_gauged = gauged.energy(&gauge.encode(&s).unwrap());
-            assert_eq!(e, e_gauged, "state {s:?} moved in energy under a change of variable");
+            assert_eq!(
+                e, e_gauged,
+                "state {s:?} moved in energy under a change of variable"
+            );
             original.push(e);
             moved.push(e_gauged);
         }
@@ -1055,7 +1149,10 @@ mod tests {
         assert_eq!(back.n_edges, g.n_edges);
         assert_eq!(back.offset, g.offset);
         assert_eq!(back.nbr, g.nbr);
-        assert_eq!(back.colors, g.colors, "structure must not move; only signs do");
+        assert_eq!(
+            back.colors, g.colors,
+            "structure must not move; only signs do"
+        );
         let w_bits: Vec<u64> = back.w.iter().map(|x| x.to_bits()).collect();
         let want_w: Vec<u64> = g.w.iter().map(|x| x.to_bits()).collect();
         assert_eq!(w_bits, want_w);
@@ -1081,12 +1178,24 @@ mod tests {
         let e_here = here.ground_energy.unwrap();
         let e_there = there.ground_energy.unwrap();
 
-        let brute = all_states(n).map(|s| g.energy(&s)).fold(f64::INFINITY, f64::min);
-        assert!((e_here - brute).abs() < 1e-12, "elimination {e_here} vs enumeration {brute}");
-        assert!((e_there - brute).abs() < 1e-12, "a change of variable cannot move the optimum");
+        let brute = all_states(n)
+            .map(|s| g.energy(&s))
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            (e_here - brute).abs() < 1e-12,
+            "elimination {e_here} vs enumeration {brute}"
+        );
+        assert!(
+            (e_there - brute).abs() < 1e-12,
+            "a change of variable cannot move the optimum"
+        );
 
         let decoded = gauge.decode(&there.ground_state.unwrap()).unwrap();
-        assert_eq!(g.energy(&decoded), brute, "the decoded state must attain it");
+        assert_eq!(
+            g.energy(&decoded),
+            brute,
+            "the decoded state must attain it"
+        );
     }
 
     /// ORACLE: `crate::exact`. Handed a solver that is exactly optimal on whatever model it is
@@ -1096,24 +1205,41 @@ mod tests {
     #[test]
     fn average_over_gauges_with_an_exact_solver_returns_the_proved_optimum() {
         let g = fixture(14, 5150);
-        let want = Elimination::default().ground_state(&g).unwrap().ground_energy.unwrap();
+        let want = Elimination::default()
+            .ground_state(&g)
+            .unwrap()
+            .ground_energy
+            .unwrap();
         let run = average_over_gauges(&g, 8, 99, |model, _seed| {
-            Elimination::default().ground_state(model).unwrap().ground_state.unwrap()
+            Elimination::default()
+                .ground_state(model)
+                .unwrap()
+                .ground_state
+                .unwrap()
         })
         .unwrap();
         assert_eq!(run.energies().len(), 8);
         for (k, &e) in run.energies().iter().enumerate() {
-            assert!((e - want).abs() < 1e-12, "gauge {k} came back at {e}, not the optimum {want}");
+            assert!(
+                (e - want).abs() < 1e-12,
+                "gauge {k} came back at {e}, not the optimum {want}"
+            );
         }
         assert_eq!(run.best_energy(), run.energies()[0]);
         assert_eq!(run.flips()[0], 0, "the first gauge is the identity");
-        assert!(run.flips()[1..].iter().any(|&f| f > 0), "and the rest are not");
+        assert!(
+            run.flips()[1..].iter().any(|&f| f > 0),
+            "and the rest are not"
+        );
         // The certificate agrees with the energy it certifies to within its guard. The DIRECTION
         // claim is made against integers in
         // `the_certificate_is_above_an_energy_counted_exactly_in_integers`, because
         // `Graph::energy` is itself a rounded sum and is the wrong thing to compare a bound to.
         let cert = run.energy_certificate(&g);
-        assert!((cert - run.best_energy()).abs() < 1e-12, "certificate {cert} vs energy {want}");
+        assert!(
+            (cert - run.best_energy()).abs() < 1e-12,
+            "certificate {cert} vs energy {want}"
+        );
     }
 
     /// MEASURED, not asserted: what gauging is for. A greedy descent from all-up is biased by its
@@ -1140,18 +1266,32 @@ mod tests {
     #[test]
     fn average_over_gauges_beats_the_identity_run_on_a_biased_solver() {
         let g = fixture(14, 909);
-        let optimum = Elimination::default().ground_state(&g).unwrap().ground_energy.unwrap();
+        let optimum = Elimination::default()
+            .ground_state(&g)
+            .unwrap()
+            .ground_energy
+            .unwrap();
         let run =
             average_over_gauges(&g, 32, 2026, |model, _seed| greedy_from_all_up(model)).unwrap();
         let plain = run.energies()[0];
-        assert_eq!(plain, g.energy(&greedy_from_all_up(&g)), "gauge 0 must be the plain run");
-        assert!(plain > optimum + 1e-9, "the fixture must actually trap the biased solver");
+        assert_eq!(
+            plain,
+            g.energy(&greedy_from_all_up(&g)),
+            "gauge 0 must be the plain run"
+        );
+        assert!(
+            plain > optimum + 1e-9,
+            "the fixture must actually trap the biased solver"
+        );
         assert!(
             run.best_energy() < plain,
             "32 gauges ({}) did not beat the un-gauged run ({plain})",
             run.best_energy()
         );
-        assert!(run.mean_energy() <= plain, "and the average is no worse than the control");
+        assert!(
+            run.mean_energy() <= plain,
+            "and the average is no worse than the control"
+        );
         assert!(
             (run.best_energy() - optimum).abs() < 1e-12,
             "and on this instance the gauges reach the proved optimum: {} vs {optimum}",
@@ -1171,8 +1311,9 @@ mod tests {
         let plain = Chains::new(&chains).unwrap();
         let welded = Chains::from_embedded(&chains, &machine).unwrap();
         for bits in 0u32..8 {
-            let want: Vec<i8> =
-                (0..3).map(|v| if (bits >> v) & 1 == 1 { 1i8 } else { -1 }).collect();
+            let want: Vec<i8> = (0..3)
+                .map(|v| if (bits >> v) & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             let mut state = vec![0i8; 6];
             for (v, chain) in chains.iter().enumerate() {
                 for &site in chain {
@@ -1180,9 +1321,17 @@ mod tests {
                 }
             }
             for c in [&plain, &welded] {
-                for policy in [ChainBreak::Majority, ChainBreak::Weighted, ChainBreak::Discard] {
+                for policy in [
+                    ChainBreak::Majority,
+                    ChainBreak::Weighted,
+                    ChainBreak::Discard,
+                ] {
                     let r = c.resolve(&state, policy).unwrap();
-                    assert_eq!(r.values(), Some(&want[..]), "{policy:?} moved an intact chain");
+                    assert_eq!(
+                        r.values(),
+                        Some(&want[..]),
+                        "{policy:?} moved an intact chain"
+                    );
                     assert!(r.broken().is_empty());
                     assert_eq!(r.break_fraction(), 0.0);
                     assert!(!r.is_discarded());
@@ -1199,7 +1348,12 @@ mod tests {
     fn a_tie_resolves_to_the_lowest_numbered_sites_spin() {
         // Sites 2 and 5 up, 7 and 9 down: an exact two-two tie. The chain is given out of order on
         // purpose -- a chain is a set, and the answer must not depend on the placer's bookkeeping.
-        let orders = [vec![5, 2, 9, 7], vec![2, 5, 7, 9], vec![9, 7, 5, 2], vec![7, 9, 2, 5]];
+        let orders = [
+            vec![5, 2, 9, 7],
+            vec![2, 5, 7, 9],
+            vec![9, 7, 5, 2],
+            vec![7, 9, 2, 5],
+        ];
         let mut state = vec![1i8; 10];
         state[7] = -1;
         state[9] = -1;
@@ -1208,7 +1362,11 @@ mod tests {
             assert_eq!(c.chains()[0], vec![2, 5, 7, 9], "chains are stored sorted");
             for policy in [ChainBreak::Majority, ChainBreak::Weighted] {
                 let r = c.resolve(&state, policy).unwrap();
-                assert_eq!(r.values(), Some(&[1i8][..]), "{policy:?}: site 2 is up, so the tie is");
+                assert_eq!(
+                    r.values(),
+                    Some(&[1i8][..]),
+                    "{policy:?}: site 2 is up, so the tie is"
+                );
                 assert_eq!(r.broken(), &[0]);
                 assert_eq!(r.break_fraction(), 1.0);
             }
@@ -1219,7 +1377,10 @@ mod tests {
         other[7] = 1;
         other[9] = 1;
         let c = Chains::new(&[vec![2, 5, 7, 9]]).unwrap();
-        assert_eq!(c.resolve(&other, ChainBreak::Majority).unwrap().values(), Some(&[-1i8][..]));
+        assert_eq!(
+            c.resolve(&other, ChainBreak::Majority).unwrap().values(),
+            Some(&[-1i8][..])
+        );
     }
 
     /// The weighted vote must actually be a different policy, or it is a slower majority vote.
@@ -1236,12 +1397,18 @@ mod tests {
         assert_eq!(welded.weld(), &[0.1, 10.1, 10.1, 0.1]);
         let state = vec![1i8, -1, -1, 1];
         assert_eq!(
-            plain.resolve(&state, ChainBreak::Majority).unwrap().values(),
+            plain
+                .resolve(&state, ChainBreak::Majority)
+                .unwrap()
+                .values(),
             Some(&[1i8][..]),
             "a two-two tie goes to site 0, which is up"
         );
         assert_eq!(
-            welded.resolve(&state, ChainBreak::Weighted).unwrap().values(),
+            welded
+                .resolve(&state, ChainBreak::Weighted)
+                .unwrap()
+                .values(),
             Some(&[-1i8][..]),
             "the weld is a hundred to one the other way"
         );
@@ -1249,7 +1416,11 @@ mod tests {
         for s in all_states(4) {
             let a = plain.resolve(&s, ChainBreak::Majority).unwrap();
             let b = plain.resolve(&s, ChainBreak::Weighted).unwrap();
-            assert_eq!(a.values(), b.values(), "unit welds must degenerate to a count: {s:?}");
+            assert_eq!(
+                a.values(),
+                b.values(),
+                "unit welds must degenerate to a count: {s:?}"
+            );
         }
     }
 
@@ -1270,8 +1441,16 @@ mod tests {
 
         let d = c.resolve(&one_broken, ChainBreak::Discard).unwrap();
         assert!(d.is_discarded() && d.values().is_none());
-        assert_eq!(d.break_fraction(), 0.25, "a discarded sample still reports its breaks");
-        assert!(!c.resolve(&intact, ChainBreak::Discard).unwrap().is_discarded());
+        assert_eq!(
+            d.break_fraction(),
+            0.25,
+            "a discarded sample still reports its breaks"
+        );
+        assert!(
+            !c.resolve(&intact, ChainBreak::Discard)
+                .unwrap()
+                .is_discarded()
+        );
 
         let survey = c.resolve_many(&states, ChainBreak::Discard).unwrap();
         assert_eq!(survey.samples(), 3);
@@ -1280,7 +1459,11 @@ mod tests {
         assert_eq!(survey.break_fraction(), 0.25, "3 broken of 3 x 4 pairs");
         let kept = c.resolve_many(&states, ChainBreak::Majority).unwrap();
         assert_eq!(kept.kept(), 3, "every other policy keeps everything");
-        assert_eq!(kept.break_fraction(), survey.break_fraction(), "and reports the same breaks");
+        assert_eq!(
+            kept.break_fraction(),
+            survey.break_fraction(),
+            "and reports the same breaks"
+        );
         assert_eq!(kept.readouts().len(), 3);
     }
 
@@ -1301,16 +1484,29 @@ mod tests {
         for s in all_states(6) {
             let gauged_sample = gauge.encode(&s).unwrap();
             let want = c.resolve(&s, ChainBreak::Majority).unwrap();
-            let right = c.resolve_gauged(&gauge, &gauged_sample, ChainBreak::Majority).unwrap();
-            assert_eq!(right.values(), want.values(), "decode-then-resolve moved a value");
-            assert_eq!(right.broken(), want.broken(), "decode-then-resolve moved a break");
+            let right = c
+                .resolve_gauged(&gauge, &gauged_sample, ChainBreak::Majority)
+                .unwrap();
+            assert_eq!(
+                right.values(),
+                want.values(),
+                "decode-then-resolve moved a value"
+            );
+            assert_eq!(
+                right.broken(),
+                want.broken(),
+                "decode-then-resolve moved a break"
+            );
             assert_eq!(right.break_fraction(), want.break_fraction());
             let wrong = c.resolve(&gauged_sample, ChainBreak::Majority).unwrap();
             if wrong.values() != want.values() || wrong.broken() != want.broken() {
                 disagreements += 1;
             }
         }
-        assert_eq!(disagreements, PINNED_WRONG_ORDER, "the order must still matter");
+        assert_eq!(
+            disagreements, PINNED_WRONG_ORDER,
+            "the order must still matter"
+        );
     }
 
     /// States of the six-site fixture on which resolving before decoding gives a different answer.
@@ -1335,7 +1531,10 @@ mod tests {
         // not on bad luck.
         let n = 4000;
         let flips = Gauge::random(n, 12345, 0).flips() as f64;
-        assert!((flips - n as f64 / 2.0).abs() < 2.0 * (n as f64).sqrt(), "{flips} of {n}");
+        assert!(
+            (flips - n as f64 / 2.0).abs() < 2.0 * (n as f64).sqrt(),
+            "{flips} of {n}"
+        );
     }
 
     /// A model whose couplings and fields are EIGHTHS, so every energy is an exact multiple of
@@ -1396,15 +1595,25 @@ mod tests {
                 e8 -= fields[i] * i64::from(s[i]);
             }
             let exact = e8 as f64 / 8.0;
-            assert_eq!(g.energy(&s), exact, "the fixture must be exactly representable");
+            assert_eq!(
+                g.energy(&s),
+                exact,
+                "the fixture must be exactly representable"
+            );
             assert_eq!(
                 gauged.energy(&gauge.encode(&s).unwrap()),
                 exact,
                 "the gauged model must agree with the integer count too"
             );
             let cert = energy_upper_bound(&g, &s);
-            assert!(cert >= exact, "certificate {cert} below the true energy {exact}");
-            assert!(cert - exact < 1e-12, "and must stay tight: {cert} vs {exact}");
+            assert!(
+                cert >= exact,
+                "certificate {cert} below the true energy {exact}"
+            );
+            assert!(
+                cert - exact < 1e-12,
+                "and must stay tight: {cert} vs {exact}"
+            );
         }
     }
 
@@ -1432,7 +1641,10 @@ mod tests {
         );
         assert_eq!(
             average_over_gauges(&g, 2, 1, |_, _| vec![1; 5]).unwrap_err(),
-            GaugeError::SolverWidth { expected: 6, got: 5 }
+            GaugeError::SolverWidth {
+                expected: 6,
+                got: 5
+            }
         );
 
         assert_eq!(
@@ -1441,11 +1653,19 @@ mod tests {
         );
         assert_eq!(
             Chains::new(&[vec![0, 1], vec![1, 2]]).unwrap_err(),
-            ChainError::SiteShared { site: 1, first: 0, second: 1 }
+            ChainError::SiteShared {
+                site: 1,
+                first: 0,
+                second: 1
+            }
         );
         assert_eq!(
             Chains::from_embedded(&[vec![0, 9]], &lopsided_machine()).unwrap_err(),
-            ChainError::SiteOutOfRange { variable: 0, site: 9, sites: 4 }
+            ChainError::SiteOutOfRange {
+                variable: 0,
+                site: 9,
+                sites: 4
+            }
         );
         let c = Chains::new(&[vec![0, 1], vec![2, 3]]).unwrap();
         assert_eq!(
@@ -1457,7 +1677,8 @@ mod tests {
             ChainError::NotASpin { site: 2, value: 0 }
         );
         assert_eq!(
-            c.resolve_gauged(&Gauge::identity(3), &[1, 1, 1, 1], ChainBreak::Majority).unwrap_err(),
+            c.resolve_gauged(&Gauge::identity(3), &[1, 1, 1, 1], ChainBreak::Majority)
+                .unwrap_err(),
             ChainError::GaugeWidth { gauge: 3, sites: 4 }
         );
         // Every message must say something a reader can act on.

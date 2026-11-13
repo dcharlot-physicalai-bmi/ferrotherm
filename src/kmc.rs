@@ -253,14 +253,20 @@ impl<'g> Kmc<'g> {
     pub fn step(&mut self) -> Option<Jump> {
         let (site, dwell, mean_dwell) = self.draw()?;
         self.apply(site, dwell);
-        Some(Jump { site, dwell, mean_dwell })
+        Some(Jump {
+            site,
+            dwell,
+            mean_dwell,
+        })
     }
 
     /// Take up to `steps` jumps, calling `f(state, dwell)` on the state being left and the time it
     /// held. Returns the jumps actually taken, short only if the chain froze.
     pub fn run<F: FnMut(&[i8], f64)>(&mut self, steps: usize, mut f: F) -> usize {
         for k in 0..steps {
-            let Some((site, dwell, _)) = self.draw() else { return k };
+            let Some((site, dwell, _)) = self.draw() else {
+                return k;
+            };
             f(&self.s, dwell);
             self.apply(site, dwell);
         }
@@ -280,7 +286,10 @@ impl<'g> Kmc<'g> {
     /// [`Refused::TooLargeToEnumerate`] past [`ENUMERATION_LIMIT`] spins.
     pub fn occupancy(&mut self, steps: usize) -> Result<Vec<f64>, Refused> {
         if self.g.n > ENUMERATION_LIMIT {
-            return Err(Refused::TooLargeToEnumerate { spins: self.g.n, limit: ENUMERATION_LIMIT });
+            return Err(Refused::TooLargeToEnumerate {
+                spins: self.g.n,
+                limit: ENUMERATION_LIMIT,
+            });
         }
         let mut w = vec![0.0f64; 1usize << self.g.n];
         self.run(steps, |s, dwell| w[mask(s)] += dwell);
@@ -347,8 +356,13 @@ impl<'g> Kmc<'g> {
     /// Recomputed rather than updated incrementally: an incrementally maintained local field
     /// drifts, and a rate table that has drifted samples a distribution nobody wrote down.
     fn refresh(&mut self, i: usize) {
-        let r = self.rates.rate(self.s[i], self.g.field(i, &self.s), self.beta);
-        debug_assert!(r >= 0.0 && r.is_finite(), "rate {r} at site {i} is not a rate");
+        let r = self
+            .rates
+            .rate(self.s[i], self.g.field(i, &self.s), self.beta);
+        debug_assert!(
+            r >= 0.0 && r.is_finite(),
+            "rate {r} at site {i} is not a rate"
+        );
         if key(r) != key(self.rate[i]) {
             self.detach(i);
             self.attach(i, r);
@@ -361,7 +375,9 @@ impl<'g> Kmc<'g> {
         self.index.clear();
         self.free.clear();
         for i in 0..self.g.n {
-            let r = self.rates.rate(self.s[i], self.g.field(i, &self.s), self.beta);
+            let r = self
+                .rates
+                .rate(self.s[i], self.g.field(i, &self.s), self.beta);
             self.attach(i, r);
         }
     }
@@ -370,7 +386,10 @@ impl<'g> Kmc<'g> {
     fn detach(&mut self, i: usize) {
         let c = self.class_of[i] as usize;
         let p = self.slot[i] as usize;
-        let last = self.classes[c].members.pop().expect("a class holds its members");
+        let last = self.classes[c]
+            .members
+            .pop()
+            .expect("a class holds its members");
         if p < self.classes[c].members.len() {
             self.classes[c].members[p] = last;
             self.slot[last as usize] = p as u32;
@@ -390,7 +409,10 @@ impl<'g> Kmc<'g> {
             let c = if let Some(c) = self.free.pop() {
                 c as usize
             } else {
-                self.classes.push(Class { rate: r, members: Vec::new() });
+                self.classes.push(Class {
+                    rate: r,
+                    members: Vec::new(),
+                });
                 self.classes.len() - 1
             };
             self.classes[c].rate = r;
@@ -429,7 +451,9 @@ mod tests {
 
     /// `R(s)` for an arbitrary state, straight from the definition.
     fn escape_rate(g: &Graph, s: &[i8], beta: f64, rates: Rates) -> f64 {
-        (0..g.n).map(|i| rates.rate(s[i], g.field(i, s), beta)).sum()
+        (0..g.n)
+            .map(|i| rates.rate(s[i], g.field(i, s), beta))
+            .sum()
     }
 
     /// The jump chain's exact stationary law, `nu(s) ∝ pi(s) R(s)`.
@@ -500,10 +524,21 @@ mod tests {
 
         // The two laws really are different on this model, so the test below can tell them apart.
         let split = tv(&pi, &nu);
-        assert!(split > 0.05, "pi and pi*R are only {split:.4} apart; nothing to detect");
+        assert!(
+            split > 0.05,
+            "pi and pi*R are only {split:.4} apart; nothing to detect"
+        );
 
-        assert!(tv(&visits, &nu) < 0.01, "visits should be pi*R: {:.4}", tv(&visits, &nu));
-        assert!(tv(&dwelt, &pi) < 0.01, "dwell-weighted should be pi: {:.4}", tv(&dwelt, &pi));
+        assert!(
+            tv(&visits, &nu) < 0.01,
+            "visits should be pi*R: {:.4}",
+            tv(&visits, &nu)
+        );
+        assert!(
+            tv(&dwelt, &pi) < 0.01,
+            "dwell-weighted should be pi: {:.4}",
+            tv(&dwelt, &pi)
+        );
         assert!(
             tv(&visits, &pi) > 0.05,
             "the unweighted average is {:.4} from Boltzmann, and that is the bug",
@@ -562,15 +597,25 @@ mod tests {
             d.push(j.dwell);
             assert!((j.mean_dwell - 1.0 / r).abs() < 1e-12, "mean dwell is 1/R");
             k.set_state(&s0);
-            assert!((k.total_rate() - r).abs() < 1e-12, "the rate table restores exactly");
+            assert!(
+                (k.total_rate() - r).abs() < 1e-12,
+                "the rate table restores exactly"
+            );
         }
         let mean: f64 = d.iter().sum::<f64>() / n as f64;
-        assert!((mean * r - 1.0).abs() < 0.02, "mean dwell x R = {:.4}", mean * r);
+        assert!(
+            (mean * r - 1.0).abs() < 0.02,
+            "mean dwell x R = {:.4}",
+            mean * r
+        );
         for q in [0.25f64, 0.5, 1.0, 2.0, 3.0] {
             let t = q / r;
             let got = d.iter().filter(|&&x| x <= t).count() as f64 / n as f64;
             let want = 1.0 - (-r * t).exp();
-            assert!((got - want).abs() < 0.005, "CDF at {q}/R: {got:.4} vs {want:.4}");
+            assert!(
+                (got - want).abs() < 0.005,
+                "CDF at {q}/R: {got:.4} vs {want:.4}"
+            );
         }
     }
 
@@ -601,13 +646,26 @@ mod tests {
                 crowded = crowded.max(cl.members.len());
                 for (p, &m) in cl.members.iter().enumerate() {
                     filed[m as usize] += 1;
-                    assert_eq!(k.slot[m as usize] as usize, p, "step {step}: slot of site {m}");
-                    assert_eq!(k.class_of[m as usize] as usize, c, "step {step}: class of {m}");
-                    assert_eq!(key(cl.rate), key(k.rate[m as usize]), "step {step}: rate of {m}");
+                    assert_eq!(
+                        k.slot[m as usize] as usize, p,
+                        "step {step}: slot of site {m}"
+                    );
+                    assert_eq!(
+                        k.class_of[m as usize] as usize, c,
+                        "step {step}: class of {m}"
+                    );
+                    assert_eq!(
+                        key(cl.rate),
+                        key(k.rate[m as usize]),
+                        "step {step}: rate of {m}"
+                    );
                 }
             }
             let once = filed.iter().all(|&c| c == 1);
-            assert!(once, "step {step}: each site filed exactly once, got {filed:?}");
+            assert!(
+                once,
+                "step {step}: each site filed exactly once, got {filed:?}"
+            );
 
             let mut sum = 0.0;
             for i in 0..g.n {
@@ -615,13 +673,24 @@ mod tests {
                 assert_eq!(k.rate[i].to_bits(), want.to_bits(), "step {step} site {i}");
                 sum += want;
             }
-            assert!((k.total_rate() - sum).abs() < 1e-12 * sum, "class totals are the rate sum");
+            assert!(
+                (k.total_rate() - sum).abs() < 1e-12 * sum,
+                "class totals are the rate sum"
+            );
             // The free list is what stops a generic model growing one class per step forever.
-            assert!(k.classes.len() <= g.n, "{} class slots for {} sites", k.classes.len(), g.n);
+            assert!(
+                k.classes.len() <= g.n,
+                "{} class slots for {} sites",
+                k.classes.len(),
+                g.n
+            );
             assert_eq!(k.classes(), k.index.len());
         }
         // Without this, everything above is checked on classes of one and the swap never runs.
-        assert!(crowded >= 3, "no class held more than {crowded}: the swap branch never ran");
+        assert!(
+            crowded >= 3,
+            "no class held more than {crowded}: the swap branch never ran"
+        );
     }
 
     /// A uniform square lattice at `h = 0` has exactly three Metropolis rates, at any size.
@@ -681,7 +750,10 @@ mod tests {
         }
         let measured = (sweeps * g.n as u64) as f64 / changed as f64;
 
-        assert!(measured > 20.0, "Gibbs spent only {measured:.1} draws per flip; raise beta");
+        assert!(
+            measured > 20.0,
+            "Gibbs spent only {measured:.1} draws per flip; raise beta"
+        );
         assert!(
             (predicted - measured).abs() < 0.3 * measured,
             "predicted {predicted:.1} draws per flip, Gibbs measured {measured:.1}"

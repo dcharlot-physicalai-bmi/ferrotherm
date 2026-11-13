@@ -135,12 +135,13 @@ fn parse_value<'a>(src: &'a str, b: &[u8], i: &mut usize) -> Result<Json<'a>, St
         }
         _ => {
             let start = *i;
-            while *i < b.len()
-                && matches!(b[*i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
-            {
+            while *i < b.len() && matches!(b[*i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9') {
                 *i += 1;
             }
-            src[start..*i].parse::<f64>().map(Json::Num).map_err(|e| e.to_string())
+            src[start..*i]
+                .parse::<f64>()
+                .map(Json::Num)
+                .map_err(|e| e.to_string())
         }
     }
 }

@@ -224,8 +224,9 @@ pub fn run_metered(
     let n = g.n;
     // TWO ladders, which is the whole point: a cluster move needs a partner at the same
     // temperature, and a single ladder has none.
-    let mut set_a: Vec<Sampler> =
-        (0..r).map(|i| Sampler::new(g, p.betas[i], seed ^ (i as u64).wrapping_mul(0x9E37))).collect();
+    let mut set_a: Vec<Sampler> = (0..r)
+        .map(|i| Sampler::new(g, p.betas[i], seed ^ (i as u64).wrapping_mul(0x9E37)))
+        .collect();
     let mut set_b: Vec<Sampler> = (0..r)
         .map(|i| Sampler::new(g, p.betas[i], !seed ^ (i as u64).wrapping_mul(0x85EB)))
         .collect();
@@ -306,7 +307,13 @@ pub fn run_metered(
         .map(|(&a, &c)| if a == 0 { 0.0 } else { c as f64 / a as f64 })
         .collect();
     let energy = g.energy(&best);
-    Ok(Outcome { state: best, energy, icm_moves, icm_spins, swap_rates })
+    Ok(Outcome {
+        state: best,
+        energy,
+        icm_moves,
+        icm_spins,
+        swap_rates,
+    })
 }
 
 #[cfg(test)]
@@ -329,13 +336,19 @@ mod tests {
         };
         let a = run(&g, &p, 0x5EED).expect("no fields");
         let b = run(&g, &p, 0x5EED).expect("no fields");
-        assert_eq!(a.energy, b.energy, "the same run twice must agree bit for bit");
+        assert_eq!(
+            a.energy, b.energy,
+            "the same run twice must agree bit for bit"
+        );
         assert_eq!(a.state, b.state);
 
         // And the control: a different seed is a different answer, so the check above is not
         // passing because the sampler ignores its seed.
         let c = run(&g, &p, 0x5EEE).expect("no fields");
-        assert!(c.state != a.state || c.energy != a.energy, "a different seed is a different run");
+        assert!(
+            c.state != a.state || c.energy != a.energy,
+            "a different seed is a different run"
+        );
     }
 
     use super::*;
@@ -349,8 +362,16 @@ mod tests {
         for y in 0..l {
             for x in 0..l {
                 let i = y * l + x;
-                gb.couple(i, y * l + (x + 1) % l, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
-                gb.couple(i, ((y + 1) % l) * l + x, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+                gb.couple(
+                    i,
+                    y * l + (x + 1) % l,
+                    if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+                );
+                gb.couple(
+                    i,
+                    ((y + 1) % l) * l + x,
+                    if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+                );
             }
         }
         gb.build()
@@ -374,7 +395,8 @@ mod tests {
             let mut fired = 0;
             for _ in 0..200 {
                 let before = g.energy(&a) + g.energy(&b);
-                if houdayer_move(&g, &mut a, &mut b, &mut rng, &mut is, &mut sn, &mut st).is_some() {
+                if houdayer_move(&g, &mut a, &mut b, &mut rng, &mut is, &mut sn, &mut st).is_some()
+                {
                     fired += 1;
                     let after = g.energy(&a) + g.energy(&b);
                     assert!(
@@ -383,7 +405,10 @@ mod tests {
                     );
                 }
             }
-            assert!(fired > 0, "seed {seed}: the move never fired, so nothing was tested");
+            assert!(
+                fired > 0,
+                "seed {seed}: the move never fired, so nothing was tested"
+            );
         }
     }
 
@@ -403,7 +428,10 @@ mod tests {
         let (mut is, mut sn, mut st) = (vec![false; n], vec![false; n], Vec::new());
         let (a0, b0) = (a.clone(), b.clone());
         let k = houdayer_move(&g, &mut a, &mut b, &mut rng, &mut is, &mut sn, &mut st).unwrap();
-        assert!(k == 1 || k == 2, "a component here is one site or two, got {k}");
+        assert!(
+            k == 1 || k == 2,
+            "a component here is one site or two, got {k}"
+        );
         // Exactly the flipped sites changed, and they changed in BOTH replicas.
         let moved: Vec<usize> = (0..n).filter(|&i| a[i] != a0[i]).collect();
         assert_eq!(moved.len(), k);
@@ -441,7 +469,15 @@ mod tests {
                 icm_every: 0,
             };
             let plain = run(&g, &base, seed).unwrap();
-            let with = run(&g, &Params { icm_every: 1, ..base }, seed).unwrap();
+            let with = run(
+                &g,
+                &Params {
+                    icm_every: 1,
+                    ..base
+                },
+                seed,
+            )
+            .unwrap();
             assert!(with.icm_moves > 0, "seed {seed}: the move never fired");
             // A mean cluster size of one would mean it is doing single flips under a grand name.
             assert!(with.icm_spins as f64 / with.icm_moves as f64 >= 1.0);
@@ -451,7 +487,10 @@ mod tests {
                 losses += 1;
             }
         }
-        assert_eq!(losses, 0, "cluster moves lost {losses} of 20 against the ladder without them");
+        assert_eq!(
+            losses, 0,
+            "cluster moves lost {losses} of 20 against the ladder without them"
+        );
         assert!(
             wins >= 5,
             "cluster moves won only {wins} of 20 -- at this size the measured separation is 9, so \
@@ -473,7 +512,10 @@ mod tests {
         assert!(e.to_string().contains("isoenergetic"), "{e}");
 
         let g = lattice2d(4, 1.0);
-        let short = Params { betas: vec![1.0], ..Params::default() };
+        let short = Params {
+            betas: vec![1.0],
+            ..Params::default()
+        };
         assert_eq!(run(&g, &short, 1).unwrap_err(), Error::LadderTooShort(1));
     }
 
@@ -481,7 +523,15 @@ mod tests {
     fn the_energy_returned_is_the_energy_of_the_state_returned() {
         for seed in 0..6u64 {
             let g = glass(6, seed);
-            let out = run(&g, &Params { rounds: 120, ..Params::default() }, seed).unwrap();
+            let out = run(
+                &g,
+                &Params {
+                    rounds: 120,
+                    ..Params::default()
+                },
+                seed,
+            )
+            .unwrap();
             assert_eq!(out.state.len(), g.n);
             assert!(out.state.iter().all(|&v| v == 1 || v == -1));
             assert!((out.energy - g.energy(&out.state)).abs() < 1e-9);

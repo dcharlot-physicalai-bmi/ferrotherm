@@ -10,10 +10,10 @@
 use ferrotherm::autocorr::total_variation;
 use ferrotherm::hdl::FRAC;
 use ferrotherm::pdit::{
-    bits_per_charge, encoded_row, gumbel_rom, native_row, rom_conditional, rom_span, softmax,
-    Charge, Embodiment, Row, MIXING_SWEEPS_CAP,
+    Charge, Embodiment, MIXING_SWEEPS_CAP, Row, bits_per_charge, encoded_row, gumbel_rom,
+    native_row, rom_conditional, rom_span, softmax,
 };
-use ferrotherm::potts::{ring, Interaction};
+use ferrotherm::potts::{Interaction, ring};
 
 fn print_row(r: &Row) {
     let mix = r
@@ -52,7 +52,9 @@ fn main() {
         );
     }
     println!();
-    println!("== native p-trit vs its encodings: mixing time to TV 1/4 and tau_int of [x_0 = 0], exact ==");
+    println!(
+        "== native p-trit vs its encodings: mixing time to TV 1/4 and tau_int of [x_0 = 0], exact =="
+    );
     for &(n, beta) in &[
         (3usize, 0.5f64),
         (3, 1.0),
@@ -89,7 +91,9 @@ fn main() {
         }
     }
     println!();
-    println!("== the fixed-point p-trit's floor: TV from the softmax at fields (0, -g, -g), and the span ==");
+    println!(
+        "== the fixed-point p-trit's floor: TV from the softmax at fields (0, -g, -g), and the span =="
+    );
     let scale = f64::from(1u32 << FRAC);
     print!("{:<6} {:>7}", "bits", "span");
     for g in [1.0f64, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0] {

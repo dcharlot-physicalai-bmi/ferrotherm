@@ -142,12 +142,19 @@ fn compact(edges: &[(u32, u32)], j: f64) -> Topology {
     let mut gb = GraphBuilder::new(qubits.len());
     for &(a, b) in edges {
         let (ia, ib) = (
-            qubits.binary_search(&a).expect("endpoint came from this list"),
-            qubits.binary_search(&b).expect("endpoint came from this list"),
+            qubits
+                .binary_search(&a)
+                .expect("endpoint came from this list"),
+            qubits
+                .binary_search(&b)
+                .expect("endpoint came from this list"),
         );
         gb.couple(ia, ib, j);
     }
-    Topology { graph: gb.build(), qubits }
+    Topology {
+        graph: gb.build(),
+        qubits,
+    }
 }
 
 /// Vertical then horizontal offsets for Pegasus `offsets_index = 0`, the shipped configuration.
@@ -196,7 +203,10 @@ const PEGASUS_OFF: [[usize; 12]; 2] = [
 #[must_use]
 pub fn pegasus(m: usize, j: f64) -> Topology {
     if m < 2 {
-        return Topology { graph: GraphBuilder::new(0).build(), qubits: Vec::new() };
+        return Topology {
+            graph: GraphBuilder::new(0).build(),
+            qubits: Vec::new(),
+        };
     }
     let m1 = m - 1;
     let (off0, off1) = (&PEGASUS_OFF[0], &PEGASUS_OFF[1]);
@@ -251,10 +261,7 @@ pub fn pegasus(m: usize, j: f64) -> Topology {
             let lo = if w == 0 { off1[kk] } else { 0 };
             let hi = if w < m1 { 12 } else { off1[kk] };
             for k in lo..hi {
-                let (w1, z1) = (
-                    z_plus(kk < off0[k]),
-                    usize::from(k < off1[kk]),
-                );
+                let (w1, z1) = (z_plus(kk < off0[k]), usize::from(k < off1[kk]));
                 for z in 0..m1 {
                     let b = (1usize, z + w1, kk, w - z1);
                     if keep(0, w, k) && keep(1, b.1, kk) {
@@ -299,7 +306,10 @@ fn z_plus(shifted: bool) -> usize {
 #[must_use]
 pub fn zephyr(m: usize, t: usize, j: f64) -> Topology {
     if m == 0 || t == 0 {
-        return Topology { graph: GraphBuilder::new(0).build(), qubits: Vec::new() };
+        return Topology {
+            graph: GraphBuilder::new(0).build(),
+            qubits: Vec::new(),
+        };
     }
     let big = 2 * m + 1;
     let lin = |u: usize, w: usize, k: usize, jj: usize, z: usize| -> u32 {
@@ -333,8 +343,10 @@ pub fn zephyr(m: usize, t: usize, j: f64) -> Topology {
                         for jj in 0..2 {
                             for a in 0..2 {
                                 for b in 0..2 {
-                                    let wa = (2 * w + 1) as isize + a as isize * (2 * i as isize - 1);
-                                    let wb = (2 * z + 1) as isize + b as isize * (2 * jj as isize - 1);
+                                    let wa =
+                                        (2 * w + 1) as isize + a as isize * (2 * i as isize - 1);
+                                    let wb =
+                                        (2 * z + 1) as isize + b as isize * (2 * jj as isize - 1);
                                     debug_assert!((0..big as isize).contains(&wa));
                                     debug_assert!((0..big as isize).contains(&wb));
                                     edges.push((
@@ -380,9 +392,31 @@ mod topology_tests {
         let cases: [Expected; 5] = [
             (2, 40, 164, &[(5, 16), (9, 16), (13, 8)]),
             (3, 128, 704, &[(6, 32), (10, 32), (14, 64)]),
-            (4, 264, 1604, &[(6, 32), (7, 16), (10, 32), (11, 16), (14, 112), (15, 56)]),
-            (6, 680, 4484, &[(6, 32), (7, 48), (10, 32), (11, 48), (14, 208), (15, 312)]),
-            (16, 5640, 40484, &[(6, 32), (7, 208), (10, 32), (11, 208), (14, 688), (15, 4472)]),
+            (
+                4,
+                264,
+                1604,
+                &[(6, 32), (7, 16), (10, 32), (11, 16), (14, 112), (15, 56)],
+            ),
+            (
+                6,
+                680,
+                4484,
+                &[(6, 32), (7, 48), (10, 32), (11, 48), (14, 208), (15, 312)],
+            ),
+            (
+                16,
+                5640,
+                40484,
+                &[
+                    (6, 32),
+                    (7, 208),
+                    (10, 32),
+                    (11, 208),
+                    (14, 688),
+                    (15, 4472),
+                ],
+            ),
         ];
         for (m, nodes, edges, hist) in cases {
             let t = pegasus(m, 1.0);
@@ -400,10 +434,38 @@ mod topology_tests {
         let cases: [Expected; 5] = [
             (1, 48, 280, &[(9, 32), (17, 16)]),
             (2, 160, 1224, &[(10, 32), (11, 32), (18, 48), (19, 48)]),
-            (3, 336, 2808, &[(10, 32), (11, 32), (12, 32), (18, 80), (19, 80), (20, 80)]),
-            (4, 576, 5032, &[(10, 32), (11, 32), (12, 64), (18, 112), (19, 112), (20, 224)]),
-            (15, 7440, 71736,
-             &[(10, 32), (11, 32), (12, 416), (18, 464), (19, 464), (20, 6032)]),
+            (
+                3,
+                336,
+                2808,
+                &[(10, 32), (11, 32), (12, 32), (18, 80), (19, 80), (20, 80)],
+            ),
+            (
+                4,
+                576,
+                5032,
+                &[
+                    (10, 32),
+                    (11, 32),
+                    (12, 64),
+                    (18, 112),
+                    (19, 112),
+                    (20, 224),
+                ],
+            ),
+            (
+                15,
+                7440,
+                71736,
+                &[
+                    (10, 32),
+                    (11, 32),
+                    (12, 416),
+                    (18, 464),
+                    (19, 464),
+                    (20, 6032),
+                ],
+            ),
         ];
         for (m, nodes, edges, hist) in cases {
             let t = zephyr(m, 4, 1.0);
@@ -429,16 +491,28 @@ mod topology_tests {
         assert_eq!(span, 5760);
         assert_eq!(*p.qubits.first().unwrap(), 30);
         assert_eq!(*p.qubits.last().unwrap(), 5729);
-        assert!(p.qubits.len() < *p.qubits.last().unwrap() as usize + 1, "sparse");
-        assert!(p.qubits.windows(2).all(|w| w[0] < w[1]), "strictly increasing");
+        assert!(
+            p.qubits.len() < *p.qubits.last().unwrap() as usize + 1,
+            "sparse"
+        );
+        assert!(
+            p.qubits.windows(2).all(|w| w[0] < w[1]),
+            "strictly increasing"
+        );
         // Round trip, both directions, and an honest miss in between.
         for node in [0usize, 1, 2000, 5639] {
             let q = p.qubit(node).expect("in range");
             assert_eq!(p.node(q), Some(node));
         }
         assert_eq!(p.qubit(5640), None);
-        let absent = (0..5760u32).find(|q| p.node(*q).is_none()).expect("the fabric drops some");
-        assert_eq!(p.node(absent), None, "a qubit outside the fabric is a real None");
+        let absent = (0..5760u32)
+            .find(|q| p.node(*q).is_none())
+            .expect("the fabric drops some");
+        assert_eq!(
+            p.node(absent),
+            None,
+            "a qubit outside the fabric is a real None"
+        );
 
         // Zephyr wires every qubit it defines, so there its numbering is the identity -- asserted
         // rather than assumed, because that is exactly the difference between the two families.
@@ -458,16 +532,24 @@ mod topology_tests {
             // never seen rather than checking the loop above.
             for i in 0..g.n {
                 for e in g.offset[i]..g.offset[i + 1] {
-                    assert_ne!(g.colors[i], g.colors[g.nbr[e] as usize],
-                               "{name}: adjacent nodes share a colour");
+                    assert_ne!(
+                        g.colors[i], g.colors[g.nbr[e] as usize],
+                        "{name}: adjacent nodes share a colour"
+                    );
                 }
             }
-            assert_eq!(g.classes.iter().map(std::vec::Vec::len).sum::<usize>(), g.n,
-                       "{name}: every node lands in exactly one class");
+            assert_eq!(
+                g.classes.iter().map(std::vec::Vec::len).sum::<usize>(),
+                g.n,
+                "{name}: every node lands in exactly one class"
+            );
             let mut s = crate::gibbs::Sampler::new(g, 0.3, 7);
             let set = s.collect(&crate::samples::Plan::new(200, 200, 1), None);
             assert_eq!(set.len(), 200);
-            assert!(set.magnetization().unwrap().value.abs() <= 1.0, "{name} samples");
+            assert!(
+                set.magnetization().unwrap().value.abs() <= 1.0,
+                "{name} samples"
+            );
         }
     }
 
@@ -519,13 +601,23 @@ mod proofs {
         let lin = |u: usize, w: usize, k: usize, j: usize, z: usize| {
             ((((u * BIG + w) * T + k) * 2 + j) * M + z)
         };
-        let (u, w, k, j, z): (usize, usize, usize, usize, usize) =
-            (kani::any(), kani::any(), kani::any(), kani::any(), kani::any());
+        let (u, w, k, j, z): (usize, usize, usize, usize, usize) = (
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
         kani::assume(u < 2 && w < BIG && k < T && j < 2 && z < M);
         assert!(lin(u, w, k, j, z) < 4 * T * M * BIG, "in range");
 
-        let (u2, w2, k2, j2, z2): (usize, usize, usize, usize, usize) =
-            (kani::any(), kani::any(), kani::any(), kani::any(), kani::any());
+        let (u2, w2, k2, j2, z2): (usize, usize, usize, usize, usize) = (
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+            kani::any(),
+        );
         kani::assume(u2 < 2 && w2 < BIG && k2 < T && j2 < 2 && z2 < M);
         kani::assume((u, w, k, j, z) != (u2, w2, k2, j2, z2));
         assert_ne!(lin(u, w, k, j, z), lin(u2, w2, k2, j2, z2), "injective");

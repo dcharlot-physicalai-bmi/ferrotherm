@@ -145,7 +145,8 @@ pub fn onsager_log_z_density(beta: f64, j: f64, grid: usize) -> f64 {
             acc += (c2 * c2 - s2 * (t1.cos() + t2.cos())).ln();
         }
     }
-    core::f64::consts::LN_2 + acc * step * step / (8.0 * core::f64::consts::PI * core::f64::consts::PI)
+    core::f64::consts::LN_2
+        + acc * step * step / (8.0 * core::f64::consts::PI * core::f64::consts::PI)
 }
 
 /// The arithmetic–geometric mean of `a` and `b`.
@@ -234,7 +235,11 @@ pub fn onsager_energy_density(beta: f64, j: f64) -> f64 {
     let cc = c2 * c2;
     let comp = (1.0 - s2 * s2).abs() / cc;
     let coeff = (s2 * s2 - 1.0) / cc;
-    let term = if comp == 0.0 { 0.0 } else { coeff * elliptic_k_comp(comp) };
+    let term = if comp == 0.0 {
+        0.0
+    } else {
+        coeff * elliptic_k_comp(comp)
+    };
     -j * (c2 / s2) * (1.0 + (2.0 / core::f64::consts::PI) * term)
 }
 
@@ -276,12 +281,22 @@ pub fn palindromic_sweep_masked(g: &Graph, beta: f64, s: &mut [i8], rng: &mut Pc
 ///
 /// If `runs` is zero, or the ladder has fewer than two rungs.
 #[must_use]
-pub fn ais_clamped(g: &Graph, fixed: &[(usize, i8)], ladder: &[f64], sweeps: usize, runs: usize, seed: u64) -> Ais {
+pub fn ais_clamped(
+    g: &Graph,
+    fixed: &[(usize, i8)],
+    ladder: &[f64],
+    sweeps: usize,
+    runs: usize,
+    seed: u64,
+) -> Ais {
     check_ladder(ladder);
     assert!(runs >= 1);
     let mut free = vec![true; g.n];
     for &(i, v) in fixed {
-        assert!(i < g.n && (v == 1 || v == -1), "clamp {i} to {v} is not a site and a spin");
+        assert!(
+            i < g.n && (v == 1 || v == -1),
+            "clamp {i} to {v} is not a site and a spin"
+        );
         free[i] = false;
     }
     let n_free = free.iter().filter(|&&f| f).count();
@@ -305,7 +320,9 @@ pub fn ais_clamped(g: &Graph, fixed: &[(usize, i8)], ladder: &[f64], sweeps: usi
 }
 
 fn uniform_state(n: usize, rng: &mut Pcg) -> Vec<i8> {
-    (0..n).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect()
+    (0..n)
+        .map(|_| if rng.f64() < 0.5 { -1 } else { 1 })
+        .collect()
 }
 
 /// A linear ladder `0, β/K, 2β/K, …, β` with `rungs = K + 1` rungs.
@@ -325,12 +342,26 @@ fn uniform_state(n: usize, rng: &mut Pcg) -> Vec<i8> {
 pub fn linear_ladder(beta: f64, rungs: usize) -> Vec<f64> {
     assert!(rungs >= 2 && beta > 0.0);
     let k = (rungs - 1) as f64;
-    (0..rungs).map(|i| if i + 1 == rungs { beta } else { beta * i as f64 / k }).collect()
+    (0..rungs)
+        .map(|i| {
+            if i + 1 == rungs {
+                beta
+            } else {
+                beta * i as f64 / k
+            }
+        })
+        .collect()
 }
 
 fn check_ladder(ladder: &[f64]) {
-    assert!(ladder.len() >= 2, "a ladder needs at least the reference rung and the target");
-    assert!(ladder[0] == 0.0, "the ladder must start at beta = 0, where ln Z = n ln 2 is known");
+    assert!(
+        ladder.len() >= 2,
+        "a ladder needs at least the reference rung and the target"
+    );
+    assert!(
+        ladder[0] == 0.0,
+        "the ladder must start at beta = 0, where ln Z = n ln 2 is known"
+    );
     for w in ladder.windows(2) {
         assert!(w[1] > w[0], "the ladder must increase strictly");
     }
@@ -413,7 +444,13 @@ fn finish_ais(n: usize, beta: f64, log_weights: Vec<f64>) -> Ais {
     let log_z = n as f64 * core::f64::consts::LN_2 + lse - (log_weights.len() as f64).ln();
     let lse2 = log_sum_exp(&log_weights.iter().map(|w| 2.0 * w).collect::<Vec<_>>());
     let ess = (2.0 * lse - lse2).exp();
-    Ais { n, beta, log_weights, log_z, ess }
+    Ais {
+        n,
+        beta,
+        log_weights,
+        log_z,
+        ess,
+    }
 }
 
 /// What a reverse AIS run produced.
@@ -455,7 +492,13 @@ impl ReverseAis {
 ///
 /// If `starts` is empty -- reverse AIS needs samples from the target to run backwards from.
 #[must_use]
-pub fn reverse_ais(g: &Graph, ladder: &[f64], sweeps: usize, starts: &[Vec<i8>], seed: u64) -> ReverseAis {
+pub fn reverse_ais(
+    g: &Graph,
+    ladder: &[f64],
+    sweeps: usize,
+    starts: &[Vec<i8>],
+    seed: u64,
+) -> ReverseAis {
     check_ladder(ladder);
     assert!(!starts.is_empty());
     let mut log_weights = Vec::with_capacity(starts.len());
@@ -476,7 +519,13 @@ pub fn reverse_ais(g: &Graph, ladder: &[f64], sweeps: usize, starts: &[Vec<i8>],
     let a = finish_ais(g.n, *ladder.last().unwrap(), log_weights);
     // mean(w') estimates Z_0 / Z, so ln Z = n ln 2 − ln mean(w') = 2·n ln 2 − (n ln 2 + ln mean).
     let log_z = 2.0 * g.n as f64 * core::f64::consts::LN_2 - a.log_z;
-    ReverseAis { n: g.n, beta: a.beta, log_weights: a.log_weights, log_z, ess: a.ess }
+    ReverseAis {
+        n: g.n,
+        beta: a.beta,
+        log_weights: a.log_weights,
+        log_z,
+        ess: a.ess,
+    }
 }
 
 /// A two-sided high-probability bound on `ln Z`, from a forward and a reverse run.
@@ -500,7 +549,11 @@ impl Sandwich {
     #[must_use]
     pub fn new(fwd: &Ais, rev: &ReverseAis, delta: f64) -> Sandwich {
         assert_eq!(fwd.n, rev.n);
-        Sandwich { lower: fwd.lower_bound(delta), upper: rev.upper_bound(delta), confidence: 1.0 - 2.0 * delta }
+        Sandwich {
+            lower: fwd.lower_bound(delta),
+            upper: rev.upper_bound(delta),
+            confidence: 1.0 - 2.0 * delta,
+        }
     }
 
     #[must_use]
@@ -555,7 +608,14 @@ impl Ti {
 ///
 /// If `draws` is below 4, too few for a standard error.
 #[must_use]
-pub fn thermodynamic_integration(g: &Graph, ladder: &[f64], burn_in: usize, draws: usize, z: f64, seed: u64) -> Ti {
+pub fn thermodynamic_integration(
+    g: &Graph,
+    ladder: &[f64],
+    burn_in: usize,
+    draws: usize,
+    z: f64,
+    seed: u64,
+) -> Ti {
     check_ladder(ladder);
     assert!(draws >= 4);
     let traces = sample_ladder_energies(g, ladder, burn_in, draws, seed);
@@ -571,12 +631,23 @@ pub fn thermodynamic_integration(g: &Graph, ladder: &[f64], burn_in: usize, draw
 ///
 /// If `draws` is below 4.
 #[must_use]
-pub fn sample_ladder_energies(g: &Graph, ladder: &[f64], burn_in: usize, draws: usize, seed: u64) -> Vec<(f64, Vec<f64>)> {
+pub fn sample_ladder_energies(
+    g: &Graph,
+    ladder: &[f64],
+    burn_in: usize,
+    draws: usize,
+    seed: u64,
+) -> Vec<(f64, Vec<f64>)> {
     check_ladder(ladder);
     assert!(draws >= 4);
     let mut out = Vec::with_capacity(ladder.len());
     let mut rng0 = Pcg::new(seed, 0);
-    out.push((0.0, (0..draws).map(|_| g.energy(&uniform_state(g.n, &mut rng0))).collect()));
+    out.push((
+        0.0,
+        (0..draws)
+            .map(|_| g.energy(&uniform_state(g.n, &mut rng0)))
+            .collect(),
+    ));
     for (k, &beta) in ladder.iter().enumerate().skip(1) {
         let mut rng = Pcg::new(seed, k as u64);
         let mut s = uniform_state(g.n, &mut rng);
@@ -601,7 +672,12 @@ pub fn sample_ladder_energies(g: &Graph, ladder: &[f64], burn_in: usize, draws: 
 /// If the rungs are not anchored at `beta = 0`, where `ln Z` is known exactly.
 #[must_use]
 pub fn ti_from_rungs(n: usize, mut rungs: Vec<(f64, Estimate)>, z: f64) -> Ti {
-    rungs[0].1 = Estimate { value: 0.0, stderr: 0.0, ess: f64::INFINITY, tau_int: 0.0 };
+    rungs[0].1 = Estimate {
+        value: 0.0,
+        stderr: 0.0,
+        ess: f64::INFINITY,
+        tau_int: 0.0,
+    };
     // Left sum uses the mean at the lower end of each interval (the larger value), right sum the
     // upper end; ⟨E⟩ non-increasing ⇒ left ≥ ∫ ≥ right ⇒ n ln 2 − left ≤ ln Z ≤ n ln 2 − right.
     let n_ln2 = n as f64 * core::f64::consts::LN_2;
@@ -641,7 +717,12 @@ fn estimate(trace: &[f64]) -> Estimate {
     // to 1.6 times too narrow there.
     let tau = tau_estimate(&[trace]).tau;
     let ess = n / (2.0 * tau);
-    Estimate { value: mean, stderr: (var / ess).sqrt(), ess, tau_int: tau }
+    Estimate {
+        value: mean,
+        stderr: (var / ess).sqrt(),
+        ess,
+        tau_int: tau,
+    }
 }
 
 // ---- Bennett acceptance ratio ----------------------------------------------------------------
@@ -695,10 +776,16 @@ pub fn bar_pair(beta_a: f64, energies_a: &[f64], beta_b: f64, energies_b: &[f64]
     let (na, nb) = (la.len() as f64, lb.len() as f64);
     let m = (na / nb).ln();
     let resid = |delta: f64| -> f64 {
-        la.iter().map(|&l| fermi(l - delta - m)).sum::<f64>() - lb.iter().map(|&l| fermi(delta + m - l)).sum::<f64>()
+        la.iter().map(|&l| fermi(l - delta - m)).sum::<f64>()
+            - lb.iter().map(|&l| fermi(delta + m - l)).sum::<f64>()
     };
     // Bracket the root: the residual is positive far left and negative far right.
-    let spread = la.iter().chain(lb.iter()).fold(0.0f64, |acc, &l| acc.max(l.abs())) + m.abs() + 1.0;
+    let spread = la
+        .iter()
+        .chain(lb.iter())
+        .fold(0.0f64, |acc, &l| acc.max(l.abs()))
+        + m.abs()
+        + 1.0;
     let (mut lo, mut hi) = (-spread, spread);
     while resid(lo) < 0.0 {
         lo *= 2.0;
@@ -729,7 +816,14 @@ pub fn bar_pair(beta_a: f64, energies_a: &[f64], beta_b: f64, energies_b: &[f64]
     let ess_a = na / (2.0 * tau_estimate(&[&la]).tau);
     let ess_b = nb / (2.0 * tau_estimate(&[&lb]).tau);
     let var = side(&la, 1.0) / ess_a + side(&lb, -1.0) / ess_b;
-    BarPair { beta_a, beta_b, delta, stderr: var.max(0.0).sqrt(), ess_a, ess_b }
+    BarPair {
+        beta_a,
+        beta_b,
+        delta,
+        stderr: var.max(0.0).sqrt(),
+        ess_a,
+        ess_b,
+    }
 }
 
 /// One rung of the free-energy curve.
@@ -790,7 +884,10 @@ impl Thermo {
 /// anchored where `ln Z` is known.
 #[must_use]
 pub fn bar_ladder(n: usize, traces: &[(f64, Vec<f64>)], z: f64) -> Thermo {
-    assert!(traces.len() >= 2 && traces[0].0 == 0.0, "the curve is anchored at beta = 0");
+    assert!(
+        traces.len() >= 2 && traces[0].0 == 0.0,
+        "the curve is anchored at beta = 0"
+    );
     let mut log_z = n as f64 * core::f64::consts::LN_2;
     let mut var = 0.0;
     let mut rungs = Vec::with_capacity(traces.len());
@@ -814,13 +911,28 @@ pub fn bar_ladder(n: usize, traces: &[(f64, Vec<f64>)], z: f64) -> Thermo {
         });
         means.push((*beta, m));
     }
-    Thermo { n, rungs, ti: ti_from_rungs(n, means, z) }
+    Thermo {
+        n,
+        rungs,
+        ti: ti_from_rungs(n, means, z),
+    }
 }
 
 /// Draw the chains and build the curve: [`sample_ladder_energies`] then [`bar_ladder`].
 #[must_use]
-pub fn thermodynamics(g: &Graph, ladder: &[f64], burn_in: usize, draws: usize, z: f64, seed: u64) -> Thermo {
-    bar_ladder(g.n, &sample_ladder_energies(g, ladder, burn_in, draws, seed), z)
+pub fn thermodynamics(
+    g: &Graph,
+    ladder: &[f64],
+    burn_in: usize,
+    draws: usize,
+    z: f64,
+    seed: u64,
+) -> Thermo {
+    bar_ladder(
+        g.n,
+        &sample_ladder_energies(g, ladder, burn_in, draws, seed),
+        z,
+    )
 }
 
 // ---- outward rounding --------------------------------------------------------------------------
@@ -888,13 +1000,27 @@ mod tests {
     /// Two exact routes and one closed form agree, which pins every sign convention at once.
     #[test]
     fn exact_routes_and_the_transfer_matrix_agree() {
-        for &(n, j, h, beta) in &[(8usize, 1.0, 0.0, 0.7), (9, -0.8, 0.3, 1.3), (12, 0.5, -0.2, 2.0)] {
+        for &(n, j, h, beta) in &[
+            (8usize, 1.0, 0.0, 0.7),
+            (9, -0.8, 0.3, 1.3),
+            (12, 0.5, -0.2, 2.0),
+        ] {
             let g = ising::ring(n, j, h);
             let enumerated = exact_log_z(&g, beta);
             let closed = ring_log_z(n, j, h, beta);
-            let eliminated = Elimination::default().log_partition(&g, beta).unwrap().log_z.unwrap();
-            assert!((enumerated - closed).abs() < 1e-9, "n={n}: enumeration {enumerated} vs transfer matrix {closed}");
-            assert!((enumerated - eliminated).abs() < 1e-9, "n={n}: enumeration {enumerated} vs elimination {eliminated}");
+            let eliminated = Elimination::default()
+                .log_partition(&g, beta)
+                .unwrap()
+                .log_z
+                .unwrap();
+            assert!(
+                (enumerated - closed).abs() < 1e-9,
+                "n={n}: enumeration {enumerated} vs transfer matrix {closed}"
+            );
+            assert!(
+                (enumerated - eliminated).abs() < 1e-9,
+                "n={n}: enumeration {enumerated} vs elimination {eliminated}"
+            );
         }
     }
 
@@ -904,8 +1030,14 @@ mod tests {
         assert!((onsager_log_z_density(0.0, 1.0, 64) - core::f64::consts::LN_2).abs() < 1e-12);
         let k = 3.0;
         let f = onsager_log_z_density(k, 1.0, 256);
-        assert!((f - 2.0 * k).abs() < 1e-3, "at K=3 the density is 2K up to e^{{-4K}} terms: {f}");
-        let (a, b) = (onsager_log_z_density(0.2, 1.0, 128), onsager_log_z_density(0.3, 1.0, 128));
+        assert!(
+            (f - 2.0 * k).abs() < 1e-3,
+            "at K=3 the density is 2K up to e^{{-4K}} terms: {f}"
+        );
+        let (a, b) = (
+            onsager_log_z_density(0.2, 1.0, 128),
+            onsager_log_z_density(0.3, 1.0, 128),
+        );
         assert!(b > a, "ln Z / N increases with beta");
     }
 
@@ -920,9 +1052,22 @@ mod tests {
             let a = ais(&g, &ladder, 2, 64, seed);
             // delta = 1e-6 makes a violation a one-in-a-million event; twenty seeds then cannot
             // produce one by chance, which is what lets a probabilistic bound sit in a test.
-            assert!(a.lower_bound(1e-6) <= truth, "seed {seed}: lower {} > truth {truth}", a.lower_bound(1e-6));
-            assert!((a.log_z - truth).abs() < 0.3, "seed {seed}: estimate {} vs truth {truth} (ess {})", a.log_z, a.ess);
-            assert!(a.ess > 8.0, "seed {seed}: degenerate weights, ess {}", a.ess);
+            assert!(
+                a.lower_bound(1e-6) <= truth,
+                "seed {seed}: lower {} > truth {truth}",
+                a.lower_bound(1e-6)
+            );
+            assert!(
+                (a.log_z - truth).abs() < 0.3,
+                "seed {seed}: estimate {} vs truth {truth} (ess {})",
+                a.log_z,
+                a.ess
+            );
+            assert!(
+                a.ess > 8.0,
+                "seed {seed}: degenerate weights, ess {}",
+                a.ess
+            );
         }
         // And the bound is not vacuous: the Markov slack is the only slack.
         let a = ais(&g, &ladder, 2, 64, 7);
@@ -952,18 +1097,39 @@ mod tests {
                     }
                     mask = m;
                 }
-                (0..g.n).map(|b| if mask >> b & 1 == 1 { 1 } else { -1 }).collect()
+                (0..g.n)
+                    .map(|b| if mask >> b & 1 == 1 { 1 } else { -1 })
+                    .collect()
             })
             .collect();
         for seed in 0..10u64 {
             let fwd = ais(&g, &ladder, 2, 64, seed);
             let rev = reverse_ais(&g, &ladder, 2, &starts, seed + 1000);
             let sw = Sandwich::new(&fwd, &rev, 1e-6);
-            assert!(sw.contains(truth), "seed {seed}: [{}, {}] misses {truth}", sw.lower, sw.upper);
-            assert!((rev.log_z - truth).abs() < 0.3, "seed {seed}: reverse estimate {} vs {truth} (ess {})", rev.log_z, rev.ess);
-            assert!(rev.ess > 8.0, "seed {seed}: degenerate reverse weights, ess {}", rev.ess);
+            assert!(
+                sw.contains(truth),
+                "seed {seed}: [{}, {}] misses {truth}",
+                sw.lower,
+                sw.upper
+            );
+            assert!(
+                (rev.log_z - truth).abs() < 0.3,
+                "seed {seed}: reverse estimate {} vs {truth} (ess {})",
+                rev.log_z,
+                rev.ess
+            );
+            assert!(
+                rev.ess > 8.0,
+                "seed {seed}: degenerate reverse weights, ess {}",
+                rev.ess
+            );
             // The two point estimates bracket the truth in expectation: forward low, reverse high.
-            assert!(fwd.log_z <= rev.log_z + 0.2, "seed {seed}: forward {} above reverse {}", fwd.log_z, rev.log_z);
+            assert!(
+                fwd.log_z <= rev.log_z + 0.2,
+                "seed {seed}: forward {} above reverse {}",
+                fwd.log_z,
+                rev.log_z
+            );
         }
     }
 
@@ -976,11 +1142,23 @@ mod tests {
         let coarse = thermodynamic_integration(&g, &linear_ladder(beta, 6), 200, 2000, 3.0, 1);
         let fine = thermodynamic_integration(&g, &linear_ladder(beta, 24), 200, 2000, 3.0, 1);
         for t in [&coarse, &fine] {
-            assert!(t.lower_widened <= truth && truth <= t.upper_widened, "[{}, {}] misses {truth}", t.lower_widened, t.upper_widened);
+            assert!(
+                t.lower_widened <= truth && truth <= t.upper_widened,
+                "[{}, {}] misses {truth}",
+                t.lower_widened,
+                t.upper_widened
+            );
             assert!(t.lower <= t.upper);
         }
-        assert!(fine.upper - fine.lower < coarse.upper - coarse.lower, "refining the ladder must tighten the bracket");
-        assert!((fine.midpoint() - truth).abs() < 0.2, "fine midpoint {} vs {truth}", fine.midpoint());
+        assert!(
+            fine.upper - fine.lower < coarse.upper - coarse.lower,
+            "refining the ladder must tighten the bracket"
+        );
+        assert!(
+            (fine.midpoint() - truth).abs() < 0.2,
+            "fine midpoint {} vs {truth}",
+            fine.midpoint()
+        );
     }
 
     /// Past enumeration, AIS agrees with elimination on a lattice.
@@ -988,17 +1166,26 @@ mod tests {
     fn ais_agrees_with_elimination_past_enumeration() {
         let g = ising::lattice2d(6, 1.0); // 36 spins: enumeration refuses, elimination does not
         let beta = 0.4;
-        let truth = Elimination::default().log_partition(&g, beta).unwrap().log_z.unwrap();
+        let truth = Elimination::default()
+            .log_partition(&g, beta)
+            .unwrap()
+            .log_z
+            .unwrap();
         let a = ais(&g, &linear_ladder(beta, 64), 2, 128, 3);
         assert!(a.lower_bound(1e-6) <= truth);
-        assert!((a.log_z - truth).abs() < 0.3, "estimate {} vs elimination {truth} (ess {})", a.log_z, a.ess);
+        assert!(
+            (a.log_z - truth).abs() < 0.3,
+            "estimate {} vs elimination {truth} (ess {})",
+            a.log_z,
+            a.ess
+        );
     }
 
     /// Population annealing already reports an absolute `ln Z` by a different route (sequential
     /// Monte Carlo with resampling); the three must agree on the same model.
     #[test]
     fn three_estimators_agree_with_each_other_and_the_truth() {
-        use crate::popanneal::{run, Params};
+        use crate::popanneal::{Params, run};
         let g = ising::ring(12, 1.0, 0.15);
         let beta = 0.8;
         let truth = ring_log_z(12, 1.0, 0.15, beta);
@@ -1006,7 +1193,11 @@ mod tests {
         let t = thermodynamic_integration(&g, &linear_ladder(beta, 32), 100, 1000, 3.0, 5);
         let p = run(&g, &Params::linear_from_zero(256, 2, beta, 64), 5);
         assert!(p.ln_z_is_absolute);
-        for (name, est) in [("ais", a.log_z), ("ti midpoint", t.midpoint()), ("population annealing", p.ln_z)] {
+        for (name, est) in [
+            ("ais", a.log_z),
+            ("ti midpoint", t.midpoint()),
+            ("population annealing", p.ln_z),
+        ] {
             assert!((est - truth).abs() < 0.3, "{name}: {est} vs truth {truth}");
         }
         assert!(t.lower_widened <= truth && truth <= t.upper_widened);
@@ -1019,27 +1210,52 @@ mod tests {
         let g = ising::ring(n, j, h);
         let th = thermodynamics(&g, &linear_ladder(2.0, 40), 300, 3000, 3.0, 21);
         assert_eq!(th.rungs.len(), 40);
-        assert!((th.rungs[0].log_z - n as f64 * core::f64::consts::LN_2).abs() < 1e-12, "the anchor is exact");
+        assert!(
+            (th.rungs[0].log_z - n as f64 * core::f64::consts::LN_2).abs() < 1e-12,
+            "the anchor is exact"
+        );
         assert!((th.rungs[0].entropy - n as f64 * core::f64::consts::LN_2).abs() < 1e-12);
         for r in &th.rungs[1..] {
             let truth = ring_log_z(n, j, h, r.beta);
-            assert!((r.log_z - truth).abs() < 0.15 + 4.0 * r.stderr, "beta {}: BAR {} +- {} vs {truth}", r.beta, r.log_z, r.stderr);
+            assert!(
+                (r.log_z - truth).abs() < 0.15 + 4.0 * r.stderr,
+                "beta {}: BAR {} +- {} vs {truth}",
+                r.beta,
+                r.log_z,
+                r.stderr
+            );
             // entropy oracle: S = ln Z + beta <E>, <E> = -d ln Z / d beta by central difference.
             let hh = 1e-5;
-            let mean_e = -(ring_log_z(n, j, h, r.beta + hh) - ring_log_z(n, j, h, r.beta - hh)) / (2.0 * hh);
+            let mean_e =
+                -(ring_log_z(n, j, h, r.beta + hh) - ring_log_z(n, j, h, r.beta - hh)) / (2.0 * hh);
             let s_truth = truth + r.beta * mean_e;
             // The claim is that the REPORTED error bars cover the truth: S inherits ln Z's
             // standard error and beta times the mean energy's.
             let tol = 0.05 + 4.0 * (r.stderr + r.beta * r.mean_energy.stderr);
-            assert!((r.entropy - s_truth).abs() < tol, "beta {}: entropy {} vs {s_truth} (tol {tol})", r.beta, r.entropy);
+            assert!(
+                (r.entropy - s_truth).abs() < tol,
+                "beta {}: entropy {} vs {s_truth} (tol {tol})",
+                r.beta,
+                r.entropy
+            );
         }
         // Entropy falls with beta and, with no field, heads for ln 2 (the two ground states).
         for w in th.rungs.windows(2) {
             // Non-increasing up to the two estimates' own noise, beta * se(<E>) each.
-            let slack = 0.02 + 4.0 * (w[0].beta * w[0].mean_energy.stderr + w[1].beta * w[1].mean_energy.stderr);
-            assert!(w[1].entropy <= w[0].entropy + slack, "entropy rose from {} to {} (slack {slack})", w[0].entropy, w[1].entropy);
+            let slack = 0.02
+                + 4.0 * (w[0].beta * w[0].mean_energy.stderr + w[1].beta * w[1].mean_energy.stderr);
+            assert!(
+                w[1].entropy <= w[0].entropy + slack,
+                "entropy rose from {} to {} (slack {slack})",
+                w[0].entropy,
+                w[1].entropy
+            );
         }
-        assert!((th.top().entropy - core::f64::consts::LN_2).abs() < 0.3, "S(2.0) = {}", th.top().entropy);
+        assert!(
+            (th.top().entropy - core::f64::consts::LN_2).abs() < 0.3,
+            "S(2.0) = {}",
+            th.top().entropy
+        );
         // Same samples, two estimators: the TI bracket contains the BAR top rung.
         assert!(th.ti.lower_widened <= th.top().log_z && th.top().log_z <= th.ti.upper_widened);
     }
@@ -1050,7 +1266,9 @@ mod tests {
         let g = ising::ring(10, 1.0, 0.3);
         let beta = 1.1;
         let fixed = [(0usize, 1i8), (3, -1), (7, 1)];
-        let free: Vec<usize> = (0..g.n).filter(|i| !fixed.iter().any(|(f, _)| f == i)).collect();
+        let free: Vec<usize> = (0..g.n)
+            .filter(|i| !fixed.iter().any(|(f, _)| f == i))
+            .collect();
         let mut s = vec![0i8; g.n];
         for &(i, v) in &fixed {
             s[i] = v;
@@ -1067,13 +1285,26 @@ mod tests {
             let a = ais_clamped(&g, &fixed, &linear_ladder(beta, 64), 2, 64, seed);
             assert_eq!(a.n, free.len());
             assert!(a.lower_bound(1e-6) <= truth);
-            assert!((a.log_z - truth).abs() < 0.3, "seed {seed}: {} vs {truth}", a.log_z);
+            assert!(
+                (a.log_z - truth).abs() < 0.3,
+                "seed {seed}: {} vs {truth}",
+                a.log_z
+            );
         }
     }
 
     #[test]
     fn rounding_steps_one_ulp_in_both_directions() {
-        for x in [0.0, -0.0, 1.0, -1.0, 123.456, -1e-300, f64::MAX, f64::MIN_POSITIVE] {
+        for x in [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            123.456,
+            -1e-300,
+            f64::MAX,
+            f64::MIN_POSITIVE,
+        ] {
             assert!(next_down(x) < x);
             assert!(next_up(x) > x);
             assert_eq!(next_up(next_down(x)), x);
@@ -1112,10 +1343,16 @@ mod tests {
     fn the_agm_is_its_own_fixed_point_and_lies_between_its_arguments() {
         for &(a, b) in &[(1.0f64, 0.5f64), (2.0, 1.0), (1.0, 1e-6), (3.0, 3.0)] {
             let m = agm(a, b);
-            assert!(m >= a.min(b) - 1e-12 && m <= a.max(b) + 1e-12, "agm({a},{b}) = {m}");
+            assert!(
+                m >= a.min(b) - 1e-12 && m <= a.max(b) + 1e-12,
+                "agm({a},{b}) = {m}"
+            );
             // Idempotent on equal arguments, and invariant under one step of its own iteration.
             let stepped = agm(0.5 * (a + b), (a * b).sqrt());
-            assert!((m - stepped).abs() < 1e-14, "agm is not invariant under its own step");
+            assert!(
+                (m - stepped).abs() < 1e-14,
+                "agm is not invariant under its own step"
+            );
         }
         assert!((agm(1.0, 1.0) - 1.0).abs() < 1e-15);
     }
@@ -1131,7 +1368,10 @@ mod tests {
         for &j in &[1.0f64, 2.0, 0.5] {
             let got = onsager_energy_density(beta_c / j, j);
             let want = -j * 2.0f64.sqrt();
-            assert!((got - want).abs() < 1e-12, "J = {j}: {got:.12} against {want:.12}");
+            assert!(
+                (got - want).abs() < 1e-12,
+                "J = {j}: {got:.12} against {want:.12}"
+            );
         }
     }
 
@@ -1153,7 +1393,10 @@ mod tests {
         );
 
         let got = onsager_energy_density(at_pole, 1.0);
-        assert!(got.is_finite(), "the energy density went to {got} at the critical point");
+        assert!(
+            got.is_finite(),
+            "the energy density went to {got} at the critical point"
+        );
         assert!(
             (got + 2.0f64.sqrt()).abs() < 1e-9,
             "and it should still be -sqrt(2): got {got}"
@@ -1192,5 +1435,4 @@ mod tests {
             );
         }
     }
-
 }

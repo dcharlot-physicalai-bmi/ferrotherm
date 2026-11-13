@@ -18,7 +18,7 @@
 //
 // run: cargo run --release --example compile_chain
 
-use ferrotherm::compile::{factor_eps, fit, patch_kernel, Cpt};
+use ferrotherm::compile::{Cpt, factor_eps, fit, patch_kernel};
 
 const NB: usize = 4; // bits per stage
 const NS: usize = 16; // states per stage
@@ -31,7 +31,13 @@ fn stage_cpt(stage: usize) -> Cpt {
             // deterministic core: stage 0 = rotate-left; 1 = xor with parity; 2 = increment
             let core = match stage {
                 0 => ((xm << 1) | (xm >> (NB - 1))) & (NS - 1),
-                1 => xm ^ (if (xm.count_ones() % 2) == 1 { 0b1001 } else { 0b0011 }),
+                1 => {
+                    xm ^ (if (xm.count_ones() % 2) == 1 {
+                        0b1001
+                    } else {
+                        0b0011
+                    })
+                }
                 _ => (xm + 1) & (NS - 1),
             };
             // smeared with Hamming-distance noise
@@ -64,7 +70,9 @@ fn push_kernel(mu: &[f64], k: &ferrotherm::compile::Kernel) -> Vec<f64> {
     let mut out = vec![0.0; NS];
     for xm in 0..NS {
         if mu[xm] > 0.0 {
-            let x: Vec<i8> = (0..NB).map(|b| if xm >> b & 1 == 1 { 1 } else { -1 }).collect();
+            let x: Vec<i8> = (0..NB)
+                .map(|b| if xm >> b & 1 == 1 { 1 } else { -1 })
+                .collect();
             let q = k.exact_conditional(&x);
             for ym in 0..NS {
                 out[ym] += mu[xm] * q[ym];
@@ -77,7 +85,13 @@ fn push_kernel(mu: &[f64], k: &ferrotherm::compile::Kernel) -> Vec<f64> {
 fn kl(p: &[f64], q: &[f64]) -> f64 {
     p.iter()
         .zip(q)
-        .map(|(&a, &b)| if a > 0.0 { a * (a.ln() - b.max(1e-300).ln()) } else { 0.0 })
+        .map(|(&a, &b)| {
+            if a > 0.0 {
+                a * (a.ln() - b.max(1e-300).ln())
+            } else {
+                0.0
+            }
+        })
         .sum()
 }
 
@@ -123,9 +137,18 @@ fn main() {
     println!("\n  exact readout KL(target || compiled) = {readout:.4} nats");
     println!("  bound  sum_l eps_l                   = {bound:.4} nats");
     let bound_ok = readout <= bound + 1e-9;
-    println!("  Eq.17 bound: {}", if bound_ok { "HOLDS (exactly, no sampling)" } else { "VIOLATED — bug" });
-    println!("  slack = {:.1}% of the bound (mixing kernels contract errors; the bound is worst-case)",
-             100.0 * (1.0 - readout / bound.max(1e-12)));
+    println!(
+        "  Eq.17 bound: {}",
+        if bound_ok {
+            "HOLDS (exactly, no sampling)"
+        } else {
+            "VIOLATED — bug"
+        }
+    );
+    println!(
+        "  slack = {:.1}% of the bound (mixing kernels contract errors; the bound is worst-case)",
+        100.0 * (1.0 - readout / bound.max(1e-12))
+    );
 
     // ---- context matching: compile stage 2 under uniform inputs instead of its true marginal ----
     let cpt2 = stage_cpt(2);
@@ -140,16 +163,30 @@ fn main() {
     fit(&mut k_uni, &cpt2, &uniform, 1500, 0.08);
     let e_ctx = factor_eps(&k_ctx, &cpt2, &mu2_true);
     let e_uni = factor_eps(&k_uni, &cpt2, &mu2_true); // evaluated under the TRUE inputs
-    println!("\ncontext matching (stage 2, same init, only the training input distribution differs):");
-    println!("  eps under true inputs — compiled on true marginal: {e_ctx:.4}   compiled on uniform: {e_uni:.4}");
+    println!(
+        "\ncontext matching (stage 2, same init, only the training input distribution differs):"
+    );
+    println!(
+        "  eps under true inputs — compiled on true marginal: {e_ctx:.4}   compiled on uniform: {e_uni:.4}"
+    );
     let ctx_ok = e_ctx <= e_uni + 1e-6;
-    println!("  {}", if ctx_ok {
-        "context-matched compilation is at least as good on the inputs the program actually feeds it"
-    } else {
-        "UNEXPECTED: uniform beat context-matched on true inputs"
-    });
+    println!(
+        "  {}",
+        if ctx_ok {
+            "context-matched compilation is at least as good on the inputs the program actually feeds it"
+        } else {
+            "UNEXPECTED: uniform beat context-matched on true inputs"
+        }
+    );
 
     let ok = bound_ok && ctx_ok;
-    println!("\n  verdict: {}", if ok { "PASS — the compilation bound and the context-matching effect are verified exactly" } else { "FAIL" });
+    println!(
+        "\n  verdict: {}",
+        if ok {
+            "PASS — the compilation bound and the context-matching effect are verified exactly"
+        } else {
+            "FAIL"
+        }
+    );
     std::process::exit(if ok { 0 } else { 1 });
 }

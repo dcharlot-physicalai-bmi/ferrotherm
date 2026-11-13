@@ -109,8 +109,14 @@ pub fn analog_bit_energy(bits: u32, temperature_k: f64) -> f64 {
 #[must_use]
 pub fn analog_bit_energy_with(bits: u32, temperature_k: f64, kappa: f64) -> f64 {
     assert!(bits > 0, "a zero-bit readout resolves nothing");
-    assert!(temperature_k > 0.0, "temperature must be positive, got {temperature_k}");
-    assert!(kappa > 0.0, "the convention constant must be positive, got {kappa}");
+    assert!(
+        temperature_k > 0.0,
+        "temperature must be positive, got {temperature_k}"
+    );
+    assert!(
+        kappa > 0.0,
+        "the convention constant must be positive, got {kappa}"
+    );
     kappa * BOLTZMANN_CONSTANT * temperature_k * 2.0f64.powi(2 * bits as i32)
 }
 
@@ -121,7 +127,10 @@ pub fn analog_bit_energy_with(bits: u32, temperature_k: f64, kappa: f64) -> f64 
 /// If the temperature is not positive.
 #[must_use]
 pub fn digital_bit_energy(bits: u32, temperature_k: f64) -> f64 {
-    assert!(temperature_k > 0.0, "temperature must be positive, got {temperature_k}");
+    assert!(
+        temperature_k > 0.0,
+        "temperature must be positive, got {temperature_k}"
+    );
     f64::from(bits) * BOLTZMANN_CONSTANT * temperature_k * core::f64::consts::LN_2
 }
 
@@ -166,7 +175,10 @@ impl EmulationCost {
     /// If the budget or `beta` is not positive.
     #[must_use]
     pub fn for_budget(sys: &Kuramoto, beta: f64, budget_nats: f64) -> EmulationCost {
-        assert!(budget_nats > 0.0, "a KL budget must be positive, got {budget_nats}");
+        assert!(
+            budget_nats > 0.0,
+            "a KL budget must be positive, got {budget_nats}"
+        );
         assert!(beta > 0.0, "beta must be positive, got {beta}");
         let mass = sys.coupling_mass();
         let needed = 2.0 * core::f64::consts::TAU * beta * mass / budget_nats;
@@ -202,7 +214,10 @@ impl EmulationCost {
 /// If `bits` is zero or `e_update` is not finite and positive.
 #[must_use]
 pub fn oscillator_fabric_floor(bits: u32, e_update: f64) -> Prices {
-    assert!(e_update > 0.0 && e_update.is_finite(), "state a positive per-update energy");
+    assert!(
+        e_update > 0.0 && e_update.is_finite(),
+        "state a positive per-update energy"
+    );
     Prices {
         e_sample: e_update,
         e_read: analog_bit_energy(bits, ROOM_TEMPERATURE_K),
@@ -320,7 +335,11 @@ impl GeneratorBudget {
         let readout =
             self.oscillators as f64 * analog_bit_energy(self.readout_bits, ROOM_TEMPERATURE_K);
         let decoder = self.decoder_params as f64 * self.e_mac;
-        Breakdown { dynamics, readout, decoder }
+        Breakdown {
+            dynamics,
+            readout,
+            decoder,
+        }
     }
 }
 
@@ -345,7 +364,10 @@ mod tests {
         // The comparison that settles the substrate argument. Every depth, not a chosen one.
         for b in 1..=32u32 {
             let r = analog_to_landauer_ratio(b);
-            assert!(r > 1.0, "an analogue node at {b} bits should not beat Landauer, got {r}");
+            assert!(
+                r > 1.0,
+                "an analogue node at {b} bits should not beat Landauer, got {r}"
+            );
         }
         // The headline figures quoted in the module documentation, checked rather than asserted.
         assert!((analog_to_landauer_ratio(1) - 69.249).abs() < 0.01);
@@ -371,8 +393,15 @@ mod tests {
         let sys = Kuramoto::gradient(k, n).expect("symmetric fixture");
         let loose = EmulationCost::for_budget(&sys, 1.0, 1.0);
         let tight = EmulationCost::for_budget(&sys, 1.0, 0.5);
-        assert_eq!(tight.bits, loose.bits + 1, "halving the budget should cost exactly one bit");
-        assert!(loose.kl_nats <= 1.0, "the returned grid must meet the budget it was asked for");
+        assert_eq!(
+            tight.bits,
+            loose.bits + 1,
+            "halving the budget should cost exactly one bit"
+        );
+        assert!(
+            loose.kl_nats <= 1.0,
+            "the returned grid must meet the budget it was asked for"
+        );
         assert!(tight.kl_nats <= 0.5);
         // And the readout price of that extra bit is a factor of four.
         assert!((tight.read_joules / loose.read_joules - 4.0).abs() < 1e-9);
@@ -391,7 +420,11 @@ mod tests {
         }
         let sys = Kuramoto::gradient(k, n).expect("symmetric fixture");
         let cost = EmulationCost::for_budget(&sys, 1.0, 0.1);
-        assert!(cost.bits <= 12, "a 0.1-nat emulation should not need {} bits", cost.bits);
+        assert!(
+            cost.bits <= 12,
+            "a 0.1-nat emulation should not need {} bits",
+            cost.bits
+        );
     }
 
     #[test]
@@ -438,20 +471,37 @@ mod tests {
         // published architecture actually lives in.
         let real = 30.0 * analog_bit_energy(8, ROOM_TEMPERATURE_K);
         let dynamics = 10.0 * 7.09e-15;
-        assert!(real > dynamics, "a realistic converter should outweigh ten updates");
-        assert!(real / dynamics < 2.0, "and not by more than a small factor: {}", real / dynamics);
+        assert!(
+            real > dynamics,
+            "a realistic converter should outweigh ten updates"
+        );
+        assert!(
+            real / dynamics < 2.0,
+            "and not by more than a small factor: {}",
+            real / dynamics
+        );
     }
 
     #[test]
     fn the_fabric_floor_prices_reads_and_refuses_writes() {
         let p = oscillator_fabric_floor(8, 1e-15);
         assert!(p.e_read > 0.0 && p.e_read.is_finite());
-        assert!(!p.is_stated(), "an unstated write price must make the price set incomplete");
+        assert!(
+            !p.is_stated(),
+            "an unstated write price must make the price set incomplete"
+        );
         // A run that only samples and reads is priceable; one that writes is not.
-        let mut l = crate::ledger::Ledger { samples: 1_000, reads: 100, writes: 0 };
+        let mut l = crate::ledger::Ledger {
+            samples: 1_000,
+            reads: 100,
+            writes: 0,
+        };
         assert!(l.joules(&p).is_some());
         l.writes = 1;
-        assert!(l.joules(&p).is_none(), "an unstated write price must refuse, not assume zero");
+        assert!(
+            l.joules(&p).is_none(),
+            "an unstated write price must refuse, not assume zero"
+        );
     }
 
     #[test]

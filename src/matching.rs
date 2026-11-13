@@ -220,7 +220,10 @@ impl Blossom {
     /// edges between `xr` and the base. When the direct index is odd the list is reversed from the
     /// base onward — `[1..]`, never `[0..]`, because the base must stay first.
     fn get_pr(&mut self, b: usize, xr: usize) -> usize {
-        let pr = self.flower[b].iter().position(|&v| v == xr).expect("xr is a petal of b");
+        let pr = self.flower[b]
+            .iter()
+            .position(|&v| v == xr)
+            .expect("xr is a petal of b");
         if pr % 2 == 1 {
             let k = self.flower[b].len();
             self.flower[b][1..].reverse();
@@ -602,7 +605,10 @@ mod tests {
                         sum += c[i * n + mate[i]];
                     }
                 }
-                assert_eq!(sum, total, "the reported total is not the matching's weight");
+                assert_eq!(
+                    sum, total,
+                    "the reported total is not the matching's weight"
+                );
             }
         }
     }
@@ -647,7 +653,10 @@ mod tests {
         c[1] = 1;
         c[n] = 1;
         // 2 and 3 are isolated from everything, including each other.
-        assert!(min_weight_perfect(n, &c).is_none(), "there is no perfect matching here");
+        assert!(
+            min_weight_perfect(n, &c).is_none(),
+            "there is no perfect matching here"
+        );
 
         // And with the last pair connected, there is one.
         c[2 * n + 3] = 5;
@@ -658,9 +667,15 @@ mod tests {
 
     #[test]
     fn odd_order_and_empty_are_answered_not_attempted() {
-        assert!(min_weight_perfect(3, &[0i64; 9]).is_none(), "odd order has no perfect matching");
+        assert!(
+            min_weight_perfect(3, &[0i64; 9]).is_none(),
+            "odd order has no perfect matching"
+        );
         assert_eq!(min_weight_perfect(0, &[]), Some((Vec::new(), 0)));
-        assert!(min_weight_perfect(4, &[0i64; 3]).is_none(), "a cost matrix of the wrong shape");
+        assert!(
+            min_weight_perfect(4, &[0i64; 3]).is_none(),
+            "a cost matrix of the wrong shape"
+        );
     }
 
     /// A PLANTED optimum, at sizes exhaustive enumeration cannot reach.
@@ -690,10 +705,17 @@ mod tests {
                 c[b * n + a] = 0;
             }
             let (mate, total) = min_weight_perfect(n, &c).expect("a perfect matching is planted");
-            assert_eq!(total, 0, "n={n}: the planted matching costs 0 and this found {total}");
+            assert_eq!(
+                total, 0,
+                "n={n}: the planted matching costs 0 and this found {total}"
+            );
             for i in 0..n {
                 assert_eq!(mate[mate[i]], i);
-                assert_eq!(c[i * n + mate[i]], 0, "n={n}: vertex {i} matched off the plant");
+                assert_eq!(
+                    c[i * n + mate[i]],
+                    0,
+                    "n={n}: vertex {i} matched off the plant"
+                );
             }
         }
     }

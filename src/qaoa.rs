@@ -160,7 +160,11 @@ impl core::fmt::Display for Error {
                 "a flat angle vector is p gammas followed by p betas, so its length must be even, \
                  and {len} is not"
             ),
-            Error::AngleNotFinite { which, layer, value } => write!(
+            Error::AngleNotFinite {
+                which,
+                layer,
+                value,
+            } => write!(
                 f,
                 "{which} in layer {layer} is {value}, which is not finite: that layer's phase would \
                  be NaN and every amplitude with it, leaving an expectation of NaN and a norm no \
@@ -202,7 +206,10 @@ impl Angles {
     /// [`Error::AngleNotFinite`] naming the first angle that is not a finite number.
     pub fn new(gamma: Vec<f64>, beta: Vec<f64>) -> Result<Self, Error> {
         if gamma.len() != beta.len() {
-            return Err(Error::LayerMismatch { gammas: gamma.len(), betas: beta.len() });
+            return Err(Error::LayerMismatch {
+                gammas: gamma.len(),
+                betas: beta.len(),
+            });
         }
         let angles = Angles { gamma, beta };
         check_finite(&angles)?;
@@ -394,7 +401,9 @@ impl Run {
 
 /// Spins of a basis index: bit `i` set means `s_i = +1`.
 fn spins_of(z: usize, n: usize) -> Vec<i8> {
-    (0..n).map(|i| if (z >> i) & 1 == 1 { 1i8 } else { -1 }).collect()
+    (0..n)
+        .map(|i| if (z >> i) & 1 == 1 { 1i8 } else { -1 })
+        .collect()
 }
 
 /// The `p`-level QAOA ansatz over one Ising model, simulated exactly.
@@ -433,7 +442,10 @@ impl<'a> Ansatz<'a> {
             return Err(Error::NoQubits);
         }
         if g.n > MAX_QUBITS {
-            return Err(Error::TooManyQubits { n: g.n, max: MAX_QUBITS });
+            return Err(Error::TooManyQubits {
+                n: g.n,
+                max: MAX_QUBITS,
+            });
         }
         let dim = 1usize << g.n;
         let mut diag = Vec::with_capacity(dim);
@@ -487,8 +499,16 @@ impl<'a> Ansatz<'a> {
         for (z, t) in w.terms.iter_mut().enumerate() {
             *t *= self.diag[z];
         }
-        let bracket = (crate::round::sum_down(&w.terms), crate::round::sum_up(&w.terms));
-        Ok(Run { expectation: bracket.1, bracket, probabilities, layer_norms: norms })
+        let bracket = (
+            crate::round::sum_down(&w.terms),
+            crate::round::sum_up(&w.terms),
+        );
+        Ok(Run {
+            expectation: bracket.1,
+            bracket,
+            probabilities,
+            layer_norms: norms,
+        })
     }
 
     /// `<C>` alone, without building the probability vector — the objective an optimiser calls.
@@ -504,7 +524,11 @@ impl<'a> Ansatz<'a> {
 
     fn work(&self) -> Work {
         let dim = 1usize << self.g.n;
-        Work { re: vec![0.0; dim], im: vec![0.0; dim], terms: vec![0.0; dim] }
+        Work {
+            re: vec![0.0; dim],
+            im: vec![0.0; dim],
+            terms: vec![0.0; dim],
+        }
     }
 
     /// The objective on a reused workspace. Angles must already have been checked finite.
@@ -547,12 +571,20 @@ impl<'a> Ansatz<'a> {
 fn check_finite(angles: &Angles) -> Result<(), Error> {
     for (layer, &v) in angles.gamma.iter().enumerate() {
         if !v.is_finite() {
-            return Err(Error::AngleNotFinite { which: "gamma", layer, value: v });
+            return Err(Error::AngleNotFinite {
+                which: "gamma",
+                layer,
+                value: v,
+            });
         }
     }
     for (layer, &v) in angles.beta.iter().enumerate() {
         if !v.is_finite() {
-            return Err(Error::AngleNotFinite { which: "beta", layer, value: v });
+            return Err(Error::AngleNotFinite {
+                which: "beta",
+                layer,
+                value: v,
+            });
         }
     }
     Ok(())
@@ -630,7 +662,12 @@ pub struct Optimiser {
 
 impl Default for Optimiser {
     fn default() -> Self {
-        Optimiser { restarts: 24, max_evals: 1200, tol: 1e-12, seed: 0x0051_A0A0 }
+        Optimiser {
+            restarts: 24,
+            max_evals: 1200,
+            tol: 1e-12,
+            seed: 0x0051_A0A0,
+        }
     }
 }
 
@@ -660,13 +697,21 @@ impl Optimiser {
             // answer depend on that argument being right, and `<C>` is only symmetric under
             // (gamma, beta) -> (-gamma, -beta) jointly.
             let start = Angles::new(
-                (0..p).map(|_| (rng.f64() - 0.5) * 2.0 * core::f64::consts::PI).collect(),
-                (0..p).map(|_| (rng.f64() - 0.5) * core::f64::consts::PI).collect(),
+                (0..p)
+                    .map(|_| (rng.f64() - 0.5) * 2.0 * core::f64::consts::PI)
+                    .collect(),
+                (0..p)
+                    .map(|_| (rng.f64() - 0.5) * core::f64::consts::PI)
+                    .collect(),
             )?;
             let (angles, value, used) = self.nelder_mead(a, &mut w, &start);
             evals += used;
             if best.as_ref().is_none_or(|b| value < b.expectation) {
-                best = Some(Optimum { angles, expectation: value, evaluations: 0 });
+                best = Some(Optimum {
+                    angles,
+                    expectation: value,
+                    evaluations: 0,
+                });
             }
             if p == 0 {
                 break;
@@ -689,7 +734,11 @@ impl Optimiser {
         check_finite(start)?;
         let mut w = a.work();
         let (angles, expectation, evaluations) = self.nelder_mead(a, &mut w, start);
-        Ok(Optimum { angles, expectation, evaluations })
+        Ok(Optimum {
+            angles,
+            expectation,
+            evaluations,
+        })
     }
 
     /// Optimise levels `1..=p_max`, each warm-started from the level below.
@@ -733,9 +782,15 @@ impl Optimiser {
                     let warm = self.optimise_from(a, &prev.angles.with_identity_layer())?;
                     let spent = warm.evaluations + cold.evaluations;
                     if warm.expectation <= cold.expectation {
-                        Optimum { evaluations: spent, ..warm }
+                        Optimum {
+                            evaluations: spent,
+                            ..warm
+                        }
                     } else {
-                        Optimum { evaluations: spent, ..cold }
+                        Optimum {
+                            evaluations: spent,
+                            ..cold
+                        }
                     }
                 }
             };
@@ -789,7 +844,10 @@ impl Optimiser {
             let spread = pts
                 .iter()
                 .map(|(x, _)| {
-                    x.iter().zip(&pts[0].0).map(|(u, v)| (u - v).abs()).fold(0.0f64, f64::max)
+                    x.iter()
+                        .zip(&pts[0].0)
+                        .map(|(u, v)| (u - v).abs())
+                        .fold(0.0f64, f64::max)
                 })
                 .fold(0.0f64, f64::max);
             if spread < self.tol {
@@ -804,7 +862,9 @@ impl Optimiser {
             let worst_x = pts[d].0.clone();
             let worst = pts[d].1;
             let step = |coef: f64, centroid: &[f64], worst_x: &[f64]| -> Vec<f64> {
-                (0..d).map(|k| centroid[k] + coef * (centroid[k] - worst_x[k])).collect()
+                (0..d)
+                    .map(|k| centroid[k] + coef * (centroid[k] - worst_x[k]))
+                    .collect()
             };
             let xr = step(1.0, &centroid, &worst_x);
             let fr = eval(&xr, w, &mut evals);
@@ -912,7 +972,9 @@ mod tests {
                 for bi in 0..=16 {
                     let (gam, _) = grid(gi);
                     let (_, bet) = grid(bi);
-                    let got = a.expectation(&Angles::new(vec![gam], vec![bet]).unwrap()).unwrap();
+                    let got = a
+                        .expectation(&Angles::new(vec![gam], vec![bet]).unwrap())
+                        .unwrap();
                     let want = closed(n, gam, bet);
                     let dev = (got - want).abs();
                     assert!(
@@ -926,7 +988,10 @@ mod tests {
         }
         // Measured 5.33e-15, at n = 12 where the sum is longest. A deviation of exactly zero would
         // mean the formula was being evaluated rather than a state vector.
-        assert!(worst > 0.0, "a deviation of exactly zero is a simulator that is not simulating");
+        assert!(
+            worst > 0.0,
+            "a deviation of exactly zero is a simulator that is not simulating"
+        );
         assert!(worst < 1e-13, "worst deviation over the grid was {worst:e}");
 
         let g3 = ring(3, -1.0, 0.0);
@@ -936,7 +1001,9 @@ mod tests {
             for bi in 0..=16 {
                 let (gam, _) = grid(gi);
                 let (_, bet) = grid(bi);
-                let got = a3.expectation(&Angles::new(vec![gam], vec![bet]).unwrap()).unwrap();
+                let got = a3
+                    .expectation(&Angles::new(vec![gam], vec![bet]).unwrap())
+                    .unwrap();
                 worst3 = worst3.max((got - closed(3, gam, bet)).abs());
             }
         }
@@ -974,7 +1041,10 @@ mod tests {
             );
             let cut = (g.n_edges as f64 - o.expectation) / 2.0;
             let want_cut = n as f64 * (2 * p + 1) as f64 / (2 * p + 2) as f64;
-            assert!((cut - want_cut).abs() < 1e-6, "level {p} cut {cut} against {want_cut}");
+            assert!(
+                (cut - want_cut).abs() < 1e-6,
+                "level {p} cut {cut} against {want_cut}"
+            );
             assert_eq!(o.angles.p(), p);
             assert!(o.evaluations > 0);
         }
@@ -988,10 +1058,16 @@ mod tests {
         }
 
         let ground = Exhaustive.solve(&g).1;
-        assert!((ground + n as f64).abs() < 1e-12, "the ring of disagrees on {n} has ground -{n}");
+        assert!(
+            (ground + n as f64).abs() < 1e-12,
+            "the ring of disagrees on {n} has ground -{n}"
+        );
         // Every level must stop SHORT: level one gives up half the answer and even level four is
         // two units away. This is the half that a ground-state solver fails.
-        assert!(lad[0].expectation > ground + 4.9, "level one must not reach the ground state");
+        assert!(
+            lad[0].expectation > ground + 4.9,
+            "level one must not reach the ground state"
+        );
         assert!(lad[3].expectation > ground + 1.9, "nor may level four");
     }
 
@@ -1014,8 +1090,15 @@ mod tests {
             let g = glass(9, inst);
             let a = Ansatz::new(&g).unwrap();
             let e_min = Exhaustive.solve(&g).1;
-            let e_max = a.diagonal().iter().copied().fold(f64::NEG_INFINITY, f64::max);
-            assert!(e_max > e_min, "instance {inst} is flat and would test nothing");
+            let e_max = a
+                .diagonal()
+                .iter()
+                .copied()
+                .fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                e_max > e_min,
+                "instance {inst} is flat and would test nothing"
+            );
 
             for _ in 0..40 {
                 let p = 1 + (rng.next_u32() % 3) as usize;
@@ -1027,12 +1110,19 @@ mod tests {
                 let r = a.run(&ang).unwrap();
                 let (lo, hi) = r.bracket();
                 assert!(lo <= hi, "inverted bracket [{lo}, {hi}]");
-                assert_eq!(r.expectation(), hi, "the reported value is the upper-directed sum");
+                assert_eq!(
+                    r.expectation(),
+                    hi,
+                    "the reported value is the upper-directed sum"
+                );
                 assert!(
                     lo >= e_min,
                     "instance {inst}: <C> = {lo} is below the enumerated ground energy {e_min}"
                 );
-                assert!(hi <= e_max, "instance {inst}: <C> = {hi} is above the top of the spectrum");
+                assert!(
+                    hi <= e_max,
+                    "instance {inst}: <C> = {hi} is above the top of the spectrum"
+                );
                 min_slack = min_slack.min(lo - e_min);
                 widest = widest.max(hi - lo);
             }
@@ -1040,7 +1130,12 @@ mod tests {
             // An optimised run is where the bound is tightest and a one-sided error would first
             // show. Measured across these five instances: -3.31 to -5.46, against ground energies
             // of -6.23 to -7.41.
-            let best = Optimiser { restarts: 8, ..Optimiser::default() }.optimise(&a, 2).unwrap();
+            let best = Optimiser {
+                restarts: 8,
+                ..Optimiser::default()
+            }
+            .optimise(&a, 2)
+            .unwrap();
             assert!(
                 best.expectation >= e_min - 1e-12,
                 "instance {inst}: optimised <C> = {} is below the ground energy {e_min}",
@@ -1059,9 +1154,15 @@ mod tests {
             assert!(g.energy(&s) >= e_min - 1e-12);
         }
         // Measured 2.94.
-        assert!(min_slack > 1.0, "random angles sat only {min_slack:e} above the ground energy");
+        assert!(
+            min_slack > 1.0,
+            "random angles sat only {min_slack:e} above the ground energy"
+        );
         // The summation's own contribution, for contrast: measured 3.55e-15.
-        assert!(widest < 1e-13, "the directed-sum bracket widened to {widest:e}");
+        assert!(
+            widest < 1e-13,
+            "the directed-sum bracket widened to {widest:e}"
+        );
     }
 
     /// `B` and `C` are Hermitian, so every layer is unitary and every norm is 1.
@@ -1078,20 +1179,32 @@ mod tests {
             let a = Ansatz::new(&g).unwrap();
             let ang = Angles::new(vec![0.7, -1.3, 2.2], vec![0.4, 1.1, -0.9]).unwrap();
             let r = a.run(&ang).unwrap();
-            assert_eq!(r.layer_norms().len(), 2 * ang.p() + 1, "one norm per operator, plus |+>");
+            assert_eq!(
+                r.layer_norms().len(),
+                2 * ang.p() + 1,
+                "one norm per operator, plus |+>"
+            );
             for (k, &nm) in r.layer_norms().iter().enumerate() {
                 // Measured worst 8.88e-16 over these cases.
-                assert!((nm - 1.0).abs() < 1e-14, "n={n}, after operator {k}: norm {nm}");
+                assert!(
+                    (nm - 1.0).abs() < 1e-14,
+                    "n={n}, after operator {k}: norm {nm}"
+                );
             }
             let mass = crate::round::sum_up(r.probabilities());
-            assert!((mass - 1.0).abs() < 1e-14, "n={n}: probabilities sum to {mass}");
+            assert!(
+                (mass - 1.0).abs() < 1e-14,
+                "n={n}: probabilities sum to {mass}"
+            );
             assert!(r.probabilities().iter().all(|&p| p >= 0.0));
         }
 
         let g = ring(12, -1.0, 0.0);
         let a = Ansatz::new(&g).unwrap();
         let right = a.run(&Angles::new(vec![0.55], vec![0.3]).unwrap()).unwrap();
-        let flipped = a.run(&Angles::new(vec![-0.55], vec![0.3]).unwrap()).unwrap();
+        let flipped = a
+            .run(&Angles::new(vec![-0.55], vec![0.3]).unwrap())
+            .unwrap();
         for (k, &nm) in flipped.layer_norms().iter().enumerate() {
             assert!(
                 (nm - 1.0).abs() < 1e-14,
@@ -1127,7 +1240,11 @@ mod tests {
             let none = Angles::new(Vec::new(), Vec::new()).unwrap();
             assert_eq!(none.p(), 0);
             let r = a.run(&none).unwrap();
-            assert_eq!(r.layer_norms().len(), 1, "no layers, so only the prepared state");
+            assert_eq!(
+                r.layer_norms().len(),
+                1,
+                "no layers, so only the prepared state"
+            );
 
             let want = 2f64.powi(-(n as i32));
             for (z, &p) in r.probabilities().iter().enumerate() {
@@ -1160,9 +1277,17 @@ mod tests {
         assert_eq!(grown.p(), ang.p() + 1);
         assert_eq!(grown.gamma()[2], 0.0);
         assert_eq!(grown.beta()[2], 0.0);
-        assert_eq!(a.expectation(&grown).unwrap(), base, "an identity layer is not approximate");
+        assert_eq!(
+            a.expectation(&grown).unwrap(),
+            base,
+            "an identity layer is not approximate"
+        );
 
-        let o = Optimiser { restarts: 1, max_evals: 300, ..Optimiser::default() };
+        let o = Optimiser {
+            restarts: 1,
+            max_evals: 300,
+            ..Optimiser::default()
+        };
         let from = o.optimise_from(&a, &grown).unwrap();
         assert!(
             from.expectation <= base,
@@ -1181,10 +1306,19 @@ mod tests {
     fn every_refusal_names_what_it_saw() {
         let big = GraphBuilder::new(MAX_QUBITS + 1).build();
         let e = Ansatz::new(&big).unwrap_err();
-        assert_eq!(e, Error::TooManyQubits { n: MAX_QUBITS + 1, max: MAX_QUBITS });
+        assert_eq!(
+            e,
+            Error::TooManyQubits {
+                n: MAX_QUBITS + 1,
+                max: MAX_QUBITS
+            }
+        );
         assert!(e.to_string().contains("21"), "{e}");
 
-        assert_eq!(Ansatz::new(&GraphBuilder::new(0).build()).unwrap_err(), Error::NoQubits);
+        assert_eq!(
+            Ansatz::new(&GraphBuilder::new(0).build()).unwrap_err(),
+            Error::NoQubits
+        );
 
         let mut b = GraphBuilder::new(3);
         b.couple(0, 1, f64::NAN);
@@ -1199,7 +1333,10 @@ mod tests {
 
         assert_eq!(
             Angles::new(vec![0.1, 0.2], vec![0.3]).unwrap_err(),
-            Error::LayerMismatch { gammas: 2, betas: 1 }
+            Error::LayerMismatch {
+                gammas: 2,
+                betas: 1
+            }
         );
         assert_eq!(
             Angles::from_flat(&[0.1, 0.2, 0.3]).unwrap_err(),
@@ -1207,10 +1344,18 @@ mod tests {
         );
         assert_eq!(
             Angles::new(vec![0.1, f64::INFINITY], vec![0.0, 0.0]).unwrap_err(),
-            Error::AngleNotFinite { which: "gamma", layer: 1, value: f64::INFINITY }
+            Error::AngleNotFinite {
+                which: "gamma",
+                layer: 1,
+                value: f64::INFINITY
+            }
         );
         match Angles::new(vec![0.0], vec![f64::NAN]).unwrap_err() {
-            Error::AngleNotFinite { which, layer, value } => {
+            Error::AngleNotFinite {
+                which,
+                layer,
+                value,
+            } => {
                 assert_eq!((which, layer), ("beta", 0));
                 assert!(value.is_nan());
             }
@@ -1218,18 +1363,34 @@ mod tests {
         }
         for e in [
             Error::NoQubits,
-            Error::LayerMismatch { gammas: 2, betas: 1 },
+            Error::LayerMismatch {
+                gammas: 2,
+                betas: 1,
+            },
             Error::FlatLengthOdd { len: 3 },
-            Error::AngleNotFinite { which: "beta", layer: 4, value: f64::NAN },
-            Error::EnergyNotFinite { state: 7, value: f64::INFINITY },
+            Error::AngleNotFinite {
+                which: "beta",
+                layer: 4,
+                value: f64::NAN,
+            },
+            Error::EnergyNotFinite {
+                state: 7,
+                value: f64::INFINITY,
+            },
         ] {
-            assert!(e.to_string().len() > 40, "a refusal must say what happened: {e}");
+            assert!(
+                e.to_string().len() > 40,
+                "a refusal must say what happened: {e}"
+            );
         }
 
         // Past the constructor, which is exactly where a default would otherwise be substituted.
         let g = ring(6, -1.0, 0.0);
         let a = Ansatz::new(&g).unwrap();
-        let smuggled = Angles { gamma: vec![f64::NAN], beta: vec![0.3] };
+        let smuggled = Angles {
+            gamma: vec![f64::NAN],
+            beta: vec![0.3],
+        };
         assert!(a.run(&smuggled).is_err(), "run must re-check");
         assert!(a.expectation(&smuggled).is_err(), "so must the objective");
         assert!(Optimiser::default().optimise_from(&a, &smuggled).is_err());
@@ -1240,13 +1401,22 @@ mod tests {
     fn measurement_reproduces_the_amplitudes_it_was_drawn_from_and_repeats_on_a_seed() {
         let g = ring(8, -1.0, 0.0);
         let a = Ansatz::new(&g).unwrap();
-        let best = Optimiser { restarts: 6, ..Optimiser::default() }.optimise(&a, 2).unwrap();
+        let best = Optimiser {
+            restarts: 6,
+            ..Optimiser::default()
+        }
+        .optimise(&a, 2)
+        .unwrap();
         let r = a.run(&best.angles).unwrap();
 
         let shots = 40_000usize;
         let draws = r.measure(shots, 9);
         assert_eq!(draws.len(), shots);
-        assert!(draws.iter().all(|s| s.len() == 8 && s.iter().all(|&v| v == 1 || v == -1)));
+        assert!(
+            draws
+                .iter()
+                .all(|s| s.len() == 8 && s.iter().all(|&v| v == 1 || v == -1))
+        );
 
         let mut counts = vec![0usize; 1 << 8];
         for s in &draws {
@@ -1262,7 +1432,10 @@ mod tests {
         let worst = (0..1usize << 8)
             .map(|z| (counts[z] as f64 / shots as f64 - r.probabilities()[z]).abs())
             .fold(0.0f64, f64::max);
-        assert!(worst < 0.01, "empirical frequencies are off the amplitudes by {worst}");
+        assert!(
+            worst < 0.01,
+            "empirical frequencies are off the amplitudes by {worst}"
+        );
 
         // And the shot mean estimates <C>, which is the only reason a shot is worth taking.
         // Measured 3.6e-3 apart.
@@ -1274,7 +1447,11 @@ mod tests {
         );
 
         assert_eq!(r.measure(64, 9), r.measure(64, 9), "same seed, same draws");
-        assert_ne!(r.measure(64, 9), r.measure(64, 10), "different seed, different draws");
+        assert_ne!(
+            r.measure(64, 9),
+            r.measure(64, 10),
+            "different seed, different draws"
+        );
     }
 
     /// The flat form round-trips, a transposed pair is a different ansatz, and the optimiser is
@@ -1297,17 +1474,31 @@ mod tests {
             "a transposed angle pair must not be the same ansatz"
         );
 
-        let o = Optimiser { restarts: 4, ..Optimiser::default() };
+        let o = Optimiser {
+            restarts: 4,
+            ..Optimiser::default()
+        };
         let x = o.optimise(&a, 2).unwrap();
         let y = o.optimise(&a, 2).unwrap();
         assert_eq!(x.expectation, y.expectation);
         assert_eq!(x.angles, y.angles);
         assert_eq!(x.evaluations, y.evaluations);
-        let other = Optimiser { seed: o.seed ^ 0x5A5A, ..o.clone() }.optimise(&a, 2).unwrap();
+        let other = Optimiser {
+            seed: o.seed ^ 0x5A5A,
+            ..o.clone()
+        }
+        .optimise(&a, 2)
+        .unwrap();
         assert!(
             other.angles != x.angles || other.evaluations != x.evaluations,
             "two different seeds ran the identical search, so the seed is not being read"
         );
-        assert_eq!(o, Optimiser { restarts: 4, ..Optimiser::default() });
+        assert_eq!(
+            o,
+            Optimiser {
+                restarts: 4,
+                ..Optimiser::default()
+            }
+        );
     }
 }

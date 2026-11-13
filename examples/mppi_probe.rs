@@ -5,28 +5,72 @@ use ferrotherm::mppi::{Lqr, Mppi, System};
 /// number the table reports depends on it and the table never said so.
 const STEPS: usize = 200;
 const SEED: u64 = 7;
-const STABLE: System = System { a: 0.9, b: 1.0, q: 1.0, r: 0.5 };
-const UNSTABLE: System = System { a: 1.1, b: 1.0, q: 1.0, r: 0.5 };
+const STABLE: System = System {
+    a: 0.9,
+    b: 1.0,
+    q: 1.0,
+    r: 0.5,
+};
+const UNSTABLE: System = System {
+    a: 1.1,
+    b: 1.0,
+    q: 1.0,
+    r: 0.5,
+};
 
 fn main() {
-    for (label, s) in [("stable a=0.9", System { a: 0.9, b: 1.0, q: 1.0, r: 0.5 }),
-                       ("unstable a=1.1", System { a: 1.1, b: 1.0, q: 1.0, r: 0.5 })] {
-    println!("\n### {label}");
-    let l = Lqr::solve(&s);
-    let opt = l.cost_to_go(1.0);
-    println!("LQR: p = {:.4}, k = {:.4}, optimal cost from x0=1 is {:.4}", l.p, l.k, opt);
-    println!("{:>8} {:>7} {:>7} {:>6} {:>10} {:>10}", "horizon", "sigma", "lambda", "iters", "cost", "excess");
-    for &h in &[5usize, 15] {
-        for &sig in &[0.2f64, 0.4] {
-            for &lam in &[0.3f64, 1.0] {
-                for &it in &[1usize, 10] {
-                    let m = Mppi { horizon: h, rollouts: 300, sigma: sig, lambda: lam, iters: it };
-                    let c = m.run(&s, 1.0, 200, 7);
-                    println!("{h:>8} {sig:>7.2} {lam:>7.2} {it:>6} {:>10.4} {:>9.2}%", c, (c - opt) / opt * 100.0);
+    for (label, s) in [
+        (
+            "stable a=0.9",
+            System {
+                a: 0.9,
+                b: 1.0,
+                q: 1.0,
+                r: 0.5,
+            },
+        ),
+        (
+            "unstable a=1.1",
+            System {
+                a: 1.1,
+                b: 1.0,
+                q: 1.0,
+                r: 0.5,
+            },
+        ),
+    ] {
+        println!("\n### {label}");
+        let l = Lqr::solve(&s);
+        let opt = l.cost_to_go(1.0);
+        println!(
+            "LQR: p = {:.4}, k = {:.4}, optimal cost from x0=1 is {:.4}",
+            l.p, l.k, opt
+        );
+        println!(
+            "{:>8} {:>7} {:>7} {:>6} {:>10} {:>10}",
+            "horizon", "sigma", "lambda", "iters", "cost", "excess"
+        );
+        for &h in &[5usize, 15] {
+            for &sig in &[0.2f64, 0.4] {
+                for &lam in &[0.3f64, 1.0] {
+                    for &it in &[1usize, 10] {
+                        let m = Mppi {
+                            horizon: h,
+                            rollouts: 300,
+                            sigma: sig,
+                            lambda: lam,
+                            iters: it,
+                        };
+                        let c = m.run(&s, 1.0, 200, 7);
+                        println!(
+                            "{h:>8} {sig:>7.2} {lam:>7.2} {it:>6} {:>10.4} {:>9.2}%",
+                            c,
+                            (c - opt) / opt * 100.0
+                        );
+                    }
                 }
             }
         }
-    }
     }
 
     // THE PUBLISHED TABLE, printed by the command that is cited as its source.
@@ -36,7 +80,10 @@ fn main() {
     // horizon 30 or iters 30. Two numbers were therefore published that no command in the
     // repository could print, and one of them (729%) was wrong by a factor of two.
     println!("\n\nTHE PUBLISHED TABLE, from this command, at steps = {STEPS} and seed {SEED}:\n");
-    println!("{:>10} {:>9} {:>7} {:>7} {:>11} {:>11}", "plant", "horizon", "iters", "excess", "@100 steps", "@800 steps");
+    println!(
+        "{:>10} {:>9} {:>7} {:>7} {:>11} {:>11}",
+        "plant", "horizon", "iters", "excess", "@100 steps", "@800 steps"
+    );
     for (label, sys, h, it) in [
         ("stable", &STABLE, 5usize, 10usize),
         ("stable", &STABLE, 5, 1),
@@ -44,10 +91,21 @@ fn main() {
         ("unstable", &UNSTABLE, 10, 30),
         ("unstable", &UNSTABLE, 30, 30),
     ] {
-        let m = Mppi { horizon: h, rollouts: 300, sigma: 0.2, lambda: 0.3, iters: it };
+        let m = Mppi {
+            horizon: h,
+            rollouts: 300,
+            sigma: 0.2,
+            lambda: 0.3,
+            iters: it,
+        };
         let o = Lqr::solve(sys).cost_to_go(1.0);
         let at = |steps: usize| (m.run(sys, 1.0, steps, SEED) - o) / o * 100.0;
-        println!("{label:>10} {h:>9} {it:>7} {:>6.1}% {:>10.1}% {:>10.1}%", at(STEPS), at(100), at(800));
+        println!(
+            "{label:>10} {h:>9} {it:>7} {:>6.1}% {:>10.1}% {:>10.1}%",
+            at(STEPS),
+            at(100),
+            at(800)
+        );
     }
 
     println!(

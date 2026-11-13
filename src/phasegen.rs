@@ -118,7 +118,10 @@ impl core::fmt::Display for Error {
                  distribution and nothing below it is defined"
             ),
             Error::TooBig { q, n } => {
-                write!(f, "enumerating {q}^{n} phase states is refused; a partial enumeration is not an oracle")
+                write!(
+                    f,
+                    "enumerating {q}^{n} phase states is refused; a partial enumeration is not an oracle"
+                )
             }
         }
     }
@@ -158,16 +161,24 @@ impl PhaseGen {
         s: Vec<f64>,
     ) -> Result<PhaseGen, Error> {
         if a.len() != m * m {
-            return Err(Error::Shape { what: "the output precision matrix" });
+            return Err(Error::Shape {
+                what: "the output precision matrix",
+            });
         }
         if b.len() != m {
-            return Err(Error::Shape { what: "the output bias" });
+            return Err(Error::Shape {
+                what: "the output bias",
+            });
         }
         if c.len() != m * 2 * n {
-            return Err(Error::Shape { what: "the phase-to-output coupling" });
+            return Err(Error::Shape {
+                what: "the phase-to-output coupling",
+            });
         }
         if s.len() != n * n {
-            return Err(Error::Shape { what: "the phase coupling" });
+            return Err(Error::Shape {
+                what: "the phase coupling",
+            });
         }
         if cholesky(&a, m).is_none() {
             return Err(Error::NotPositiveDefinite);
@@ -178,10 +189,21 @@ impl PhaseGen {
         let mut sym = vec![0.0; n * n];
         for i in 0..n {
             for j in 0..n {
-                sym[i * n + j] = if i == j { 0.0 } else { 0.5 * (s[i * n + j] + s[j * n + i]) };
+                sym[i * n + j] = if i == j {
+                    0.0
+                } else {
+                    0.5 * (s[i * n + j] + s[j * n + i])
+                };
             }
         }
-        Ok(PhaseGen { m, n, a, b, c, s: sym })
+        Ok(PhaseGen {
+            m,
+            n,
+            a,
+            b,
+            c,
+            s: sym,
+        })
     }
 
     /// Output count.
@@ -206,7 +228,11 @@ impl PhaseGen {
     /// If `phi` is not length `n`.
     #[must_use]
     pub fn features(&self, phi: &[f64]) -> Vec<f64> {
-        assert_eq!(phi.len(), self.n, "phase vector must have one entry per oscillator");
+        assert_eq!(
+            phi.len(),
+            self.n,
+            "phase vector must have one entry per oscillator"
+        );
         let mut u = Vec::with_capacity(2 * self.n);
         for t in phi {
             u.push(t.cos());
@@ -252,8 +278,9 @@ impl PhaseGen {
         let u = self.features(phi);
         (0..self.m)
             .map(|i| {
-                let mut t: Vec<f64> =
-                    (0..(2 * self.n)).map(|k| self.c[i * 2 * self.n + k] * u[k]).collect();
+                let mut t: Vec<f64> = (0..(2 * self.n))
+                    .map(|k| self.c[i * 2 * self.n + k] * u[k])
+                    .collect();
                 t.push(self.b[i]);
                 sum_up(&t)
             })
@@ -287,7 +314,10 @@ impl PhaseGen {
         rng: &mut Pcg,
         ledger: Option<&mut Ledger>,
     ) -> Vec<f64> {
-        assert!(beta > 0.0 && beta.is_finite(), "beta must be positive and finite, got {beta}");
+        assert!(
+            beta > 0.0 && beta.is_finite(),
+            "beta must be positive and finite, got {beta}"
+        );
         let m = self.m;
         let l = cholesky(&self.a, m).expect("positive definiteness was checked at construction");
         let mu = self.output_mean(phi);
@@ -318,7 +348,11 @@ impl PhaseGen {
     #[must_use]
     pub fn phase_field(&self, i: usize, x: &[f64], phi: &[f64]) -> (f64, f64) {
         assert_eq!(x.len(), self.m, "output vector must be length {}", self.m);
-        assert_eq!(phi.len(), self.n, "phase vector must have one entry per oscillator");
+        assert_eq!(
+            phi.len(),
+            self.n,
+            "phase vector must have one entry per oscillator"
+        );
         let mut gc: Vec<f64> = Vec::new();
         let mut gs: Vec<f64> = Vec::new();
         for r in 0..self.m {
@@ -396,8 +430,12 @@ impl PhaseGen {
     /// If `beta` is not positive.
     #[must_use]
     pub fn output_log_partition_constant(&self, beta: f64) -> f64 {
-        assert!(beta > 0.0 && beta.is_finite(), "beta must be positive and finite, got {beta}");
-        let ld = log_det(&self.a, self.m).expect("positive definiteness was checked at construction");
+        assert!(
+            beta > 0.0 && beta.is_finite(),
+            "beta must be positive and finite, got {beta}"
+        );
+        let ld =
+            log_det(&self.a, self.m).expect("positive definiteness was checked at construction");
         0.5 * self.m as f64 * (TAU / beta).ln() - 0.5 * ld
     }
 
@@ -414,7 +452,10 @@ impl PhaseGen {
     /// If `q` is below 2 or `beta` is not positive.
     pub fn enumerate_grid(&self, q: usize, beta: f64) -> Result<Enumerated, Error> {
         assert!(q >= 2, "a grid needs at least 2 points, got {q}");
-        assert!(beta > 0.0 && beta.is_finite(), "beta must be positive and finite, got {beta}");
+        assert!(
+            beta > 0.0 && beta.is_finite(),
+            "beta must be positive and finite, got {beta}"
+        );
         let total = u32::try_from(self.n)
             .ok()
             .and_then(|e| q.checked_pow(e))
@@ -497,7 +538,10 @@ fn gaussian(rng: &mut Pcg) -> f64 {
 /// If `kappa` is negative or not finite.
 #[must_use]
 pub fn sample_von_mises(mu: f64, kappa: f64, rng: &mut Pcg) -> f64 {
-    assert!(kappa >= 0.0 && kappa.is_finite(), "concentration must be finite and non-negative");
+    assert!(
+        kappa >= 0.0 && kappa.is_finite(),
+        "concentration must be finite and non-negative"
+    );
     if kappa < 1e-8 {
         return (mu + TAU * rng.f64()).rem_euclid(TAU);
     }
@@ -626,7 +670,10 @@ mod tests {
             p2[0] = t + 0.31;
             let de = g.energy(&x, &p2) - g.energy(&x, &p1);
             let want = -r * ((p2[0] - mu).cos() - (p1[0] - mu).cos());
-            assert!((de - want).abs() < 1e-12, "energy change {de} != von Mises form {want}");
+            assert!(
+                (de - want).abs() < 1e-12,
+                "energy change {de} != von Mises form {want}"
+            );
         }
     }
 
@@ -723,12 +770,18 @@ mod tests {
         let got: Vec<f64> = hist.iter().map(|&c| c as f64 / draws as f64).collect();
         let tv = 0.5
             * sum_up(
-                &got.iter().zip(exact.p.iter()).map(|(a, b)| (a - b).abs()).collect::<Vec<_>>(),
+                &got.iter()
+                    .zip(exact.p.iter())
+                    .map(|(a, b)| (a - b).abs())
+                    .collect::<Vec<_>>(),
             );
         // The continuous sampler is binned onto the grid, so the comparison carries the covering
         // error of a 16-point grid as well as sampling noise. Both are small and the tolerance says
         // which regime this is: a broken sampler misses by tenths, not hundredths.
-        assert!(tv < 0.05, "total variation {tv} against the exact generator is too large");
+        assert!(
+            tv < 0.05,
+            "total variation {tv} against the exact generator is too large"
+        );
         assert_eq!(led.samples, (2_000 + draws) * 2);
         assert_eq!(led.reads, (2_000 + draws) * 2);
     }
@@ -773,6 +826,9 @@ mod tests {
     #[test]
     fn enumeration_refuses_a_grid_it_cannot_hold() {
         let g = fixture();
-        assert_eq!(g.enumerate_grid(2048, 1.0).unwrap_err(), Error::TooBig { q: 2048, n: 2 });
+        assert_eq!(
+            g.enumerate_grid(2048, 1.0).unwrap_err(),
+            Error::TooBig { q: 2048, n: 2 }
+        );
     }
 }

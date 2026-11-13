@@ -61,8 +61,12 @@ pub enum Estimator {
 
 impl Estimator {
     /// Every estimator here, in the order the module documents them.
-    pub const ALL: [Estimator; 4] =
-        [Estimator::PlugIn, Estimator::MillerMadow, Estimator::Grassberger, Estimator::ChaoShen];
+    pub const ALL: [Estimator; 4] = [
+        Estimator::PlugIn,
+        Estimator::MillerMadow,
+        Estimator::Grassberger,
+        Estimator::ChaoShen,
+    ];
 
     /// Entropy in nats of the distribution `counts` were drawn from. Empty bins are ignored.
     #[must_use]
@@ -185,7 +189,11 @@ pub fn chao_shen(counts: &[usize]) -> f64 {
         // `1 - (1 - p)^N`, the chance this bin was seen at all, written through `ln_1p`/`exp_m1`:
         // the direct form loses every significant digit when `p` is small, and small `p` is the
         // regime the correction exists for. At `p == 1` the direct form is exact and the log is not.
-        let seen = if p >= 1.0 { 1.0 } else { -(nf * (-p).ln_1p()).exp_m1() };
+        let seen = if p >= 1.0 {
+            1.0
+        } else {
+            -(nf * (-p).ln_1p()).exp_m1()
+        };
         h -= p * p.ln() / seen;
     }
     h
@@ -200,13 +208,19 @@ pub fn shannon(p: &[f64]) -> f64 {
     let mut s = 0.0;
     let mut h = 0.0;
     for &v in p {
-        assert!(v >= 0.0, "a probability vector has no negative entry, got {v}");
+        assert!(
+            v >= 0.0,
+            "a probability vector has no negative entry, got {v}"
+        );
         s += v;
         if v > 0.0 {
             h -= v * v.ln();
         }
     }
-    assert!((s - 1.0).abs() < 1e-9, "probabilities must sum to 1, these sum to {s}");
+    assert!(
+        (s - 1.0).abs() < 1e-9,
+        "probabilities must sum to 1, these sum to {s}"
+    );
     h
 }
 
@@ -219,7 +233,10 @@ pub fn shannon(p: &[f64]) -> f64 {
 /// If `x` is not positive.
 #[must_use]
 pub fn digamma(x: f64) -> f64 {
-    assert!(x > 0.0, "digamma is taken on positive arguments only, got {x}");
+    assert!(
+        x > 0.0,
+        "digamma is taken on positive arguments only, got {x}"
+    );
     let mut z = x;
     let mut acc = 0.0;
     while z < 15.0 {
@@ -262,8 +279,15 @@ impl Joint {
     /// If either dimension is zero.
     #[must_use]
     pub fn new(rows: usize, cols: usize) -> Joint {
-        assert!(rows > 0 && cols > 0, "a joint table needs both alphabets non-empty");
-        Joint { rows, cols, cells: vec![0; rows * cols] }
+        assert!(
+            rows > 0 && cols > 0,
+            "a joint table needs both alphabets non-empty"
+        );
+        Joint {
+            rows,
+            cols,
+            cells: vec![0; rows * cols],
+        }
     }
 
     /// A table from cells already counted, row-major.
@@ -272,8 +296,16 @@ impl Joint {
     /// If `cells` is not `rows * cols` long, or either dimension is zero.
     #[must_use]
     pub fn from_cells(rows: usize, cols: usize, cells: Vec<usize>) -> Joint {
-        assert!(rows > 0 && cols > 0, "a joint table needs both alphabets non-empty");
-        assert_eq!(cells.len(), rows * cols, "{rows}x{cols} needs {} cells", rows * cols);
+        assert!(
+            rows > 0 && cols > 0,
+            "a joint table needs both alphabets non-empty"
+        );
+        assert_eq!(
+            cells.len(),
+            rows * cols,
+            "{rows}x{cols} needs {} cells",
+            rows * cols
+        );
         Joint { rows, cols, cells }
     }
 
@@ -295,7 +327,12 @@ impl Joint {
     /// # Panics
     /// If `x` or `y` is outside its alphabet.
     pub fn observe(&mut self, x: usize, y: usize) {
-        assert!(x < self.rows && y < self.cols, "({x},{y}) is outside {}x{}", self.rows, self.cols);
+        assert!(
+            x < self.rows && y < self.cols,
+            "({x},{y}) is outside {}x{}",
+            self.rows,
+            self.cols
+        );
         self.cells[x * self.cols + y] += 1;
     }
 
@@ -326,13 +363,17 @@ impl Joint {
     /// Marginal counts of `X`.
     #[must_use]
     pub fn marginal_x(&self) -> Vec<usize> {
-        (0..self.rows).map(|r| self.cells[r * self.cols..(r + 1) * self.cols].iter().sum()).collect()
+        (0..self.rows)
+            .map(|r| self.cells[r * self.cols..(r + 1) * self.cols].iter().sum())
+            .collect()
     }
 
     /// Marginal counts of `Y`.
     #[must_use]
     pub fn marginal_y(&self) -> Vec<usize> {
-        (0..self.cols).map(|c| (0..self.rows).map(|r| self.cells[r * self.cols + c]).sum()).collect()
+        (0..self.cols)
+            .map(|c| (0..self.rows).map(|r| self.cells[r * self.cols + c]).sum())
+            .collect()
     }
 
     /// `I(X;Y) = H(X) + H(Y) - H(X,Y)` in nats, every term from `est`.
@@ -341,8 +382,7 @@ impl Joint {
     /// remainder, and clamping at zero would hide exactly the over-correction the module documents.
     #[must_use]
     pub fn mutual_information(&self, est: Estimator) -> f64 {
-        est.entropy(&self.marginal_x()) + est.entropy(&self.marginal_y())
-            - est.entropy(&self.cells)
+        est.entropy(&self.marginal_x()) + est.entropy(&self.marginal_y()) - est.entropy(&self.cells)
     }
 
     /// `H(Y|X) = H(X,Y) - H(X)` in nats, both terms from `est`.
@@ -386,7 +426,10 @@ impl core::fmt::Display for NotSamples {
                  whatever the model is; the exact entropy is `shannon` of the Boltzmann weights"
             ),
             NotSamples::TooManyBins { spins, limit } => {
-                write!(f, "2^{spins} bins exceeds the 2^{limit} cap on a state histogram")
+                write!(
+                    f,
+                    "2^{spins} bins exceeds the 2^{limit} cap on a state histogram"
+                )
             }
         }
     }
@@ -416,11 +459,19 @@ pub fn draws(set: &SampleSet) -> Result<&[Vec<i8>], NotSamples> {
 /// If any state is not `n` spins wide.
 pub fn state_counts(states: &[Vec<i8>], n: usize) -> Result<Vec<usize>, NotSamples> {
     if n > ENUMERATION_LIMIT {
-        return Err(NotSamples::TooManyBins { spins: n, limit: ENUMERATION_LIMIT });
+        return Err(NotSamples::TooManyBins {
+            spins: n,
+            limit: ENUMERATION_LIMIT,
+        });
     }
     let mut c = vec![0usize; 1usize << n];
     for s in states {
-        assert_eq!(s.len(), n, "a state of {} spins in an {n}-spin set", s.len());
+        assert_eq!(
+            s.len(),
+            n,
+            "a state of {} spins in an {n}-spin set",
+            s.len()
+        );
         let mut mask = 0usize;
         for (b, &v) in s.iter().enumerate() {
             if v > 0 {
@@ -440,7 +491,11 @@ pub fn state_counts(states: &[Vec<i8>], n: usize) -> Result<Vec<usize>, NotSampl
 pub fn spin_pair(states: &[Vec<i8>], i: usize, j: usize) -> Joint {
     let mut t = Joint::new(2, 2);
     for s in states {
-        assert!(i < s.len() && j < s.len(), "spins {i},{j} outside a state of {}", s.len());
+        assert!(
+            i < s.len() && j < s.len(),
+            "spins {i},{j} outside a state of {}",
+            s.len()
+        );
         t.observe(usize::from(s[i] > 0), usize::from(s[j] > 0));
     }
     t
@@ -504,7 +559,10 @@ mod tests {
             mass += w;
             acc += w * f(c);
         });
-        assert!((mass - 1.0).abs() < 1e-9, "the multinomial did not sum to 1: {mass}");
+        assert!(
+            (mass - 1.0).abs() < 1e-9,
+            "the multinomial did not sum to 1: {mass}"
+        );
         acc / mass
     }
 
@@ -541,7 +599,9 @@ mod tests {
                         lo = mid + 1;
                     }
                 }
-                (0..spins).map(|b| if lo >> b & 1 == 1 { 1i8 } else { -1 }).collect()
+                (0..spins)
+                    .map(|b| if lo >> b & 1 == 1 { 1i8 } else { -1 })
+                    .collect()
             })
             .collect()
     }
@@ -553,21 +613,36 @@ mod tests {
     #[test]
     fn digamma_matches_its_closed_form() {
         // psi(1) = -gamma, and psi(n+1) = psi(n) + 1/n makes psi(n) = -gamma + H_{n-1} exactly.
-        assert!((digamma(1.0) + GAMMA).abs() < 1e-14, "psi(1) = {}", digamma(1.0));
+        assert!(
+            (digamma(1.0) + GAMMA).abs() < 1e-14,
+            "psi(1) = {}",
+            digamma(1.0)
+        );
         let mut harmonic = 0.0;
         for n in 1..200 {
             let want = -GAMMA + harmonic;
             let got = digamma(n as f64);
-            assert!((got - want).abs() < 1e-13, "psi({n}) = {got}, closed form {want}");
+            assert!(
+                (got - want).abs() < 1e-13,
+                "psi({n}) = {got}, closed form {want}"
+            );
             harmonic += 1.0 / n as f64;
         }
         // psi(1/2) = -gamma - 2 ln 2 is the half-integer anchor, which the recurrence cannot reach
         // from psi(1) and which therefore tests the asymptotic tail on its own.
         let want = -GAMMA - 2.0 * core::f64::consts::LN_2;
-        assert!((digamma(0.5) - want).abs() < 1e-14, "psi(1/2) = {}", digamma(0.5));
+        assert!(
+            (digamma(0.5) - want).abs() < 1e-14,
+            "psi(1/2) = {}",
+            digamma(0.5)
+        );
         for &x in &[0.1, 0.7, 2.3, 9.9, 14.999, 15.001, 1e3] {
             let d = digamma(x + 1.0) - digamma(x);
-            assert!((d - 1.0 / x).abs() < 1e-12, "psi({x}+1) - psi({x}) = {d}, want {}", 1.0 / x);
+            assert!(
+                (d - 1.0 / x).abs() < 1e-12,
+                "psi({x}+1) - psi({x}) = {d}, want {}",
+                1.0 / x
+            );
         }
     }
 
@@ -595,8 +670,16 @@ mod tests {
         // its SIGN: negating it leaves every one of them passing.
         //
         // First, arithmetic. G(1) = psi(1) - 1/2 and G(2) = psi(2) + 1/3, closed forms.
-        assert!((shipped_g(1) - (-GAMMA - 0.5)).abs() < 1e-14, "G(1) = {}", shipped_g(1));
-        assert!((shipped_g(2) - (1.0 - GAMMA + 1.0 / 3.0)).abs() < 1e-14, "G(2) = {}", shipped_g(2));
+        assert!(
+            (shipped_g(1) - (-GAMMA - 0.5)).abs() < 1e-14,
+            "G(1) = {}",
+            shipped_g(1)
+        );
+        assert!(
+            (shipped_g(2) - (1.0 - GAMMA + 1.0 / 3.0)).abs() < 1e-14,
+            "G(2) = {}",
+            shipped_g(2)
+        );
 
         // Second, the construction. `ln N - (1/N) sum n_i G(n_i)` is unbiased exactly when
         // E[n G(n)] = lam*ln(lam) for n ~ Poisson(lam) -- write H as ln N - (1/N) sum lam_i ln lam_i
@@ -607,9 +690,18 @@ mod tests {
             let target = lam * lam.ln();
             let bare = poisson_mean_n_g(lam, &|n| digamma(n as f64)) - target;
             let full = poisson_mean_n_g(lam, &shipped_g) - target;
-            assert!(bare > 0.0, "lam = {lam}: psi alone should overshoot, got {bare:+}");
-            assert!(full > 0.0, "lam = {lam}: the 1988 term must not overshoot past 0, got {full:+}");
-            assert!(full < 0.9 * bare, "lam = {lam}: residual {full:+} against psi's {bare:+}");
+            assert!(
+                bare > 0.0,
+                "lam = {lam}: psi alone should overshoot, got {bare:+}"
+            );
+            assert!(
+                full > 0.0,
+                "lam = {lam}: the 1988 term must not overshoot past 0, got {full:+}"
+            );
+            assert!(
+                full < 0.9 * bare,
+                "lam = {lam}: residual {full:+} against psi's {bare:+}"
+            );
         }
     }
 
@@ -652,7 +744,11 @@ mod tests {
         // Grassberger is not, and is documented not to be, since it never counts the support.
         assert_eq!(plug_in(&[40, 0, 0]), 0.0);
         assert_eq!(miller_madow(&[40, 0, 0]), 0.0);
-        assert!(grassberger(&[40, 0, 0]).abs() < 0.05, "{}", grassberger(&[40, 0, 0]));
+        assert!(
+            grassberger(&[40, 0, 0]).abs() < 0.05,
+            "{}",
+            grassberger(&[40, 0, 0])
+        );
         for e in Estimator::ALL {
             assert_eq!(e.entropy(&[]), 0.0, "{} on an empty sample", e.label());
             assert_eq!(e.entropy(&[0, 0, 0]), 0.0, "{} on no draws", e.label());
@@ -669,7 +765,11 @@ mod tests {
         assert!(h.is_finite() && h > 0.0, "all-singleton Chao-Shen = {h}");
         // Twelve draws in twelve bins: the truth is at least ln 12, which is what plug-in returns
         // here, and a coverage correction must not push the estimate below it.
-        assert!(h >= plug_in(&c) - 1e-12, "{h} against plug-in {}", plug_in(&c));
+        assert!(
+            h >= plug_in(&c) - 1e-12,
+            "{h} against plug-in {}",
+            plug_in(&c)
+        );
         assert!(chao_shen(&[1]).is_finite(), "a single draw");
     }
 
@@ -685,13 +785,20 @@ mod tests {
             let bias = exact_mean(&p, n, plug_in) - truth;
             assert!(bias < 0.0, "N = {n}: plug-in must sit low, got {bias:+}");
             let ratio = bias / plug_in_bias(4, n);
-            assert!((1.0..1.2).contains(&ratio), "N = {n}: bias over leading term = {ratio}");
+            assert!(
+                (1.0..1.2).contains(&ratio),
+                "N = {n}: bias over leading term = {ratio}"
+            );
             ratios.push(ratio);
         }
         for w in ratios.windows(2) {
             assert!(w[1] < w[0], "the ratio must fall toward 1: {ratios:?}");
         }
-        assert!((ratios[3] - 1.0).abs() < 0.03, "at N = 64 the leading term is it: {}", ratios[3]);
+        assert!(
+            (ratios[3] - 1.0).abs() < 0.03,
+            "at N = 64 the leading term is it: {}",
+            ratios[3]
+        );
     }
 
     #[test]
@@ -708,8 +815,15 @@ mod tests {
         for (p, n) in cases {
             let truth = shannon(&p);
             let base = (exact_mean(&p, n, plug_in) - truth).abs();
-            assert!(base > 0.05, "the plug-in bias should be worth correcting: {base}");
-            for e in [Estimator::MillerMadow, Estimator::Grassberger, Estimator::ChaoShen] {
+            assert!(
+                base > 0.05,
+                "the plug-in bias should be worth correcting: {base}"
+            );
+            for e in [
+                Estimator::MillerMadow,
+                Estimator::Grassberger,
+                Estimator::ChaoShen,
+            ] {
                 let bias = exact_mean(&p, n, |c: &[usize]| e.entropy(c)) - truth;
                 assert!(
                     bias.abs() < 0.7 * base,
@@ -729,8 +843,9 @@ mod tests {
         // last bits. Anything else is an indexing mistake in the marginals.
         let a = [3usize, 5, 2];
         let b = [4usize, 1, 6, 9];
-        let cells: Vec<usize> =
-            (0..a.len()).flat_map(|x| (0..b.len()).map(move |y| a[x] * b[y])).collect();
+        let cells: Vec<usize> = (0..a.len())
+            .flat_map(|x| (0..b.len()).map(move |y| a[x] * b[y]))
+            .collect();
         let t = Joint::from_cells(a.len(), b.len(), cells);
         // row sums are a_x * sum(b) = a_x * 20, column sums are sum(a) * b_y = 10 * b_y
         assert_eq!(t.marginal_x(), vec![60, 100, 40]);
@@ -753,7 +868,11 @@ mod tests {
         let n = t.total() as f64;
         let d =
             t.mutual_information(Estimator::PlugIn) - t.mutual_information(Estimator::MillerMadow);
-        assert!((d - 1.0 / (2.0 * n)).abs() < 1e-14, "the 2x2 identity: {d} vs {}", 1.0 / (2.0 * n));
+        assert!(
+            (d - 1.0 / (2.0 * n)).abs() < 1e-14,
+            "the 2x2 identity: {d} vs {}",
+            1.0 / (2.0 * n)
+        );
 
         // Now the bias itself, exactly, over every 2x2 table that 32 draws can produce.
         let p = vec![0.25; 4];
@@ -761,10 +880,22 @@ mod tests {
         let mm = exact_mean(&p, 32, |c: &[usize]| mi_2x2(c, Estimator::MillerMadow));
         let gr = exact_mean(&p, 32, |c: &[usize]| mi_2x2(c, Estimator::Grassberger));
         let leading = 1.0 / (2.0 * 32.0);
-        assert!(plug > 0.0, "plug-in mutual information is biased UP, got {plug}");
-        assert!((plug / leading - 1.0).abs() < 0.15, "plug-in bias {plug} against {leading}");
-        assert!(mm.abs() < 0.15 * plug, "Miller-Madow should cancel it: {mm} against {plug}");
-        assert!(gr > 0.8 * plug, "Grassberger cancels nothing on a 2x2: {gr} against {plug}");
+        assert!(
+            plug > 0.0,
+            "plug-in mutual information is biased UP, got {plug}"
+        );
+        assert!(
+            (plug / leading - 1.0).abs() < 0.15,
+            "plug-in bias {plug} against {leading}"
+        );
+        assert!(
+            mm.abs() < 0.15 * plug,
+            "Miller-Madow should cancel it: {mm} against {plug}"
+        );
+        assert!(
+            gr > 0.8 * plug,
+            "Grassberger cancels nothing on a 2x2: {gr} against {plug}"
+        );
     }
 
     #[test]
@@ -777,15 +908,22 @@ mod tests {
         // Cross-check the oracle by a second exact route: S = ln Z + beta<E>, with ln Z from
         // variable elimination and <E> from the same table. Two independent computations of one
         // number, so a mistake in either shows up here rather than inside an estimator test.
-        let ex = crate::exact::Elimination::default().log_partition(&g, beta).unwrap();
+        let ex = crate::exact::Elimination::default()
+            .log_partition(&g, beta)
+            .unwrap();
         let mean_e: f64 = (0..p.len())
             .map(|m| {
-                let s: Vec<i8> = (0..n).map(|b| if m >> b & 1 == 1 { 1i8 } else { -1 }).collect();
+                let s: Vec<i8> = (0..n)
+                    .map(|b| if m >> b & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 p[m] * g.energy(&s)
             })
             .sum();
         let identity = ex.log_z.unwrap() + beta * mean_e;
-        assert!((truth - identity).abs() < 1e-9, "S = {truth}, ln Z + b<E> = {identity}");
+        assert!(
+            (truth - identity).abs() < 1e-9,
+            "S = {truth}, ln Z + b<E> = {identity}"
+        );
 
         // 64 bins from 200 draws: the regime the corrections exist for. Averaged over 200
         // independent replicates, so what is compared is the bias, against the exact entropy.
@@ -800,7 +938,11 @@ mod tests {
             }
         }
         let base = (mean[0] - truth).abs();
-        assert!(mean[0] < truth - 0.05, "plug-in must sit low: {} vs {truth}", mean[0]);
+        assert!(
+            mean[0] < truth - 0.05,
+            "plug-in must sit low: {} vs {truth}",
+            mean[0]
+        );
         for (k, e) in Estimator::ALL.iter().enumerate().skip(1) {
             assert!(
                 (mean[k] - truth).abs() < 0.8 * base,
@@ -815,7 +957,11 @@ mod tests {
         let counts = state_counts(&states, n).unwrap();
         for e in Estimator::ALL {
             let h = e.entropy(&counts);
-            assert!((h - truth).abs() < 0.01, "{} at 200k draws: {h} vs {truth}", e.label());
+            assert!(
+                (h - truth).abs() < 0.01,
+                "{} at 200k draws: {h} vs {truth}",
+                e.label()
+            );
         }
     }
 
@@ -845,12 +991,19 @@ mod tests {
         let states = iid_states(&p, n, 200_000, 4242);
         for (i, j) in [(0usize, 1usize), (0, 3)] {
             let truth = exact_mi(i, j);
-            assert!(truth > 0.0, "a coupled ring correlates its spins: I({i};{j}) = {truth}");
+            assert!(
+                truth > 0.0,
+                "a coupled ring correlates its spins: I({i};{j}) = {truth}"
+            );
             let t = spin_pair(&states, i, j);
             assert_eq!(t.total(), states.len());
             for e in Estimator::ALL {
                 let mi = t.mutual_information(e);
-                assert!((mi - truth).abs() < 0.005, "{} I({i};{j}) = {mi}, exact {truth}", e.label());
+                assert!(
+                    (mi - truth).abs() < 0.005,
+                    "{} I({i};{j}) = {mi}, exact {truth}",
+                    e.label()
+                );
             }
         }
     }
@@ -861,7 +1014,10 @@ mod tests {
         let enumerated = crate::samples::enumerate(&g, 0.5).unwrap();
         assert_eq!(draws(&enumerated), Err(NotSamples::Enumerated));
         let searched = SampleSet::from_search(vec![vec![1i8, -1, 1, 1]], vec![0.0], "tabu");
-        assert_eq!(draws(&searched), Err(NotSamples::NotDistributional { method: "tabu" }));
+        assert_eq!(
+            draws(&searched),
+            Err(NotSamples::NotDistributional { method: "tabu" })
+        );
         let chain = SampleSet::from_chain(
             vec![vec![1i8, -1, 1, 1], vec![-1, -1, 1, 1]],
             vec![0.0, 0.0],
@@ -872,7 +1028,10 @@ mod tests {
         assert_eq!(draws(&chain).unwrap().len(), 2);
         assert_eq!(
             state_counts(&[], ENUMERATION_LIMIT + 1),
-            Err(NotSamples::TooManyBins { spins: ENUMERATION_LIMIT + 1, limit: ENUMERATION_LIMIT })
+            Err(NotSamples::TooManyBins {
+                spins: ENUMERATION_LIMIT + 1,
+                limit: ENUMERATION_LIMIT
+            })
         );
         assert!(NotSamples::Enumerated.to_string().contains("shannon"));
     }

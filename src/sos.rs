@@ -189,7 +189,10 @@ impl core::fmt::Display for SosError {
                 Level2::dim_for(*n)
             ),
             SosError::Shape { got, want } => {
-                write!(f, "the Gram matrix has {got} entries and this basis needs {want}")
+                write!(
+                    f,
+                    "the Gram matrix has {got} entries and this basis needs {want}"
+                )
             }
             SosError::NotSymmetric { a, b } => {
                 write!(f, "the Gram matrix is not symmetric at ({a}, {b})")
@@ -292,7 +295,15 @@ impl Level2 {
             }
         }
         let empty = ids[&0] as usize;
-        Ok(Level2 { n, dim, basis, class, monomials, sizes, empty })
+        Ok(Level2 {
+            n,
+            dim,
+            basis,
+            class,
+            monomials,
+            sizes,
+            empty,
+        })
     }
 
     /// Spins.
@@ -326,7 +337,11 @@ impl Level2 {
     /// If either index is past [`Level2::dim`].
     #[must_use]
     pub fn class_of(&self, a: usize, b: usize) -> usize {
-        assert!(a < self.dim && b < self.dim, "({a},{b}) outside a {}-row basis", self.dim);
+        assert!(
+            a < self.dim && b < self.dim,
+            "({a},{b}) outside a {}-row basis",
+            self.dim
+        );
         self.class[a * self.dim + b] as usize
     }
 
@@ -357,7 +372,12 @@ impl Level2 {
     /// If `s` is shorter than the spin count.
     #[must_use]
     pub fn moments(&self, s: &[i8]) -> Vec<f64> {
-        assert!(s.len() >= self.n, "a state of {} spins, for {} spins", s.len(), self.n);
+        assert!(
+            s.len() >= self.n,
+            "a state of {} spins, for {} spins",
+            s.len(),
+            self.n
+        );
         self.monomials
             .iter()
             .map(|&m| {
@@ -398,7 +418,11 @@ impl Level2 {
     /// If the graph's spin count is not this basis's.
     #[must_use]
     pub fn objective(&self, g: &Graph) -> Vec<f64> {
-        assert_eq!(g.n, self.n, "objective for a {}-spin graph on a {}-spin basis", g.n, self.n);
+        assert_eq!(
+            g.n, self.n,
+            "objective for a {}-spin graph on a {}-spin basis",
+            g.n, self.n
+        );
         let mut e = vec![0.0f64; self.classes()];
         for i in 0..self.n {
             // Row 0 is the constant monomial and row 1+i is s_i, so (0, 1+i) names s_i.
@@ -429,7 +453,12 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { rounds: 16, iters: 400, hyperplanes: 32, sdp: sdp::Params::default() }
+        Params {
+            rounds: 16,
+            iters: 400,
+            hyperplanes: 32,
+            sdp: sdp::Params::default(),
+        }
     }
 }
 
@@ -487,7 +516,10 @@ fn lift(dim: usize, q: &[f64]) -> Graph {
 fn extract(l2: &Level2, e: &[f64], q: &[f64]) -> Result<(f64, f64), SosError> {
     let dim = l2.dim;
     if q.len() != dim * dim {
-        return Err(SosError::Shape { got: q.len(), want: dim * dim });
+        return Err(SosError::Shape {
+            got: q.len(),
+            want: dim * dim,
+        });
     }
     if q.iter().any(|v| !v.is_finite()) {
         return Err(SosError::NotFinite);
@@ -569,7 +601,10 @@ impl Certificate {
         // ways this can be wrong -- a certificate for a different spin count, a mis-stated `dim`,
         // and a Gram matrix that is not `dim x dim` -- all land in the same place.
         if self.n != l2.n || self.dim != l2.dim || self.q.len() != l2.dim * l2.dim {
-            return Err(SosError::Shape { got: self.q.len(), want: l2.dim * l2.dim });
+            return Err(SosError::Shape {
+                got: self.q.len(),
+                want: l2.dim * l2.dim,
+            });
         }
         // An empty graph has one state, the empty one, of energy zero; see `certified`.
         if g.n == 0 {
@@ -611,8 +646,10 @@ fn project_affine(l2: &Level2, q: &mut [f64], target: &[f64]) {
 fn project_psd(q: &mut [f64], dim: usize) {
     let mut m = q.to_vec();
     let v = crate::linalg::jacobi_eig(&mut m, dim);
-    let pos: Vec<(usize, f64)> =
-        (0..dim).map(|c| (c, m[c * dim + c])).filter(|&(_, l)| l > 0.0).collect();
+    let pos: Vec<(usize, f64)> = (0..dim)
+        .map(|c| (c, m[c * dim + c]))
+        .filter(|&(_, l)| l > 0.0)
+        .collect();
     for a in 0..dim {
         for b in a..dim {
             let mut acc = 0.0;
@@ -790,8 +827,21 @@ pub fn certified(g: &Graph, p: &Params, seed: u64) -> Result<(Bound, Certificate
         // One state, the empty one, of energy zero. There is nothing to relax, and a 1x1 Gram
         // matrix of zero is singular, so the shift search would report `−δ` for a problem whose
         // answer is exactly zero.
-        let b = Bound { value: 0.0, parts: 0, method: "sos level 2: empty graph", rounds: 0, best_round: 0 };
-        let c = Certificate { q: vec![0.0], dim, n: 0, value: 0.0, residual: 0.0, shift: 0.0 };
+        let b = Bound {
+            value: 0.0,
+            parts: 0,
+            method: "sos level 2: empty graph",
+            rounds: 0,
+            best_round: 0,
+        };
+        let c = Certificate {
+            q: vec![0.0],
+            dim,
+            n: 0,
+            value: 0.0,
+            residual: 0.0,
+            shift: 0.0,
+        };
         return Ok((b, c));
     }
     let e = l2.objective(g);
@@ -810,7 +860,11 @@ pub fn certified(g: &Graph, p: &Params, seed: u64) -> Result<(Bound, Certificate
     let mut best_round = 0usize;
     let mut warm = start;
     let mut lo = v0;
-    let mut hi = if hi_limit.is_finite() && hi_limit > lo { hi_limit } else { 0.0f64.max(lo) };
+    let mut hi = if hi_limit.is_finite() && hi_limit > lo {
+        hi_limit
+    } else {
+        0.0f64.max(lo)
+    };
 
     for round in 1..=p.rounds {
         let mid = 0.5 * (lo + hi);
@@ -831,7 +885,14 @@ pub fn certified(g: &Graph, p: &Params, seed: u64) -> Result<(Bound, Certificate
     }
 
     let (value, q, residual, shift) = best;
-    let cert = Certificate { q, dim, n: g.n, value, residual, shift };
+    let cert = Certificate {
+        q,
+        dim,
+        n: g.n,
+        value,
+        residual,
+        shift,
+    };
     let b = Bound {
         value,
         parts: 1,
@@ -888,7 +949,9 @@ mod tests {
     fn brute_min(g: &Graph) -> f64 {
         (0..(1u32 << g.n))
             .map(|m| {
-                let s: Vec<i8> = (0..g.n).map(|i| if m >> i & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|i| if m >> i & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 g.energy(&s)
             })
             .fold(f64::INFINITY, f64::min)
@@ -901,7 +964,11 @@ mod tests {
             rounds: 8,
             iters: 120,
             hyperplanes: 16,
-            sdp: sdp::Params { sweeps: 60, rank: None, lanczos: 24 },
+            sdp: sdp::Params {
+                sweeps: 60,
+                rank: None,
+                lanczos: 24,
+            },
         }
     }
 
@@ -918,7 +985,9 @@ mod tests {
             let l2 = Level2::new(g.n).unwrap();
             let e = l2.objective(&g);
             for m in 0..(1u32 << g.n) {
-                let s: Vec<i8> = (0..g.n).map(|i| if m >> i & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|i| if m >> i & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 let y = l2.moments(&s);
                 let got: f64 = (0..l2.classes()).map(|c| e[c] * y[c]).sum();
                 assert!(
@@ -989,7 +1058,11 @@ mod tests {
                     b.value
                 );
                 let again = cert.verify(&g).expect("its own certificate must re-verify");
-                assert_eq!(again, b.value, "verify {again} against a reported {}", b.value);
+                assert_eq!(
+                    again, b.value,
+                    "verify {again} against a reported {}",
+                    b.value
+                );
             }
         }
     }
@@ -1064,7 +1137,11 @@ mod tests {
         for n in [3usize, 5, 7] {
             let g = frustrated_cycle(n);
             let truth = brute_min(&g);
-            assert_eq!(truth, -((n - 2) as f64), "C{n}: one of n edges must be satisfied");
+            assert_eq!(
+                truth,
+                -((n - 2) as f64),
+                "C{n}: one of n edges must be satisfied"
+            );
 
             let level_one_closed = -(n as f64) * (core::f64::consts::PI / n as f64).cos();
             let (b1, _) = sdp::certified(&g, &Params::default().sdp, 7);
@@ -1116,9 +1193,17 @@ mod tests {
             let g = complete(n);
             let closed = -(n as f64) / 2.0;
             let truth = brute_min(&g);
-            assert_eq!(truth, -((n as f64) - 1.0) / 2.0, "K{n}: the best split is as even as it gets");
+            assert_eq!(
+                truth,
+                -((n as f64) - 1.0) / 2.0,
+                "K{n}: the best split is as even as it gets"
+            );
             let (b1, _) = sdp::certified(&g, &Params::default().sdp, 3);
-            assert!((b1.value - closed).abs() < 1e-9, "K{n}: level 1 gave {}", b1.value);
+            assert!(
+                (b1.value - closed).abs() < 1e-9,
+                "K{n}: level 1 gave {}",
+                b1.value
+            );
             let (b2, _) = certified(&g, &Params::default(), 3).unwrap();
             assert!(
                 (b2.value - closed).abs() < 1e-9,
@@ -1144,20 +1229,35 @@ mod tests {
         for a in 0..inflated.dim {
             inflated.q[a * inflated.dim + a] -= 1.0;
         }
-        assert_eq!(inflated.verify(&g), Err(SosError::NotPsd), "a lowered diagonal must not verify");
+        assert_eq!(
+            inflated.verify(&g),
+            Err(SosError::NotPsd),
+            "a lowered diagonal must not verify"
+        );
 
         let mut lopsided = cert.clone();
         lopsided.q[1] += 1e-3;
-        assert!(matches!(lopsided.verify(&g), Err(SosError::NotSymmetric { .. })));
+        assert!(matches!(
+            lopsided.verify(&g),
+            Err(SosError::NotSymmetric { .. })
+        ));
 
         let mut wrong_shape = cert.clone();
         wrong_shape.q.push(0.0);
-        assert!(matches!(wrong_shape.verify(&g), Err(SosError::Shape { .. })));
+        assert!(matches!(
+            wrong_shape.verify(&g),
+            Err(SosError::Shape { .. })
+        ));
 
         // And a certificate for one graph must not certify another.
         let other = random_graph(6, 0.6, 5, true);
-        let cross = cert.verify(&other).expect("the shape still fits, so it is a number");
-        assert!(cross <= brute_min(&other) + 1e-9, "a re-aimed certificate is still only a bound");
+        let cross = cert
+            .verify(&other)
+            .expect("the shape still fits, so it is a number");
+        assert!(
+            cross <= brute_min(&other) + 1e-9,
+            "a re-aimed certificate is still only a bound"
+        );
     }
 
     /// The module's own licence, checked: everything upstream of the positive-definiteness proof is
@@ -1168,14 +1268,25 @@ mod tests {
             rounds: 1,
             iters: 1,
             hyperplanes: 1,
-            sdp: sdp::Params { sweeps: 1, rank: Some(1), lanczos: 2 },
+            sdp: sdp::Params {
+                sweeps: 1,
+                rank: Some(1),
+                lanczos: 2,
+            },
         };
         for seed in 0..8u64 {
             let g = random_graph(7, 0.5, seed + 900, seed % 2 == 0);
             let truth = brute_min(&g);
             let (b, cert) = certified(&g, &p, seed).unwrap();
-            assert!(b.value <= truth + 1e-9, "seed {seed}: {} > {truth}", b.value);
-            assert!(cert.verify(&g).is_ok(), "seed {seed}: the certificate must still verify");
+            assert!(
+                b.value <= truth + 1e-9,
+                "seed {seed}: {} > {truth}",
+                b.value
+            );
+            assert!(
+                cert.verify(&g).is_ok(),
+                "seed {seed}: the certificate must still verify"
+            );
         }
     }
 
@@ -1198,7 +1309,10 @@ mod tests {
         }
         assert_eq!(
             Level2::new(MAX_SPINS + 1).err(),
-            Some(SosError::TooWide { n: MAX_SPINS + 1, max: MAX_SPINS })
+            Some(SosError::TooWide {
+                n: MAX_SPINS + 1,
+                max: MAX_SPINS
+            })
         );
         assert!(certified(&complete(MAX_SPINS + 1), &quick(), 0).is_err());
     }
@@ -1229,7 +1343,11 @@ mod tests {
 
         let lone = GraphBuilder::new(1).build();
         let (b, c) = certified(&lone, &quick(), 1).unwrap();
-        assert!(b.value <= 0.0 && b.value > -1e-9, "one unbiased spin has energy 0: {}", b.value);
+        assert!(
+            b.value <= 0.0 && b.value > -1e-9,
+            "one unbiased spin has energy 0: {}",
+            b.value
+        );
         assert!(c.verify(&lone).is_ok());
 
         let mut gb = GraphBuilder::new(1);
@@ -1248,7 +1366,10 @@ mod tests {
         gb.couple(0, 1, -1.25);
         let pair = gb.build();
         let (b, _) = certified(&pair, &quick(), 1).unwrap();
-        assert!((b.value + 1.25).abs() < 1e-9, "an antiferromagnetic pair is -1.25, not {}", b.value);
+        assert!(
+            (b.value + 1.25).abs() < 1e-9,
+            "an antiferromagnetic pair is -1.25, not {}",
+            b.value
+        );
     }
 }
-

@@ -29,9 +29,11 @@
 use ferrotherm::autocorr::{boltzmann, spins};
 use ferrotherm::certify::sokal_window;
 use ferrotherm::graph::{Graph, GraphBuilder};
-use ferrotherm::pointproc::{long_run_variance, unit_autocorrelation, unit_tau, unit_variance, Lifetime, PointProcess};
+use ferrotherm::pointproc::{
+    Lifetime, PointProcess, long_run_variance, unit_autocorrelation, unit_tau, unit_variance,
+};
 use ferrotherm::rng::Pcg;
-use ferrotherm::tla::{solve_exact, Spd};
+use ferrotherm::tla::{Spd, solve_exact};
 
 fn sk(n: usize, seed: u64) -> Graph {
     let mut rng = Pcg::new(seed, 0x6A);
@@ -66,7 +68,10 @@ fn mean_se(xs: &[f64]) -> (f64, f64) {
 
 /// Pool consecutive batch means `f` at a time: the batch means of batches `f` times as long.
 fn pool(means: &[f64], f: usize) -> Vec<f64> {
-    means.chunks_exact(f).map(|c| c.iter().sum::<f64>() / f as f64).collect()
+    means
+        .chunks_exact(f)
+        .map(|c| c.iter().sum::<f64>() / f as f64)
+        .collect()
 }
 
 /// The EXACT integrated autocorrelation time, in units of `m`, of an observable under the
@@ -81,10 +86,18 @@ fn exact_birth_death_tau(g: &Graph, beta: f64, m: f64, f: &dyn Fn(&[i8]) -> f64)
     let pi = boltzmann(g, beta).expect("enumerable");
     let vals: Vec<f64> = (0..size).map(|x| f(&spins(x, n))).collect();
     let mean: f64 = pi.iter().zip(&vals).map(|(p, v)| p * v).sum();
-    let var: f64 = pi.iter().zip(&vals).map(|(p, v)| p * (v - mean).powi(2)).sum();
+    let var: f64 = pi
+        .iter()
+        .zip(&vals)
+        .map(|(p, v)| p * (v - mean).powi(2))
+        .sum();
     let rate = |x: usize, i: usize| {
         let s = spins(x, n);
-        if s[i] > 0 { 1.0 / m } else { (2.0 * beta * g.field(i, &s)).exp() / m }
+        if s[i] > 0 {
+            1.0 / m
+        } else {
+            (2.0 * beta * g.field(i, &s)).exp() / m
+        }
     };
     let mut a = vec![0.0f64; size * size];
     for x in 0..size {
@@ -114,7 +127,9 @@ struct Replica {
 fn one_unit() {
     let (beta, m, batch, batches) = (1.0, 1.0, 200.0, 20_000usize);
     println!("ONE UNIT, beta = 1, m = 1: long-run variance of the time-averaged on-indicator");
-    println!("   h   lifetime     exact      batch means (+- se)    tau exact   Sokal at 0.1 m (error)");
+    println!(
+        "   h   lifetime     exact      batch means (+- se)    tau exact   Sokal at 0.1 m (error)"
+    );
     for &h in &[0.0f64, 0.7] {
         let mut g = GraphBuilder::new(1);
         g.bias(0, h);
@@ -127,7 +142,10 @@ fn one_unit() {
             let (v, se) = long_run_variance(&means[0], batch);
             let exact = unit_variance(beta, h, m, lifetime);
             let tau = unit_tau(beta, h, m, lifetime);
-            let window = 0.1 * sokal_window(100_000, |k| unit_autocorrelation(beta, h, m, lifetime, k as f64 * 0.1));
+            let window = 0.1
+                * sokal_window(100_000, |k| {
+                    unit_autocorrelation(beta, h, m, lifetime, k as f64 * 0.1)
+                });
             println!(
                 "  {h:3}  {:11}  {exact:.6}   {v:.6} +- {se:.6}      {tau:.6}    {window:.6} ({:+.2}%)",
                 format!("{lifetime:?}"),
@@ -138,10 +156,16 @@ fn one_unit() {
         let ((vf, sf, wf), (ve, s_e, we)) = (got[0], got[1]);
         let r = ve / vf;
         let se_r = r * ((sf / vf).powi(2) + (s_e / ve).powi(2)).sqrt();
-        println!("       exp / fixed: exact 2, batch means {r:.3} +- {se_r:.3}, Sokal's window {:.3}", we / wf);
+        println!(
+            "       exp / fixed: exact 2, batch means {r:.3} +- {se_r:.3}, Sokal's window {:.3}",
+            we / wf
+        );
         // The dense birth-death solve used on SK below, on this one unit: it must give unit_tau.
         let dense = exact_birth_death_tau(&g, beta, m, &on);
-        println!("       the dense birth-death solve on this unit: tau {dense:.12} (unit_tau {:.12})", unit_tau(beta, h, m, Lifetime::Exponential));
+        println!(
+            "       the dense birth-death solve on this unit: tau {dense:.12} (unit_tau {:.12})",
+            unit_tau(beta, h, m, Lifetime::Exponential)
+        );
     }
 }
 
@@ -152,13 +176,29 @@ fn main() {
     // first run at 50 m for every cell read sigma^2 up to 36% higher from batches four times as
     // long. So each temperature gets its own batch length, and the last columns hold it to account.
     let (burn, seeds, batches, quarter) = (500.0f64, 16u64, 320usize, 4usize);
-    let batch_for = |beta: f64| if beta < 0.75 { 100.0 } else if beta < 1.25 { 500.0 } else { 1500.0 };
+    let batch_for = |beta: f64| {
+        if beta < 0.75 {
+            100.0
+        } else if beta < 1.25 {
+            500.0
+        } else {
+            1500.0
+        }
+    };
     println!();
-    println!("SK, tau in units of m by batch means: {seeds} independent seeds per lifetime, each {burn} m of burn-in then");
-    println!("{batches} batches of b = 100 / 500 / 1500 m at beta 0.5 / 1 / 1.5. se is the standard error across seeds.");
-    println!("b/4 : b is sigma^2 from batches a quarter as long over sigma^2 at b; the bias at b is about a third of");
+    println!(
+        "SK, tau in units of m by batch means: {seeds} independent seeds per lifetime, each {burn} m of burn-in then"
+    );
+    println!(
+        "{batches} batches of b = 100 / 500 / 1500 m at beta 0.5 / 1 / 1.5. se is the standard error across seeds."
+    );
+    println!(
+        "b/4 : b is sigma^2 from batches a quarter as long over sigma^2 at b; the bias at b is about a third of"
+    );
     println!("its shortfall from 1 (sigma^2(b) ~ sigma^2 (1 - kappa / b)).");
-    println!("   n  beta   lifetime   births/m      tau_E (se)         tau_M (se)      b/4 : b   E      M      exact tau_E, tau_M");
+    println!(
+        "   n  beta   lifetime   births/m      tau_E (se)         tau_M (se)      b/4 : b   E      M      exact tau_E, tau_M"
+    );
     for &n in &[8usize, 16] {
         for &beta in &[0.5f64, 1.0, 1.5] {
             let batch = batch_for(beta);
@@ -166,10 +206,17 @@ fn main() {
             let law = boltzmann(&g, beta).expect("enumerable");
             let var = |f: &dyn Fn(&[i8]) -> f64| {
                 let vals: Vec<f64> = (0..law.len())
-                    .map(|x| f(&(0..n).map(|i| if x >> i & 1 == 1 { 1 } else { -1 }).collect::<Vec<i8>>()))
+                    .map(|x| {
+                        f(&(0..n)
+                            .map(|i| if x >> i & 1 == 1 { 1 } else { -1 })
+                            .collect::<Vec<i8>>())
+                    })
                     .collect();
                 let mean: f64 = law.iter().zip(&vals).map(|(p, v)| p * v).sum();
-                law.iter().zip(&vals).map(|(p, v)| p * (v - mean).powi(2)).sum::<f64>()
+                law.iter()
+                    .zip(&vals)
+                    .map(|(p, v)| p * (v - mean).powi(2))
+                    .sum::<f64>()
             };
             let energy = |s: &[i8]| g.energy(s);
             let var_obs = [var(&energy), var(&magnetisation)];
@@ -183,19 +230,40 @@ fn main() {
                                 let energy = |s: &[i8]| g.energy(s);
                                 let mut pp = PointProcess::new(g, beta, 1.0, lifetime, 1000 + seed);
                                 let short = batch / quarter as f64;
-                                let rows = pp.batch_means(burn, short, batches * quarter, &[&energy, &magnetisation]);
+                                let rows = pp.batch_means(
+                                    burn,
+                                    short,
+                                    batches * quarter,
+                                    &[&energy, &magnetisation],
+                                );
                                 let births_per_m = pp.births as f64 / pp.t;
-                                let at_b = |o: usize| long_run_variance(&pool(&rows[o], quarter), batch).0;
+                                let at_b =
+                                    |o: usize| long_run_variance(&pool(&rows[o], quarter), batch).0;
                                 let at_quarter = |o: usize| long_run_variance(&rows[o], short).0;
-                                Replica { sigma2: [at_b(0), at_b(1)], sigma2_short: [at_quarter(0), at_quarter(1)], births_per_m }
+                                Replica {
+                                    sigma2: [at_b(0), at_b(1)],
+                                    sigma2_short: [at_quarter(0), at_quarter(1)],
+                                    births_per_m,
+                                }
                             })
                         })
                         .collect();
-                    handles.into_iter().map(|h| h.join().expect("replica")).collect()
+                    handles
+                        .into_iter()
+                        .map(|h| h.join().expect("replica"))
+                        .collect()
                 });
-                let stat = |o: usize| mean_se(&reps.iter().map(|r| r.sigma2[o] / (2.0 * var_obs[o])).collect::<Vec<_>>());
+                let stat = |o: usize| {
+                    mean_se(
+                        &reps
+                            .iter()
+                            .map(|r| r.sigma2[o] / (2.0 * var_obs[o]))
+                            .collect::<Vec<_>>(),
+                    )
+                };
                 let short = |o: usize| {
-                    reps.iter().map(|r| r.sigma2_short[o]).sum::<f64>() / reps.iter().map(|r| r.sigma2[o]).sum::<f64>()
+                    reps.iter().map(|r| r.sigma2_short[o]).sum::<f64>()
+                        / reps.iter().map(|r| r.sigma2[o]).sum::<f64>()
                 };
                 let births = reps.iter().map(|r| r.births_per_m).sum::<f64>() / reps.len() as f64;
                 let (te, se_e) = stat(0);
@@ -224,7 +292,9 @@ fn main() {
             };
             let (re, sre) = ratio(0);
             let (rm, srm) = ratio(1);
-            println!("                 ratio (exp / fixed)       {re:5.3} ({sre:.3})    {rm:6.3} ({srm:.3})");
+            println!(
+                "                 ratio (exp / fixed)       {re:5.3} ({sre:.3})    {rm:6.3} ({srm:.3})"
+            );
         }
     }
 }

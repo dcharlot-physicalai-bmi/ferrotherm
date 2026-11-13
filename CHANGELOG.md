@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Toolchain 1.100.0
+
+The workspace pin is Rust 1.100.0 (`0ef1bc386`, 2026-11-09), the stable channel
+on 2026-11-13. `rust-version` stays 1.96: that line is still the policy floor
+`check-msrv.sh` compiles, not the compiler CI uses. New bench receipts record
+`rustc -Vv` and the sha256 of `Cargo.lock`. `rules_version` stays `v3`.
+Direct dependencies that had a newer incompatible release moved: `pollster`
+0.4 to 1, `ureq` 2 to 3, `nusb` 0.1 to 0.2. `wgpu` stays 30, which is the
+current major. THRML baseline A (`thrml==0.1.4`) and baseline B
+(`2d96f4b4`) and their JAX pins are unchanged. PyPI has no THRML release
+after 0.1.4, so there is no baseline C. `docs/toolchain-1.100.md` records
+the audit result (no advisories), the transitive crates the latest wgpu and
+ureq still pin, and the accuracy-receipt diff against `777f0417`. Chain
+traces match. The receipt file does not, and only in provenance and
+wall-clock fields. Zig moves to 0.17.1: `@cImport` is gone, the header is
+translated in the build, and array fills use `@splat`.
+
 ### Open-grid levers
 
 `grid::OpenIsing` is the checkerboard stencil for an open Ising grid. `parallel`,

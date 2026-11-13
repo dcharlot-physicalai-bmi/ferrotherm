@@ -52,7 +52,9 @@ pub fn luby_cutoff(i: u64, unit: u64) -> u64 {
 /// Geometrically growing cutoffs `base, base f, base f^2, ...` (rounded up), `n` of them.
 #[must_use]
 pub fn geometric_cutoffs(base: u64, factor: f64, n: usize) -> Vec<u64> {
-    (0..n).map(|i| (base as f64 * factor.powi(i as i32)).ceil().max(1.0) as u64).collect()
+    (0..n)
+        .map(|i| (base as f64 * factor.powi(i as i32)).ceil().max(1.0) as u64)
+        .collect()
 }
 
 /// Expected total work of restarting every `cutoff` steps under a success curve `f`, where
@@ -64,7 +66,11 @@ pub fn geometric_cutoffs(base: u64, factor: f64, n: usize) -> Vec<u64> {
 /// If `cutoff` is 0 or beyond the curve.
 #[must_use]
 pub fn expected_work(f: &[f64], cutoff: usize) -> f64 {
-    assert!(cutoff >= 1 && cutoff < f.len(), "cutoff must be in 1..{}", f.len());
+    assert!(
+        cutoff >= 1 && cutoff < f.len(),
+        "cutoff must be in 1..{}",
+        f.len()
+    );
     let success = f[cutoff];
     if success <= 0.0 {
         return f64::INFINITY;
@@ -111,7 +117,10 @@ mod tests {
     /// The sequence, term by term, and the block-sum identity `sum_{i <= 2^k - 1} u(i) = k 2^{k-1}`.
     #[test]
     fn lubys_sequence_is_the_published_one_and_its_blocks_sum_as_they_must() {
-        let want = [1u64, 1, 2, 1, 1, 2, 4, 1, 1, 2, 1, 1, 2, 4, 8, 1, 1, 2, 1, 1, 2, 4, 1, 1, 2, 1, 1, 2, 4, 8, 16];
+        let want = [
+            1u64, 1, 2, 1, 1, 2, 4, 1, 1, 2, 1, 1, 2, 4, 8, 1, 1, 2, 1, 1, 2, 4, 1, 1, 2, 1, 1, 2,
+            4, 8, 16,
+        ];
         for (i, &w) in want.iter().enumerate() {
             assert_eq!(luby(i as u64 + 1), w, "term {}", i + 1);
         }
@@ -128,7 +137,11 @@ mod tests {
         let f: Vec<f64> = (0..2000).map(|k| 1.0 - (1.0 - p).powi(k)).collect();
         for t in [1usize, 2, 7, 50, 400, 1999] {
             let w = expected_work(&f, t);
-            assert!((w - 1.0 / p).abs() < 1e-9 / p, "cutoff {t}: {w} vs 1/p = {}", 1.0 / p);
+            assert!(
+                (w - 1.0 / p).abs() < 1e-9 / p,
+                "cutoff {t}: {w} vs 1/p = {}",
+                1.0 / p
+            );
         }
     }
 
@@ -149,6 +162,9 @@ mod tests {
         // cutoff of 30.
         let (work, alive) = luby_expected_work(&f, 1, 200);
         assert!(alive < 1e-12, "Luby must succeed: {alive}");
-        assert!(work > 1.0 / q && work < expected_work(&f, 30), "Luby work {work}");
+        assert!(
+            work > 1.0 / q && work < expected_work(&f, 30),
+            "Luby work {work}"
+        );
     }
 }

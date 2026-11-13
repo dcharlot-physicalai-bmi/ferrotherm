@@ -82,7 +82,9 @@ pub fn from_spectrum(u: &[f64], eigenvalues: &[f64]) -> Vec<f64> {
     let mut a = vec![0.0; n * n];
     for i in 0..n {
         for j in i..n {
-            let s: f64 = (0..n).map(|k| u[i * n + k] * eigenvalues[k] * u[j * n + k]).sum();
+            let s: f64 = (0..n)
+                .map(|k| u[i * n + k] * eigenvalues[k] * u[j * n + k])
+                .sum();
             a[i * n + j] = s;
             a[j * n + i] = s;
         }
@@ -93,7 +95,12 @@ pub fn from_spectrum(u: &[f64], eigenvalues: &[f64]) -> Vec<f64> {
 /// The paper's first ensemble: the spectrum of [`linear_spectrum`] under [`haar_orthogonal`].
 /// Returns `(A, U, eigenvalues)`.
 #[must_use]
-pub fn ensemble(n: usize, lambda_min: f64, delta: f64, seed: u64) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+pub fn ensemble(
+    n: usize,
+    lambda_min: f64,
+    delta: f64,
+    seed: u64,
+) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
     let u = haar_orthogonal(n, seed);
     let lam = linear_spectrum(n, lambda_min, delta);
     (from_spectrum(&u, &lam), u, lam)
@@ -164,7 +171,11 @@ fn sturm_below(alpha: &[f64], beta: &[f64], x: f64) -> usize {
     let mut count = 0;
     let mut d = 1.0f64;
     for i in 0..alpha.len() {
-        let off = if i == 0 { 0.0 } else { beta[i - 1] * beta[i - 1] / d };
+        let off = if i == 0 {
+            0.0
+        } else {
+            beta[i - 1] * beta[i - 1] / d
+        };
         d = alpha[i] - x - off;
         if d == 0.0 {
             d = -f64::EPSILON * (alpha[i].abs() + x.abs()).max(1.0);
@@ -181,7 +192,8 @@ fn tridiagonal_eigenvalue(alpha: &[f64], beta: &[f64], j: usize) -> f64 {
     let m = alpha.len();
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
     for i in 0..m {
-        let r = if i > 0 { beta[i - 1].abs() } else { 0.0 } + if i + 1 < m { beta[i].abs() } else { 0.0 };
+        let r = if i > 0 { beta[i - 1].abs() } else { 0.0 }
+            + if i + 1 < m { beta[i].abs() } else { 0.0 };
         lo = lo.min(alpha[i] - r);
         hi = hi.max(alpha[i] + r);
     }
@@ -267,7 +279,14 @@ fn tridiagonal_eigenvector(alpha: &[f64], beta: &[f64], theta: f64) -> Vec<f64> 
 ///
 /// If `a` is not `n x n` or `k` is zero or larger than `n`.
 #[must_use]
-pub fn lanczos_smallest(a: &[f64], n: usize, k: usize, tol: f64, max_steps: usize, seed: u64) -> Lanczos {
+pub fn lanczos_smallest(
+    a: &[f64],
+    n: usize,
+    k: usize,
+    tol: f64,
+    max_steps: usize,
+    seed: u64,
+) -> Lanczos {
     assert_eq!(a.len(), n * n, "a is n x n");
     assert!(k >= 1 && k <= n, "k must lie in 1..=n");
     let mut rng = Pcg::new(seed, 0x1A2C);
@@ -283,7 +302,11 @@ pub fn lanczos_smallest(a: &[f64], n: usize, k: usize, tol: f64, max_steps: usiz
     for _ in 0..steps_cap {
         let mut w = vec![0.0; n];
         for (r, wr) in w.iter_mut().enumerate() {
-            *wr = a[r * n..(r + 1) * n].iter().zip(&v).map(|(x, y)| x * y).sum();
+            *wr = a[r * n..(r + 1) * n]
+                .iter()
+                .zip(&v)
+                .map(|(x, y)| x * y)
+                .sum();
         }
         flops += 2 * (n * n) as u64;
         let aj: f64 = w.iter().zip(&v).map(|(x, y)| x * y).sum();
@@ -301,8 +324,12 @@ pub fn lanczos_smallest(a: &[f64], n: usize, k: usize, tol: f64, max_steps: usiz
         }
         let bj = w.iter().map(|x| x * x).sum::<f64>().sqrt();
         if basis.len() >= k {
-            theta = (0..k).map(|i| tridiagonal_eigenvalue(&alpha, &beta, i)).collect::<Vec<_>>();
-            let scale = tridiagonal_eigenvalue(&alpha, &beta, alpha.len() - 1).abs().max(theta[0].abs());
+            theta = (0..k)
+                .map(|i| tridiagonal_eigenvalue(&alpha, &beta, i))
+                .collect::<Vec<_>>();
+            let scale = tridiagonal_eigenvalue(&alpha, &beta, alpha.len() - 1)
+                .abs()
+                .max(theta[0].abs());
             let ok = theta.iter().all(|&t| {
                 let s = tridiagonal_eigenvector(&alpha, &beta, t);
                 (bj * s[s.len() - 1]).abs() <= tol * scale
@@ -331,7 +358,13 @@ pub fn lanczos_smallest(a: &[f64], n: usize, k: usize, tol: f64, max_steps: usiz
         })
         .collect();
     flops += 2 * (m * n * k) as u64;
-    Lanczos { values: theta, vectors, steps: m, flops, converged }
+    Lanczos {
+        values: theta,
+        vectors,
+        steps: m,
+        flops,
+        converged,
+    }
 }
 
 /// The inverse of a symmetric positive-definite matrix by Cholesky, `A = L Lᵀ`, then `L⁻¹`, then
@@ -395,7 +428,10 @@ mod tests {
     use super::*;
 
     fn max_abs_diff(a: &[f64], b: &[f64]) -> f64 {
-        a.iter().zip(b).map(|(x, y)| (x - y).abs()).fold(0.0, f64::max)
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0, f64::max)
     }
 
     /// The ensemble is what it says: `U` orthogonal to rounding, and `A U = U Λ` column by column,
@@ -415,7 +451,10 @@ mod tests {
         for c in 0..n {
             for r in 0..n {
                 let au: f64 = (0..n).map(|k| a[r * n + k] * u[k * n + c]).sum();
-                assert!((au - lam[c] * u[r * n + c]).abs() < 1e-11, "column {c} is not an eigenvector");
+                assert!(
+                    (au - lam[c] * u[r * n + c]).abs() < 1e-11,
+                    "column {c} is not an eigenvector"
+                );
             }
         }
     }
@@ -428,15 +467,35 @@ mod tests {
         let (a, u, lam) = ensemble(n, 0.5, 0.5, 9);
         let r = lanczos_smallest(&a, n, 10, 1e-10, n, 5);
         assert!(r.converged, "must converge within n steps");
-        assert!(r.steps < n, "and before exhausting the space: {} steps", r.steps);
+        assert!(
+            r.steps < n,
+            "and before exhausting the space: {} steps",
+            r.steps
+        );
         for i in 0..10 {
-            assert!((r.values[i] - lam[i]).abs() < 1e-8 * lam[n - 1], "eigenvalue {i}: {} vs {}", r.values[i], lam[i]);
-            let overlap: f64 = (0..n).map(|k| r.vectors[i][k] * u[k * n + i]).sum::<f64>().abs();
-            assert!((overlap - 1.0).abs() < 1e-6, "eigenvector {i}: |overlap| {overlap}");
+            assert!(
+                (r.values[i] - lam[i]).abs() < 1e-8 * lam[n - 1],
+                "eigenvalue {i}: {} vs {}",
+                r.values[i],
+                lam[i]
+            );
+            let overlap: f64 = (0..n)
+                .map(|k| r.vectors[i][k] * u[k * n + i])
+                .sum::<f64>()
+                .abs();
+            assert!(
+                (overlap - 1.0).abs() < 1e-6,
+                "eigenvector {i}: |overlap| {overlap}"
+            );
         }
         // A cruder tolerance takes fewer steps: the rule is doing something.
         let coarse = lanczos_smallest(&a, n, 10, 1e-3, n, 5);
-        assert!(coarse.steps < r.steps, "coarse {} vs fine {}", coarse.steps, r.steps);
+        assert!(
+            coarse.steps < r.steps,
+            "coarse {} vs fine {}",
+            coarse.steps,
+            r.steps
+        );
     }
 
     /// The Cholesky inverse is an inverse, and the flops it counts are the textbook `n³` to within
@@ -456,7 +515,10 @@ mod tests {
         assert!(worst < 1e-9, "A A^-1 = I: {worst:e}");
         let ratio = flops as f64 / (n as f64).powi(3);
         assert!((0.95..1.1).contains(&ratio), "flops / n^3 = {ratio}");
-        assert!(cholesky_inverse(&[1.0, 2.0, 2.0, 1.0], 2).is_none(), "an indefinite matrix is refused");
+        assert!(
+            cholesky_inverse(&[1.0, 2.0, 2.0, 1.0], 2).is_none(),
+            "an indefinite matrix is refused"
+        );
     }
 
     /// The closed form is held to the paper's Lyapunov equation, `dΣ/dt = −(AΣ + ΣA) + 2I`,
@@ -477,8 +539,16 @@ mod tests {
                 }
             }
             let (inv, _) = cholesky_inverse(&a, n).expect("SPD");
-            let e0: f64 = sigma.iter().zip(&inv).map(|(s, v)| (s - v).powi(2)).sum::<f64>().sqrt();
-            assert!((e0 - covariance_error(&lam, k, 0.0)).abs() < 1e-12, "E(0) at k = {k}");
+            let e0: f64 = sigma
+                .iter()
+                .zip(&inv)
+                .map(|(s, v)| (s - v).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            assert!(
+                (e0 - covariance_error(&lam, k, 0.0)).abs() < 1e-12,
+                "E(0) at k = {k}"
+            );
             let rhs = |s: &[f64]| -> Vec<f64> {
                 let mut out = vec![0.0; n * n];
                 for i in 0..n {
@@ -495,9 +565,17 @@ mod tests {
             let (dt, steps) = (1e-3, 800);
             for _ in 0..steps {
                 let k1 = rhs(&sigma);
-                let s2: Vec<f64> = sigma.iter().zip(&k1).map(|(s, d)| s + 0.5 * dt * d).collect();
+                let s2: Vec<f64> = sigma
+                    .iter()
+                    .zip(&k1)
+                    .map(|(s, d)| s + 0.5 * dt * d)
+                    .collect();
                 let k2 = rhs(&s2);
-                let s3: Vec<f64> = sigma.iter().zip(&k2).map(|(s, d)| s + 0.5 * dt * d).collect();
+                let s3: Vec<f64> = sigma
+                    .iter()
+                    .zip(&k2)
+                    .map(|(s, d)| s + 0.5 * dt * d)
+                    .collect();
                 let k3 = rhs(&s3);
                 let s4: Vec<f64> = sigma.iter().zip(&k3).map(|(s, d)| s + dt * d).collect();
                 let k4 = rhs(&s4);
@@ -506,13 +584,21 @@ mod tests {
                 }
             }
             let t = dt * steps as f64;
-            let integrated: f64 = sigma.iter().zip(&inv).map(|(s, v)| (s - v).powi(2)).sum::<f64>().sqrt();
+            let integrated: f64 = sigma
+                .iter()
+                .zip(&inv)
+                .map(|(s, v)| (s - v).powi(2))
+                .sum::<f64>()
+                .sqrt();
             let closed = covariance_error(&lam, k, t);
             assert!(
                 (integrated - closed).abs() < 1e-9 * closed.max(1e-12),
                 "k = {k}, t = {t}: integrated {integrated} vs closed {closed}"
             );
-            assert!(max_abs_diff(&sigma, &inv) < 1.0, "sanity: the covariance approaches A^-1");
+            assert!(
+                max_abs_diff(&sigma, &inv) < 1.0,
+                "sanity: the covariance approaches A^-1"
+            );
         }
     }
 
@@ -530,15 +616,27 @@ mod tests {
         let mut last = f64::INFINITY;
         for eps in [1e-2f64, 1e-4, 1e-8, 1e-16] {
             let s = thermalization_time(&lam, 0, eps) / thermalization_time(&lam, k, eps);
-            assert!(s < last, "the speedup falls as the tolerance tightens: {s} after {last}");
+            assert!(
+                s < last,
+                "the speedup falls as the tolerance tightens: {s} after {last}"
+            );
             assert!(s > limit, "and stays above its limit {limit}: {s}");
             last = s;
         }
-        assert!((last / limit - 1.0) < 0.07, "at eps 1e-16 it is within 7% of the limit: {last} vs {limit}");
+        assert!(
+            (last / limit - 1.0) < 0.07,
+            "at eps 1e-16 it is within 7% of the limit: {last} vs {limit}"
+        );
         let at_1e2 = thermalization_time(&lam, 0, 1e-2) / thermalization_time(&lam, k, 1e-2);
-        assert!((at_1e2 - 18.09).abs() < 0.01, "measured 18.09 at eps 1e-2: {at_1e2}");
+        assert!(
+            (at_1e2 - 18.09).abs() < 0.01,
+            "measured 18.09 at eps 1e-2: {at_1e2}"
+        );
         // An initialisation already inside the tolerance needs no device at all.
-        assert_eq!(thermalization_time(&lam, k, covariance_error(&lam, k, 0.0) * 1.01), 0.0);
+        assert_eq!(
+            thermalization_time(&lam, k, covariance_error(&lam, k, 0.0) * 1.01),
+            0.0
+        );
     }
 
     /// **The preprocessing the paper calls negligible costs about what the whole answer costs.**
@@ -560,6 +658,11 @@ mod tests {
         }
         let (_, chol) = cholesky_inverse(&a, n).expect("SPD");
         let ratio = r.flops as f64 / chol as f64;
-        assert!(ratio > 1.0, "Lanczos {} flops vs the whole inverse {} = {ratio}", r.flops, chol);
+        assert!(
+            ratio > 1.0,
+            "Lanczos {} flops vs the whole inverse {} = {ratio}",
+            r.flops,
+            chol
+        );
     }
 }

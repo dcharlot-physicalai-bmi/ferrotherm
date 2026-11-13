@@ -114,16 +114,19 @@ impl core::fmt::Display for FtpError {
 }
 
 fn err<T>(line: usize, message: impl Into<String>) -> Result<T, FtpError> {
-    Err(FtpError { line, message: message.into() })
+    Err(FtpError {
+        line,
+        message: message.into(),
+    })
 }
 
 impl Program {
     /// Build a program from a graph and a schedule.
-///
-/// # Panics
-///
-/// If the graph carries an edge this crate would itself reject, which would mean it was built by
-/// something other than [`crate::graph::GraphBuilder`].
+    ///
+    /// # Panics
+    ///
+    /// If the graph carries an edge this crate would itself reject, which would mean it was built by
+    /// something other than [`crate::graph::GraphBuilder`].
     #[must_use]
     pub fn from_graph(g: &Graph, schedule: &Schedule) -> Program {
         let mut factors = Vec::new();
@@ -139,9 +142,16 @@ impl Program {
         Program {
             name: None,
             spins: g.n,
-            bias: (0..g.n).filter(|&i| g.h[i] != 0.0).map(|i| (i, g.h[i])).collect(),
+            bias: (0..g.n)
+                .filter(|&i| g.h[i] != 0.0)
+                .map(|i| (i, g.h[i]))
+                .collect(),
             factors,
-            colors: g.classes.iter().map(|c| c.iter().map(|&x| x as usize).collect()).collect(),
+            colors: g
+                .classes
+                .iter()
+                .map(|c| c.iter().map(|&x| x as usize).collect())
+                .collect(),
             encodings: Vec::new(),
             schedule: schedule.clone(),
             observe: Vec::new(),
@@ -174,7 +184,7 @@ impl Program {
                              `ferrotherm::reduce::to_pairwise`, which adds an ancilla spin per \
                              substituted pair and preserves every state's ordering"
                         ),
-                    )
+                    );
                 }
             }
         }
@@ -235,15 +245,15 @@ impl Program {
 
     /// Parse. Errors carry the line number, because a format nobody can debug is a format nobody
     /// adopts.
-///
-/// # Errors
-///
-/// [`FtpError`] with the line number, for a malformed header, an unknown directive, an index past
-/// the declared spin count, or a colour class the spins do not support.
-///
-/// # Panics
-///
-/// Never: every malformed input is reported as an [`FtpError`] with its line rather than asserted.
+    ///
+    /// # Errors
+    ///
+    /// [`FtpError`] with the line number, for a malformed header, an unknown directive, an index past
+    /// the declared spin count, or a colour class the spins do not support.
+    ///
+    /// # Panics
+    ///
+    /// Never: every malformed input is reported as an [`FtpError`] with its line rather than asserted.
     pub fn from_ftp(text: &str) -> Result<Program, FtpError> {
         let mut p = Program::default();
         let mut saw_header = false;
@@ -259,14 +269,20 @@ impl Program {
             let directive = it.next().unwrap();
 
             if !saw_header && directive != "ftp" {
-                return err(line, format!("expected `ftp <version>` first, found `{directive}`"));
+                return err(
+                    line,
+                    format!("expected `ftp <version>` first, found `{directive}`"),
+                );
             }
 
             match directive {
                 "ftp" => {
                     let v: u32 = num(it.next(), line, "ftp version")?;
                     if v != VERSION {
-                        return err(line, format!("unsupported format version {v}, expected {VERSION}"));
+                        return err(
+                            line,
+                            format!("unsupported format version {v}, expected {VERSION}"),
+                        );
                     }
                     saw_header = true;
                 }
@@ -307,23 +323,27 @@ impl Program {
                     let w: f64 = num(it.next(), line, "factor weight")?;
                     let mut vars = Vec::new();
                     for tok in it {
-                        let v: usize = tok
-                            .parse()
-                            .map_err(|_| FtpError { line, message: format!("bad variable `{tok}`") })?;
+                        let v: usize = tok.parse().map_err(|_| FtpError {
+                            line,
+                            message: format!("bad variable `{tok}`"),
+                        })?;
                         check_spin(v, p.spins, saw_spins, line)?;
                         vars.push(v);
                     }
-                    let f = Factor::new(&vars, w, p.spins)
-                        .map_err(|e| FtpError { line, message: e.to_string() })?;
+                    let f = Factor::new(&vars, w, p.spins).map_err(|e| FtpError {
+                        line,
+                        message: e.to_string(),
+                    })?;
                     p.factors.push(f);
                 }
                 "color" => {
                     let c: usize = num(it.next(), line, "colour index")?;
                     let mut class = Vec::new();
                     for tok in it {
-                        let v: usize = tok
-                            .parse()
-                            .map_err(|_| FtpError { line, message: format!("bad spin `{tok}`") })?;
+                        let v: usize = tok.parse().map_err(|_| FtpError {
+                            line,
+                            message: format!("bad spin `{tok}`"),
+                        })?;
                         check_spin(v, p.spins, saw_spins, line)?;
                         class.push(v);
                     }
@@ -369,7 +389,7 @@ impl Program {
                                     "unknown encoding `{other}`; expected onehot, binary or \
                                      domainwall"
                                 ),
-                            )
+                            );
                         }
                     };
                     if k < 2 {
@@ -385,7 +405,10 @@ impl Program {
                     p.schedule.push(Stage {
                         beta,
                         sweeps,
-                        penalties: Penalties { domain_wall: dw, copy: cp },
+                        penalties: Penalties {
+                            domain_wall: dw,
+                            copy: cp,
+                        },
                     });
                 }
                 "observe" => p.observe.push(it.next().unwrap_or("").to_string()),
@@ -420,16 +443,28 @@ impl Program {
 }
 
 fn num<T: core::str::FromStr>(tok: Option<&str>, line: usize, what: &str) -> Result<T, FtpError> {
-    let t = tok.ok_or(FtpError { line, message: format!("missing {what}") })?;
-    t.parse().map_err(|_| FtpError { line, message: format!("bad {what}: `{t}`") })
+    let t = tok.ok_or(FtpError {
+        line,
+        message: format!("missing {what}"),
+    })?;
+    t.parse().map_err(|_| FtpError {
+        line,
+        message: format!("bad {what}: `{t}`"),
+    })
 }
 
 fn check_spin(i: usize, n: usize, saw_spins: bool, line: usize) -> Result<(), FtpError> {
     if !saw_spins {
-        return err(line, "`spins <n>` must appear before anything that refers to a spin");
+        return err(
+            line,
+            "`spins <n>` must appear before anything that refers to a spin",
+        );
     }
     if i >= n {
-        return err(line, format!("spin {i} is out of range for a program of {n} spins"));
+        return err(
+            line,
+            format!("spin {i} is out of range for a program of {n} spins"),
+        );
     }
     Ok(())
 }
@@ -476,7 +511,11 @@ mod tests {
             let text = p.to_ftp();
             let back = Program::from_ftp(&text).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert_eq!(back, p, "{name}: parse of a write differs");
-            assert_eq!(back.to_ftp(), text, "{name}: write of a parse is not byte-identical");
+            assert_eq!(
+                back.to_ftp(),
+                text,
+                "{name}: write of a parse is not byte-identical"
+            );
             assert_eq!(back.digest(), p.digest(), "{name}: digest differs");
         }
     }
@@ -484,7 +523,14 @@ mod tests {
     #[test]
     fn floats_survive_the_round_trip_bit_for_bit() {
         // A format that loses the last bit of a coupling is a format that changes the model.
-        let awkward = [0.1, 1.0 / 3.0, 1e-300, 1e300, -2.220446049250313e-16, core::f64::consts::PI];
+        let awkward = [
+            0.1,
+            1.0 / 3.0,
+            1e-300,
+            1e300,
+            -2.220446049250313e-16,
+            core::f64::consts::PI,
+        ];
         let mut b = GraphBuilder::new(awkward.len() + 1);
         for (i, &w) in awkward.iter().enumerate() {
             b.couple(i, i + 1, w);
@@ -493,7 +539,11 @@ mod tests {
         let p = Program::from_graph(&b.build(), &Schedule::constant(core::f64::consts::E, 3));
         let back = Program::from_ftp(&p.to_ftp()).unwrap();
         for (a, c) in p.factors.iter().zip(back.factors.iter()) {
-            assert_eq!(a.weight().to_bits(), c.weight().to_bits(), "coupling lost bits");
+            assert_eq!(
+                a.weight().to_bits(),
+                c.weight().to_bits(),
+                "coupling lost bits"
+            );
         }
         for ((_, a), (_, c)) in p.bias.iter().zip(back.bias.iter()) {
             assert_eq!(a.to_bits(), c.to_bits(), "bias lost bits");
@@ -513,8 +563,13 @@ mod tests {
             assert_eq!(g2.n, g.n, "{name}");
             let mut rng = crate::rng::Pcg::new(5, 0);
             for _ in 0..50 {
-                let s: Vec<i8> = (0..g.n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
-                assert!((g.energy(&s) - g2.energy(&s)).abs() < 1e-12, "{name}: energies differ");
+                let s: Vec<i8> = (0..g.n)
+                    .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+                    .collect();
+                assert!(
+                    (g.energy(&s) - g2.energy(&s)).abs() < 1e-12,
+                    "{name}: energies differ"
+                );
             }
         }
     }
@@ -539,8 +594,16 @@ mod tests {
         assert_eq!(p.schedule.len(), 2);
         // and it is the frustrated ring it claims to be
         let g = p.to_graph().unwrap();
-        let (_, e) = crate::tempering::anneal_scheduled(&g, &Schedule::geometric(0.05, 6.0, 60, 40), 1, None);
-        assert_eq!(e, -3.0, "the documented example should be the frustrated 5-ring");
+        let (_, e) = crate::tempering::anneal_scheduled(
+            &g,
+            &Schedule::geometric(0.05, 6.0, 60, 40),
+            1,
+            None,
+        );
+        assert_eq!(
+            e, -3.0,
+            "the documented example should be the frustrated 5-ring"
+        );
     }
 
     #[test]
@@ -551,7 +614,11 @@ mod tests {
             ("ftp 1\nspins 4\nfactor 1 0 9\n", 3, "out of range"),
             ("ftp 1\nspins 4\nfactor 1 0 0\n", 3, "appears 2 times"),
             ("ftp 1\nspins 4\nwobble 3\n", 3, "unknown directive"),
-            ("ftp 1\nspins 4\nencode 0 3 trinary\n", 3, "unknown encoding"),
+            (
+                "ftp 1\nspins 4\nencode 0 3 trinary\n",
+                3,
+                "unknown encoding",
+            ),
             ("ftp 1\nbias 0 1\n", 2, "must appear before"),
             ("ftp 1\nspins 4\nstage 0.5\n", 3, "missing stage sweeps"),
             ("ftp 1\n", 0, "missing `spins"),
@@ -569,18 +636,37 @@ mod tests {
         let p = Program::from_graph(&g, &Schedule::constant(1.0, 5));
         let spaced = p.to_ftp().replace('\n', "  # noise\n");
         let back = Program::from_ftp(&spaced).unwrap();
-        assert_eq!(back.digest(), p.digest(), "comments must not change the digest");
+        assert_eq!(
+            back.digest(),
+            p.digest(),
+            "comments must not change the digest"
+        );
 
         let mut different = p.clone();
         different.schedule = Schedule::constant(2.0, 5);
-        assert_ne!(different.digest(), p.digest(), "a changed schedule must change the digest");
+        assert_ne!(
+            different.digest(),
+            p.digest(),
+            "a changed schedule must change the digest"
+        );
     }
 
     #[test]
     fn encodings_survive_as_provenance() {
-        let mut p = Program::from_graph(&crate::ising::ring(7, 1.0, 0.0), &Schedule::constant(1.0, 1));
-        p.encodings.push(EncodedVar { base: 0, k: 4, encoding: Encoding::DomainWall });
-        p.encodings.push(EncodedVar { base: 3, k: 5, encoding: Encoding::OneHot });
+        let mut p = Program::from_graph(
+            &crate::ising::ring(7, 1.0, 0.0),
+            &Schedule::constant(1.0, 1),
+        );
+        p.encodings.push(EncodedVar {
+            base: 0,
+            k: 4,
+            encoding: Encoding::DomainWall,
+        });
+        p.encodings.push(EncodedVar {
+            base: 3,
+            k: 5,
+            encoding: Encoding::OneHot,
+        });
         let back = Program::from_ftp(&p.to_ftp()).unwrap();
         assert_eq!(back.encodings, p.encodings);
     }

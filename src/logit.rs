@@ -107,7 +107,10 @@ impl core::fmt::Display for Ill {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Ill::Shape => write!(f, "a vector's length disagrees with the model's shape"),
-            Ill::Prior(s) => write!(f, "a prior standard deviation of {s} is not positive and finite"),
+            Ill::Prior(s) => write!(
+                f,
+                "a prior standard deviation of {s} is not positive and finite"
+            ),
             Ill::TooManyDimensions(d) => write!(
                 f,
                 "grid quadrature is a reference in two dimensions and not in {d}; it is refused \
@@ -144,11 +147,19 @@ impl Predictions {
 }
 
 fn sigmoid(a: f64) -> f64 {
-    if a >= 0.0 { 1.0 / (1.0 + (-a).exp()) } else { a.exp() / (1.0 + a.exp()) }
+    if a >= 0.0 {
+        1.0 / (1.0 + (-a).exp())
+    } else {
+        a.exp() / (1.0 + a.exp())
+    }
 }
 
 fn softplus(a: f64) -> f64 {
-    if a > 0.0 { a + (-a).exp().ln_1p() } else { a.exp().ln_1p() }
+    if a > 0.0 {
+        a + (-a).exp().ln_1p()
+    } else {
+        a.exp().ln_1p()
+    }
 }
 
 impl Logit {
@@ -311,7 +322,11 @@ impl Logit {
                     }
                 }
                 let probability = num.iter().map(|v| v / den).collect();
-                Ok(Predictions { probability, route, work: (grid * grid) as u64 })
+                Ok(Predictions {
+                    probability,
+                    route,
+                    work: (grid * grid) as u64,
+                })
             }
             Route::PlugIn => {
                 let w = self.mode()?;
@@ -319,7 +334,11 @@ impl Logit {
                     .iter()
                     .map(|qq| sigmoid((0..d).map(|j| qq[j] * w[j]).sum()))
                     .collect();
-                Ok(Predictions { probability, route, work: 0 })
+                Ok(Predictions {
+                    probability,
+                    route,
+                    work: 0,
+                })
             }
             Route::Laplace => {
                 let w = self.mode()?;
@@ -341,9 +360,18 @@ impl Logit {
                         gauss_logistic(mu, var.max(0.0).sqrt())
                     })
                     .collect();
-                Ok(Predictions { probability, route, work: 0 })
+                Ok(Predictions {
+                    probability,
+                    route,
+                    work: 0,
+                })
             }
-            Route::Sampling { draws, warmup, eps, steps } => {
+            Route::Sampling {
+                draws,
+                warmup,
+                eps,
+                steps,
+            } => {
                 let start = self.mode()?;
                 let mut h = crate::hmc::Hmc::new(self, &start, eps, steps, seed)
                     .map_err(|e| Ill::Sampler(e.to_string()))?;
@@ -359,7 +387,11 @@ impl Logit {
                     }
                 }
                 let probability = acc.iter().map(|v| v / draws as f64).collect();
-                Ok(Predictions { probability, route, work: h.gradients() })
+                Ok(Predictions {
+                    probability,
+                    route,
+                    work: h.gradients(),
+                })
             }
         }
     }
@@ -416,7 +448,11 @@ impl Target for Logit {
 /// Solve `H step = g` for small dense `H`, by Gauss-Jordan.
 fn solve_small(h: &[f64], g: &[f64], d: usize) -> Option<Vec<f64>> {
     let inv = invert_small(h, d)?;
-    Some((0..d).map(|i| (0..d).map(|j| inv[i * d + j] * g[j]).sum()).collect())
+    Some(
+        (0..d)
+            .map(|i| (0..d).map(|j| inv[i * d + j] * g[j]).sum())
+            .collect(),
+    )
 }
 
 fn invert_small(h: &[f64], d: usize) -> Option<Vec<f64>> {
@@ -459,7 +495,12 @@ fn invert_small(h: &[f64], d: usize) -> Option<Vec<f64>> {
             }
         }
     }
-    Some((0..d).flat_map(|i| (d..2 * d).map(move |j| (i, j))).map(|(i, j)| aug[i * 2 * d + j]).collect())
+    Some(
+        (0..d)
+            .flat_map(|i| (d..2 * d).map(move |j| (i, j)))
+            .map(|(i, j)| aug[i * 2 * d + j])
+            .collect(),
+    )
 }
 
 /// Two well-separated clusters: the case every classifier meets and the case both cheap routes
@@ -470,20 +511,32 @@ pub fn separated(n_per_class: usize, gap: f64, prior_sd: f64) -> Logit {
     let mut x = Vec::new();
     let mut y = Vec::new();
     for k in 0..n_per_class {
-        let t = if n_per_class == 1 { 0.0 } else { k as f64 / (n_per_class - 1) as f64 - 0.5 };
+        let t = if n_per_class == 1 {
+            0.0
+        } else {
+            k as f64 / (n_per_class - 1) as f64 - 0.5
+        };
         x.extend_from_slice(&[gap, t]);
         y.push(true);
         x.extend_from_slice(&[-gap, t]);
         y.push(false);
     }
-    Logit { d: 2, x, y, prior_sd }
+    Logit {
+        d: 2,
+        x,
+        y,
+        prior_sd,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const EXACT: Route = Route::Exact { grid: 801, half_width: 6.0 };
+    const EXACT: Route = Route::Exact {
+        grid: 801,
+        half_width: 6.0,
+    };
 
     /// The oracle must be an oracle. A grid quadrature is only a reference where refining it stops
     /// moving the answer, and where the box is wide enough to hold the mass — both checked here,
@@ -496,12 +549,22 @@ mod tests {
         let mut deltas = Vec::new();
         for grid in [201usize, 401, 801] {
             let p = m
-                .predict(&queries, Route::Exact { grid, half_width: 6.0 }, 1)
+                .predict(
+                    &queries,
+                    Route::Exact {
+                        grid,
+                        half_width: 6.0,
+                    },
+                    1,
+                )
                 .expect("two dimensions")
                 .probability;
             if let Some(q) = &prev {
                 deltas.push(
-                    p.iter().zip(q).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max),
+                    p.iter()
+                        .zip(q)
+                        .map(|(a, b)| (a - b).abs())
+                        .fold(0.0f64, f64::max),
                 );
             }
             prev = Some(p);
@@ -512,12 +575,26 @@ mod tests {
         );
         // And widening the box does not move it either, so the tails are inside.
         let wide = m
-            .predict(&queries, Route::Exact { grid: 801, half_width: 9.0 }, 1)
+            .predict(
+                &queries,
+                Route::Exact {
+                    grid: 801,
+                    half_width: 9.0,
+                },
+                1,
+            )
             .expect("two dimensions")
             .probability;
         let narrow = prev.as_ref().expect("ran");
-        let d = wide.iter().zip(narrow).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max);
-        assert!(d < 1e-6, "widening the box moves the oracle by {d:e}: the tails are outside it");
+        let d = wide
+            .iter()
+            .zip(narrow)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f64, f64::max);
+        assert!(
+            d < 1e-6,
+            "widening the box moves the oracle by {d:e}: the tails are outside it"
+        );
 
         // A CONVERGENCE CHECK IS NOT A CORRECTNESS CHECK, and the two above are only convergence.
         // A mutant that averaged the LOGIT instead of the probability -- `p * a_q` for
@@ -527,9 +604,16 @@ mod tests {
         // WITH NO DATA the posterior IS the prior, so the predictive at `x` is a one-dimensional
         // Gaussian-logistic integral: `∫ sigmoid(a) N(a | 0, σ²‖x‖²) da`. That comes out of a
         // different routine, on a different grid, in a different number of dimensions.
-        let empty = Logit { d: 2, x: Vec::new(), y: Vec::new(), prior_sd: 1.7 };
+        let empty = Logit {
+            d: 2,
+            x: Vec::new(),
+            y: Vec::new(),
+            prior_sd: 1.7,
+        };
         let probe = [1.0, 0.0, 0.0, 2.0, 1.5, -1.5, 0.3, 0.1];
-        let got = empty.predict(&probe, EXACT, 1).expect("an empty data set is still a posterior");
+        let got = empty
+            .predict(&probe, EXACT, 1)
+            .expect("an empty data set is still a posterior");
         for (k, q) in probe.chunks(2).enumerate() {
             let sd = empty.prior_sd * (q[0] * q[0] + q[1] * q[1]).sqrt();
             let want = super::gauss_logistic(0.0, sd);
@@ -578,8 +662,12 @@ mod tests {
         // discarded posterior width does the most damage.
         let queries = [0.0, 0.0, 0.8, 0.0, 2.5, 0.0, 0.5, 2.5, -3.0, 1.0];
         let exact = m.predict(&queries, EXACT, 1).expect("two dimensions");
-        let plug = m.predict(&queries, Route::PlugIn, 1).expect("a mode exists");
-        let lap = m.predict(&queries, Route::Laplace, 1).expect("a mode exists");
+        let plug = m
+            .predict(&queries, Route::PlugIn, 1)
+            .expect("a mode exists");
+        let lap = m
+            .predict(&queries, Route::Laplace, 1)
+            .expect("a mode exists");
 
         // THE DECISION IS THE SAME. Every route puts every query on the same side of 0.5, so what
         // follows is about confidence and not about accuracy.
@@ -617,8 +705,14 @@ mod tests {
                 opposed += 1;
             }
         }
-        assert!(plug_over >= 3, "the plug-in must be overconfident where the data is thin: {plug_over}");
-        assert_eq!(lap_under, 4, "and Laplace UNDERconfident at every query that has a confidence");
+        assert!(
+            plug_over >= 3,
+            "the plug-in must be overconfident where the data is thin: {plug_over}"
+        );
+        assert_eq!(
+            lap_under, 4,
+            "and Laplace UNDERconfident at every query that has a confidence"
+        );
         assert!(
             opposed >= 3,
             "the point of this test: the two cheap routes must miss in OPPOSITE directions, so \
@@ -668,7 +762,12 @@ mod tests {
                 let s = m
                     .predict(
                         &queries,
-                        Route::Sampling { draws, warmup: 500, eps: 0.25, steps: 12 },
+                        Route::Sampling {
+                            draws,
+                            warmup: 500,
+                            eps: 0.25,
+                            steps: 12,
+                        },
                         0xDA7A ^ seed.wrapping_mul(0x9E37_79B9),
                     )
                     .expect("the mode is a good start");
@@ -683,7 +782,10 @@ mod tests {
             "a 100x budget bought {:.1}x, so this is not a standard error: {errs:?}",
             errs[0] / errs[2]
         );
-        assert!(errs[0] > errs[1] && errs[1] > errs[2], "and it must fall at every step: {errs:?}");
+        assert!(
+            errs[0] > errs[1] && errs[1] > errs[2],
+            "and it must fall at every step: {errs:?}"
+        );
         assert!(
             errs[2] < rms(&lap).min(rms(&plug)) / 5.0,
             "at 5e4 draws the sampler should be well inside BOTH cheap routes' errors: {errs:?}"
@@ -691,7 +793,12 @@ mod tests {
         eprintln!(
             "sampler RMS predictive error over {seeds} seeds at 5e2 / 5e3 / 5e4 draws: \
              {:.5} / {:.5} / {:.5}  (a 100x budget bought {:.1}x); plug-in {:.5}, Laplace {:.5}",
-            errs[0], errs[1], errs[2], errs[0] / errs[2], rms(&plug), rms(&lap)
+            errs[0],
+            errs[1],
+            errs[2],
+            errs[0] / errs[2],
+            rms(&plug),
+            rms(&lap)
         );
     }
 
@@ -709,7 +816,11 @@ mod tests {
             let s = if m.y[i] { 1.0 } else { -1.0 };
             want += (1.0 + (-s * a).exp()).ln();
         }
-        assert!((m.potential(&w) - want).abs() < 1e-12, "{} vs {want}", m.potential(&w));
+        assert!(
+            (m.potential(&w) - want).abs() < 1e-12,
+            "{} vs {want}",
+            m.potential(&w)
+        );
 
         let mut g = [0.0; 2];
         Target::grad(&m, &w, &mut g);
@@ -719,7 +830,11 @@ mod tests {
             a[j] += h;
             b[j] -= h;
             let fd = (m.potential(&a) - m.potential(&b)) / (2.0 * h);
-            assert!((g[j] - fd).abs() < 1e-7, "grad[{j}] {} vs central difference {fd}", g[j]);
+            assert!(
+                (g[j] - fd).abs() < 1e-7,
+                "grad[{j}] {} vs central difference {fd}",
+                g[j]
+            );
         }
 
         // The prior is the only thing holding the weights on separable data, so its strength must
@@ -728,7 +843,12 @@ mod tests {
         let mut sharp = Vec::new();
         for sd in [0.5, 1.0, 3.0] {
             let tight = separated(4, 1.0, sd);
-            sharp.push(tight.predict(&q, EXACT, 1).expect("two dimensions").sharpest());
+            sharp.push(
+                tight
+                    .predict(&q, EXACT, 1)
+                    .expect("two dimensions")
+                    .sharpest(),
+            );
         }
         assert!(
             sharp[0] < sharp[1] && sharp[1] < sharp[2],
@@ -758,7 +878,16 @@ mod tests {
         assert_eq!(ok.predict(&[1.0], Route::PlugIn, 1).err(), Some(Ill::Shape));
         // And a step size the sampler will not take.
         assert!(matches!(
-            ok.predict(&[0.0, 0.0], Route::Sampling { draws: 10, warmup: 1, eps: 0.0, steps: 4 }, 1),
+            ok.predict(
+                &[0.0, 0.0],
+                Route::Sampling {
+                    draws: 10,
+                    warmup: 1,
+                    eps: 0.0,
+                    steps: 4
+                },
+                1
+            ),
             Err(Ill::Sampler(_))
         ));
     }

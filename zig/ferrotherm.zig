@@ -8,9 +8,7 @@
 //! -sum_ij J_ij s_i s_j - sum_i h_i s_i, and beta is inverse temperature.
 
 const std = @import("std");
-const c = @cImport({
-    @cInclude("ferrotherm.h");
-});
+const c = @import("c");
 
 pub const Error = error{
     /// The library refused to allocate the handle.
@@ -508,7 +506,7 @@ pub const Sim = struct {
     /// Returns `error.NotPlanar` when the graph cannot be solved this way; `planarError` says which
     /// of the four reasons it was, and they are four different things to do next.
     pub fn exactPlanar(self: Sim, scale: f64) Error!PlanarCut {
-        // Not named `c`: that is the @cImport alias, and shadowing it here compiles into a
+        // Not named `c`: that is the translated-header import, and shadowing it here compiles into a
         // recursive call to a float.
         const value = c.ft_planar_cut(self.h, scale);
         if (std.math.isNan(value)) return Error.NotPlanar;
@@ -837,7 +835,7 @@ test "a model places onto a real machine and the answer comes back logical" {
     try std.testing.expect(logical.embedLongest() >= 1);
 
     // Chains partition the sites they use: no site holds two variables.
-    var seen = [_]bool{false} ** 1024;
+    var seen: [1024]bool = @splat(false);
     var buf: [64]u32 = undefined;
     var total: u32 = 0;
     var v: u32 = 0;
@@ -882,7 +880,7 @@ test "a dense model can be rewritten to fit a degree budget" {
 
     // A centre node needs several copies; a corner may need one. Either way every node belongs to
     // exactly one variable, which is what makes the map a partition rather than a suggestion.
-    var owned = [_]u8{0} ** 256;
+    var owned: [256]u8 = @splat(0);
     var buf: [32]u32 = undefined;
     var v: u32 = 0;
     var total: usize = 0;
@@ -2809,7 +2807,7 @@ test "all_different solves a latin square row, and pigeonhole is refused not ann
     _ = try p.compile();
     try p.solve(60);
     try std.testing.expect(p.feasible());
-    var seen = [_]bool{false} ** 4;
+    var seen: [4]bool = @splat(false);
     for (vars) |v| {
         // `value` is optional now: null means solved-but-undecoded, which all_different over a
         // one-hot encoding never produces. Asserting it is non-null is the point -- if that ever
@@ -3111,7 +3109,7 @@ test "a refused fit says why in the caller's own terms" {
     // Too large to enumerate is a refusal, not a cheaper answer.
     var big = try Sim.rbm(20, 8, 1.0, 1);
     defer big.deinit();
-    const wide = [_]i8{1} ** 20;
+    const wide: [20]i8 = @splat(1);
     try std.testing.expectError(Error.Unfittable, big.logLikelihood(20, &wide));
     try std.testing.expect(std.mem.indexOf(u8, ebmError(&buf), "28 spins") != null);
 }

@@ -125,7 +125,9 @@ pub fn copy_strength(g: &Graph) -> f64 {
     let heaviest = (0..g.n)
         .map(|v| {
             g.h[v].abs()
-                + (g.offset[v]..g.offset[v + 1]).map(|k| g.w[k].abs()).sum::<f64>()
+                + (g.offset[v]..g.offset[v + 1])
+                    .map(|k| g.w[k].abs())
+                    .sum::<f64>()
         })
         .fold(0.0f64, f64::max);
     if heaviest > 0.0 {
@@ -224,8 +226,18 @@ pub fn sparsify_with(g: &Graph, budget: usize, w0: f64) -> Result<Sparsified, Re
 
     let graph = gb.build();
     let achieved = graph.max_degree();
-    debug_assert!(achieved <= budget, "the budget is what the copy count was chosen for");
-    Ok(Sparsified { graph, copies, w0, budget, achieved, offset })
+    debug_assert!(
+        achieved <= budget,
+        "the budget is what the copy count was chosen for"
+    );
+    Ok(Sparsified {
+        graph,
+        copies,
+        w0,
+        budget,
+        achieved,
+        offset,
+    })
 }
 
 impl core::fmt::Debug for Sparsified {
@@ -312,7 +324,9 @@ mod tests {
     /// Every state of a graph, in linear index order.
     fn states(n: usize) -> impl Iterator<Item = Vec<i8>> {
         (0..(1usize << n)).map(move |mask| {
-            (0..n).map(|b| if mask >> b & 1 == 1 { 1i8 } else { -1 }).collect()
+            (0..n)
+                .map(|b| if mask >> b & 1 == 1 { 1i8 } else { -1 })
+                .collect()
         })
     }
 
@@ -359,8 +373,15 @@ mod tests {
         ];
         for (name, g, budget) in cases {
             let s = sparsify(&g, budget).expect("budget is at least 3");
-            assert!(s.achieved <= budget, "{name}: degree {} exceeds {budget}", s.achieved);
-            assert!(g.max_degree() > budget, "{name} is not dense enough to be a test");
+            assert!(
+                s.achieved <= budget,
+                "{name}: degree {} exceeds {budget}",
+                s.achieved
+            );
+            assert!(
+                g.max_degree() > budget,
+                "{name} is not dense enough to be a test"
+            );
             assert!(
                 s.graph.n <= LIMIT,
                 "{name}: sparsifies to {} spins, past the {LIMIT} this test can enumerate",
@@ -373,11 +394,20 @@ mod tests {
             let mut reached = std::collections::BTreeSet::new();
             for state in &sp_gs {
                 let (proj, broken) = project(&s, state);
-                assert!(broken.is_empty(), "{name}: a ground state has copies disagreeing: {broken:?}");
-                assert!(log_gs.contains(&proj), "{name}: projects outside the ground manifold");
+                assert!(
+                    broken.is_empty(),
+                    "{name}: a ground state has copies disagreeing: {broken:?}"
+                );
+                assert!(
+                    log_gs.contains(&proj),
+                    "{name}: projects outside the ground manifold"
+                );
                 reached.insert(proj);
             }
-            assert_eq!(reached, log_gs, "{name}: a ground state of the original was LOST");
+            assert_eq!(
+                reached, log_gs,
+                "{name}: a ground state of the original was LOST"
+            );
             assert!(
                 (sp_e + s.offset - log_e).abs() < 1e-9,
                 "{name}: energies do not line up: {sp_e} + {} vs {log_e}",
@@ -401,7 +431,11 @@ mod tests {
         let g = glass(6, 0.9, 3);
         let full = sparsify(&g, 4).unwrap();
         assert!(full.w0 > 0.0);
-        assert!(full.graph.n <= 18, "{} spins is too many to enumerate", full.graph.n);
+        assert!(
+            full.graph.n <= 18,
+            "{} spins is too many to enumerate",
+            full.graph.n
+        );
 
         // A coupling so weak the copies are barely tied together at all.
         let weak = sparsify_with(&g, 4, 0.01).unwrap();
@@ -442,7 +476,10 @@ mod tests {
         for budget in [0usize, 1, 2] {
             let e = sparsify(&clique(5), budget).unwrap_err();
             assert_eq!(e, Refused::BudgetTooSmall { budget });
-            assert!(format!("{e}").contains("c(d-2)+2"), "the refusal shows the arithmetic");
+            assert!(
+                format!("{e}").contains("c(d-2)+2"),
+                "the refusal shows the arithmetic"
+            );
         }
         // Three is the smallest budget that can work, and it does.
         assert!(sparsify(&clique(5), 3).is_ok());

@@ -13,7 +13,7 @@
 use ferrotherm::hdl::FixedFabric;
 use ferrotherm::ising::lattice2d;
 use ferrotherm::pdit::{FixedCumulative, FixedPdit};
-use ferrotherm::potts::{ring, Interaction};
+use ferrotherm::potts::{Interaction, ring};
 use std::process::Command;
 
 /// Run yosys on one module and return `(cells, breakdown lines)` from the last `stat` it prints:
@@ -103,11 +103,17 @@ fn main() {
         }
     }
     println!();
-    println!("A three-state variable is one p-trit, or three one-hot p-bits plus three penalty couplings,");
+    println!(
+        "A three-state variable is one p-trit, or three one-hot p-bits plus three penalty couplings,"
+    );
     println!(
         "or two domain-wall p-bits plus one; the cells above price the units, not the couplings."
     );
-    println!("Weights are constants in these netlists, so a ROM addressed by a field folds to the field's");
-    println!("reachable values (the sigmoid, the exponential); a ROM addressed by noise cannot (the Gumbel).");
+    println!(
+        "Weights are constants in these netlists, so a ROM addressed by a field folds to the field's"
+    );
+    println!(
+        "reachable values (the sigmoid, the exponential); a ROM addressed by noise cannot (the Gumbel)."
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

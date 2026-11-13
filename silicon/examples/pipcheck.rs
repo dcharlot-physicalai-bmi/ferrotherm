@@ -15,12 +15,19 @@ fn main() {
     let mut a = std::env::args().skip(1);
     let tt = std::fs::read_to_string(a.next().expect("tile_type json")).expect("read");
     let sb = std::fs::read_to_string(a.next().expect("segbits db")).expect("read");
-    let pp = a.next().map(|p| Ppips::parse(&std::fs::read_to_string(p).expect("read")));
+    let pp = a
+        .next()
+        .map(|p| Ppips::parse(&std::fs::read_to_string(p).expect("read")));
 
     let db = PipDb::parse(&tt).expect("parse tile type");
     let seg = SegBits::parse(&sb);
-    println!("tile type {}: {} PIPs, {} wires; segbits features: {}",
-             db.tile_type, db.pips.len(), db.wires.len(), seg.features.len());
+    println!(
+        "tile type {}: {} PIPs, {} wires; segbits features: {}",
+        db.tile_type,
+        db.pips.len(),
+        db.wires.len(),
+        seg.features.len()
+    );
 
     let (mut resolved, mut pseudo, mut missing) = (0usize, 0usize, 0usize);
     let mut missing_examples = Vec::new();
@@ -41,13 +48,18 @@ fn main() {
             }
         }
         // how many would resolve if the key were built the other way round?
-        if seg.get(&format!("{}.{}.{}", db.tile_type, p.src, p.dst)).is_some() {
+        if seg
+            .get(&format!("{}.{}.{}", db.tile_type, p.src, p.dst))
+            .is_some()
+        {
             reversed_hits += 1;
         }
     }
     let real = resolved + missing;
-    println!("\nnon-pseudo PIPs: {real}   resolved to bits: {resolved} ({:.1}%)   missing: {missing}",
-             100.0 * resolved as f64 / real.max(1) as f64);
+    println!(
+        "\nnon-pseudo PIPs: {real}   resolved to bits: {resolved} ({:.1}%)   missing: {missing}",
+        100.0 * resolved as f64 / real.max(1) as f64
+    );
     println!("pseudo-PIPs skipped: {pseudo}");
     println!("would resolve with the key reversed (src-first): {reversed_hits}");
     if !missing_examples.is_empty() {

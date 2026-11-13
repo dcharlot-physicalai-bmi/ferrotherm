@@ -102,7 +102,10 @@ pub fn forest_log_z(m: &Potts, beta: f64, edges: &[(usize, usize, f64)]) -> f64 
     let (n, q) = (m.n(), m.q());
     let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
     for &(i, j, w) in edges {
-        assert!(i < n && j < n, "edge ({i}, {j}) is outside a {n}-site model");
+        assert!(
+            i < n && j < n,
+            "edge ({i}, {j}) is outside a {n}-site model"
+        );
         adj[i].push((j, w));
         adj[j].push((i, w));
     }
@@ -232,14 +235,22 @@ pub fn forest_min_energy(m: &Potts, edges: &[(usize, usize, f64)]) -> f64 {
 
 /// A rooted forest: adjacency, each site's parent and the coupling to it, a breadth-first order,
 /// and one root per component.
-type Rooted = (Vec<Vec<(usize, f64)>>, Vec<Option<(usize, f64)>>, Vec<usize>, Vec<usize>);
+type Rooted = (
+    Vec<Vec<(usize, f64)>>,
+    Vec<Option<(usize, f64)>>,
+    Vec<usize>,
+    Vec<usize>,
+);
 
 /// Root every component, and refuse a cycle.
 fn forest_order(m: &Potts, edges: &[(usize, usize, f64)]) -> Rooted {
     let n = m.n();
     let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
     for &(i, j, w) in edges {
-        assert!(i < n && j < n, "edge ({i}, {j}) is outside a {n}-site model");
+        assert!(
+            i < n && j < n,
+            "edge ({i}, {j}) is outside a {n}-site model"
+        );
         adj[i].push((j, w));
         adj[j].push((i, w));
     }
@@ -324,7 +335,10 @@ impl Certificate {
 /// one — the node tables are used undivided, which is only correct when every forest spans.
 #[must_use]
 pub fn dual_bound(m: &Potts, forests: usize, seed: u64) -> Certificate {
-    assert!(forests > 0, "a tree-decomposition bound needs at least one forest");
+    assert!(
+        forests > 0,
+        "a tree-decomposition bound needs at least one forest"
+    );
     let cover = Cover::random(m, forests, seed);
     cover.assert_spans(m.n());
     let terms: Vec<f64> = cover
@@ -365,8 +379,14 @@ pub fn dual_bound(m: &Potts, forests: usize, seed: u64) -> Certificate {
 /// A bound from no evidence is not a bound.
 #[must_use]
 pub fn lower_bound(m: &Potts, betas: &[f64], forests: usize, seed: u64) -> Certificate {
-    assert!(!betas.is_empty(), "a bound needs at least one temperature to be evaluated at");
-    assert!(forests > 0, "a tree-reweighted bound needs at least one forest");
+    assert!(
+        !betas.is_empty(),
+        "a bound needs at least one temperature to be evaluated at"
+    );
+    assert!(
+        forests > 0,
+        "a tree-reweighted bound needs at least one forest"
+    );
     assert!(
         betas.iter().all(|b| *b > 0.0 && b.is_finite()),
         "every beta must be positive and finite: at beta <= 0 the step from log Z to an energy \
@@ -451,7 +471,12 @@ impl Cover {
         let t = member.len() as f64;
         let weight = vec![1.0 / t; member.len()];
         let rho = (0..ne).map(|e| uses[e] as f64 / t).collect();
-        Cover { edges, member, weight, rho }
+        Cover {
+            edges,
+            member,
+            weight,
+            rho,
+        }
     }
 }
 
@@ -485,7 +510,9 @@ struct Dsu {
 
 impl Dsu {
     fn new(n: usize) -> Dsu {
-        Dsu { up: (0..n).collect() }
+        Dsu {
+            up: (0..n).collect(),
+        }
     }
     fn find(&mut self, mut x: usize) -> usize {
         while self.up[x] != x {
@@ -515,7 +542,9 @@ pub fn separable_lower_bound(m: &Potts) -> f64 {
     let mut e = 0.0;
     for i in 0..m.n() {
         // -h is the energy contribution, so the cheapest label maximises h.
-        let best = (0..q).map(|a| m.field(i, a as u8)).fold(f64::NEG_INFINITY, f64::max);
+        let best = (0..q)
+            .map(|a| m.field(i, a as u8))
+            .fold(f64::NEG_INFINITY, f64::max);
         e -= best;
     }
     for (_, _, w) in m.edges() {
@@ -537,7 +566,10 @@ pub fn separable_lower_bound(m: &Potts) -> f64 {
 #[must_use]
 pub fn grid_labelling(w: usize, h: usize, q: usize, costs: &[f64], smoothness: f64) -> Potts {
     assert_eq!(costs.len(), w * h * q, "one cost per site per label");
-    assert!(smoothness.is_finite(), "a smoothness of {smoothness} is not a number");
+    assert!(
+        smoothness.is_finite(),
+        "a smoothness of {smoothness} is not a number"
+    );
     let mut b = crate::potts::PottsBuilder::new(q, w * h, Interaction::Potts);
     for y in 0..h {
         for x in 0..w {
@@ -646,7 +678,9 @@ pub fn solve(m: &Potts, sweeps_per: usize, forests: usize, seed: u64) -> Labelle
     // uses its own temperatures, which is why the two are not the same list.
     let mut smp = crate::potts::Sampler::new(m, 1.0, seed);
     let mut best = smp.state().to_vec();
-    let mut best_e = m.energy(&best).expect("a fresh sampler holds a legal state");
+    let mut best_e = m
+        .energy(&best)
+        .expect("a fresh sampler holds a legal state");
     // THE LADDER IS IN UNITS OF THE MODEL, not in absolute beta. The largest single-site energy
     // gap is the scale at which a spin stops flipping, so a ladder pinned to it anneals the same
     // way whatever the data costs are multiplied by; a hardcoded `0.05 * 1.25^k` silently becomes
@@ -673,7 +707,11 @@ pub fn solve(m: &Potts, sweeps_per: usize, forests: usize, seed: u64) -> Labelle
     // Note what the certificate does NOT see: it is computed from the model alone and knows
     // nothing about how the labelling was found, which is what makes the gap a fact about the
     // problem rather than a report on the search's effort.
-    Labelled { labels: best, energy, certificate: dual_bound(m, forests, seed) }
+    Labelled {
+        labels: best,
+        energy,
+        certificate: dual_bound(m, forests, seed),
+    }
 }
 
 #[cfg(test)]
@@ -722,11 +760,17 @@ mod tests {
             for &beta in &[0.3f64, 1.0, 2.5] {
                 let mine = forest_log_z(&m, beta, &edges);
                 let exact = potts::enumerate(&m, beta).expect("small").log_z;
-                assert!((mine - exact).abs() < 1e-12, "chain {n}, q {q}, beta {beta}: {mine} vs {exact}");
+                assert!(
+                    (mine - exact).abs() < 1e-12,
+                    "chain {n}, q {q}, beta {beta}: {mine} vs {exact}"
+                );
             }
             let got = forest_min_energy(&m, &edges);
             let want = exact_min(&m);
-            assert!((got - want).abs() < 1e-12, "min-sum {got} vs enumerated minimum {want}");
+            assert!(
+                (got - want).abs() < 1e-12,
+                "min-sum {got} vs enumerated minimum {want}"
+            );
         }
         // A DISCONNECTED forest is the ordinary case: a spanning forest of a grid need not be one
         // tree, and every component must be multiplied in.
@@ -751,7 +795,10 @@ mod tests {
             }
         }
         let m2 = b2.build();
-        assert!((forest_log_z(&m, 1.3, &sub) - potts::enumerate(&m2, 1.3).expect("small").log_z).abs() < 1e-12);
+        assert!(
+            (forest_log_z(&m, 1.3, &sub) - potts::enumerate(&m2, 1.3).expect("small").log_z).abs()
+                < 1e-12
+        );
         assert!((forest_min_energy(&m, &sub) - exact_min(&m2)).abs() < 1e-12);
     }
 
@@ -765,8 +812,14 @@ mod tests {
         }
         let m = b.build();
         let edges: Vec<(usize, usize, f64)> = m.edges().collect();
-        assert!(std::panic::catch_unwind(|| forest_log_z(&m, 1.0, &edges)).is_err(), "log Z on a loop");
-        assert!(std::panic::catch_unwind(|| forest_min_energy(&m, &edges)).is_err(), "min-sum on a loop");
+        assert!(
+            std::panic::catch_unwind(|| forest_log_z(&m, 1.0, &edges)).is_err(),
+            "log Z on a loop"
+        );
+        assert!(
+            std::panic::catch_unwind(|| forest_min_energy(&m, &edges)).is_err(),
+            "min-sum on a loop"
+        );
     }
 
     /// **WHAT THIS BOUND IS, EXACTLY** — and it is not the LP relaxation, however much a reader
@@ -795,18 +848,39 @@ mod tests {
         let energies = potts::enumerate(&m, 1.0).expect("8 states").energies;
         let mut sorted = energies.clone();
         sorted.sort_by(f64::total_cmp);
-        assert_eq!(sorted.iter().map(|e| e.round() as i64).collect::<Vec<_>>(), vec![2, 2, 2, 3, 3, 3, 3, 6]);
+        assert_eq!(
+            sorted.iter().map(|e| e.round() as i64).collect::<Vec<_>>(),
+            vec![2, 2, 2, 3, 3, 3, 3, 6]
+        );
         assert!((exact_min(&m) - 2.0).abs() < 1e-12);
 
         let d = dual_bound(&m, 3, 7);
-        assert!((d.bound - 1.0).abs() < 1e-9, "the fixed splitting must give exactly 1, got {}", d.bound);
-        assert!(d.bound < 1.5 - 1e-9, "and must be strictly below the LP value of 1.5");
-        assert_eq!(d.beta, None, "the zero-temperature route has no temperature");
+        assert!(
+            (d.bound - 1.0).abs() < 1e-9,
+            "the fixed splitting must give exactly 1, got {}",
+            d.bound
+        );
+        assert!(
+            d.bound < 1.5 - 1e-9,
+            "and must be strictly below the LP value of 1.5"
+        );
+        assert_eq!(
+            d.beta, None,
+            "the zero-temperature route has no temperature"
+        );
 
         // The thermal route climbs to the same place and no further.
         let th = lower_bound(&m, &betas(), 3, 7);
-        assert!(th.bound <= d.bound + 1e-9, "the thermal bound cannot pass the zero-temperature one");
-        assert!((th.bound - d.bound).abs() < 1e-3, "and should get close: {} vs {}", th.bound, d.bound);
+        assert!(
+            th.bound <= d.bound + 1e-9,
+            "the thermal bound cannot pass the zero-temperature one"
+        );
+        assert!(
+            (th.bound - d.bound).abs() < 1e-3,
+            "and should get close: {} vs {}",
+            th.bound,
+            d.bound
+        );
     }
 
     /// **THE CLAIM: NO LABELLING BEATS THE BOUND.** Over instances small enough to enumerate every
@@ -823,10 +897,23 @@ mod tests {
             let emin = exact_min(&m);
             let d = dual_bound(&m, 6, 0xC0DE + t);
             let th = lower_bound(&m, &betas, 6, 0xC0DE + t);
-            assert!(d.bound <= emin + 1e-9, "trial {t}: D {} is ABOVE the minimum {emin}", d.bound);
-            assert!(th.bound <= emin + 1e-9, "trial {t}: thermal {} is ABOVE the minimum {emin}", th.bound);
+            assert!(
+                d.bound <= emin + 1e-9,
+                "trial {t}: D {} is ABOVE the minimum {emin}",
+                d.bound
+            );
+            assert!(
+                th.bound <= emin + 1e-9,
+                "trial {t}: thermal {} is ABOVE the minimum {emin}",
+                th.bound
+            );
             // The zero-temperature route dominates: it is the thermal route's own cold limit.
-            assert!(th.bound <= d.bound + 1e-6, "thermal {} passed D {}", th.bound, d.bound);
+            assert!(
+                th.bound <= d.bound + 1e-6,
+                "thermal {} passed D {}",
+                th.bound,
+                d.bound
+            );
             worst_slack = worst_slack.max(emin - d.bound);
             if (emin - d.bound).abs() < 1e-6 {
                 tight += 1;
@@ -835,9 +922,17 @@ mod tests {
                 beat_trivial += 1;
             }
         }
-        assert_eq!(beat_trivial, trials as usize, "a bound no better than the separable one earns nothing");
-        assert!(tight > 0, "on no instance did the certificate close: worst slack {worst_slack}");
-        eprintln!("{trials} enumerable instances: 0 violations, {tight} certified OPTIMAL, worst slack {worst_slack:.4}");
+        assert_eq!(
+            beat_trivial, trials as usize,
+            "a bound no better than the separable one earns nothing"
+        );
+        assert!(
+            tight > 0,
+            "on no instance did the certificate close: worst slack {worst_slack}"
+        );
+        eprintln!(
+            "{trials} enumerable instances: 0 violations, {tight} certified OPTIMAL, worst slack {worst_slack:.4}"
+        );
     }
 
     /// The thermal bound rises with `β` — its derivative is `Σ w_t H_t/β²` and an entropy is not
@@ -852,17 +947,29 @@ mod tests {
         for &beta in &betas() {
             let c = lower_bound(&m, &[beta], 6, 7);
             assert!(c.bound <= emin + 1e-9, "beta {beta} alone is invalid");
-            assert!(c.bound <= d.bound + 1e-6, "beta {beta} passed the cold limit");
+            assert!(
+                c.bound <= d.bound + 1e-6,
+                "beta {beta} passed the cold limit"
+            );
             // The a-priori shortfall must actually bound the shortfall.
             let short = c.shortfall.expect("the thermal route reports one");
-            assert!(d.bound - c.bound <= short + 1e-9, "at beta {beta} the real shortfall exceeded {short}");
+            assert!(
+                d.bound - c.bound <= short + 1e-9,
+                "at beta {beta} the real shortfall exceeded {short}"
+            );
             singles.push(c.bound);
         }
         // Rising: the hot end is far worse than the cold end.
-        assert!(singles[0] < singles[singles.len() - 1] - 0.1, "the bound did not rise with beta: {singles:?}");
+        assert!(
+            singles[0] < singles[singles.len() - 1] - 0.1,
+            "the bound did not rise with beta: {singles:?}"
+        );
         let best_single = singles.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let swept = lower_bound(&m, &betas(), 6, 7);
-        assert!(swept.bound >= best_single - 1e-12, "the sweep lost to one of its own temperatures");
+        assert!(
+            swept.bound >= best_single - 1e-12,
+            "the sweep lost to one of its own temperatures"
+        );
     }
 
     /// The rounding direction is a deliberate choice, and it is the only thing between a bound that
@@ -891,13 +998,31 @@ mod tests {
             &after[..end]
         };
         let dual = body("pub fn dual_bound");
-        assert!(dual.contains("forest_min_energy"), "the extraction is reading the wrong function");
-        assert!(dual.contains("sum_down"), "a lower bound must be summed downward");
-        assert!(!dual.contains("sum_up("), "a lower bound must not be summed upward");
+        assert!(
+            dual.contains("forest_min_energy"),
+            "the extraction is reading the wrong function"
+        );
+        assert!(
+            dual.contains("sum_down"),
+            "a lower bound must be summed downward"
+        );
+        assert!(
+            !dual.contains("sum_up("),
+            "a lower bound must not be summed upward"
+        );
         let thermal = body("pub fn lower_bound");
-        assert!(thermal.contains("forest_log_z"), "the extraction is reading the wrong function");
-        assert!(thermal.contains("sum_up"), "an upper bound on log Z must be summed upward");
-        assert!(!thermal.contains("sum_down("), "an upper bound must not be summed downward");
+        assert!(
+            thermal.contains("forest_log_z"),
+            "the extraction is reading the wrong function"
+        );
+        assert!(
+            thermal.contains("sum_up"),
+            "an upper bound on log Z must be summed upward"
+        );
+        assert!(
+            !thermal.contains("sum_down("),
+            "an upper bound must not be summed downward"
+        );
     }
 
     /// ICM must descend. Its own test, because the annealer above it reaches the optimum on the
@@ -923,11 +1048,21 @@ mod tests {
         let before = m.energy(&s).expect("legal");
         let sweeps = icm(&m, &mut s, 200);
         let after = m.energy(&s).expect("legal");
-        assert!(after < before - 1.0, "ICM did not descend: {before} -> {after}");
-        assert!(sweeps < 200, "ICM did not reach a fixed point in 200 sweeps");
+        assert!(
+            after < before - 1.0,
+            "ICM did not descend: {before} -> {after}"
+        );
+        assert!(
+            sweeps < 200,
+            "ICM did not reach a fixed point in 200 sweeps"
+        );
         // A fixed point: another pass changes nothing, and no single site has a cheaper label.
         let mut again = s.clone();
-        assert_eq!(icm(&m, &mut again, 200), 1, "the second run should stop immediately");
+        assert_eq!(
+            icm(&m, &mut again, 200),
+            1,
+            "the second run should stop immediately"
+        );
         assert_eq!(again, s);
     }
 
@@ -942,7 +1077,10 @@ mod tests {
             let m = random_instance(3, 3, 3, 0.7, 0x70 + t);
             let emin = exact_min(&m);
             let r = solve(&m, 120, 6, 0xABC + t);
-            assert!(r.energy >= emin - 1e-9, "the search returned an energy below the true minimum");
+            assert!(
+                r.energy >= emin - 1e-9,
+                "the search returned an energy below the true minimum"
+            );
             assert!(r.gap() >= -1e-9, "a gap cannot be negative: {}", r.gap());
             if (r.energy - emin).abs() < 1e-9 {
                 found += 1;
@@ -967,7 +1105,10 @@ mod tests {
         let big = grid_labelling(w, h, q, &big_costs, 80.0);
         let a = solve(&small, 150, 6, 11);
         let b = solve(&big, 150, 6, 11);
-        assert_eq!(a.labels, b.labels, "a ladder in absolute beta would anneal these differently");
+        assert_eq!(
+            a.labels, b.labels,
+            "a ladder in absolute beta would anneal these differently"
+        );
         // And the bound scales with the problem, as it must.
         assert!(
             (b.certificate.bound / a.certificate.bound - 100.0).abs() < 1e-6,
@@ -999,17 +1140,37 @@ mod tests {
         }
         let structured = grid_labelling(w, h, q, &costs, 1.0);
         let s = solve(&structured, 60, 8, 0x1234);
-        let rel = s.certificate.relative_gap(s.energy).expect("a non-zero bound");
-        let wrong = s.labels.iter().zip(&truth).filter(|(a, b)| usize::from(**a) != **b).count();
-        assert!(rel < 0.05, "a structured instance should certify inside 5%: {rel:.4}");
-        assert_eq!(wrong, 0, "and the labelling should recover the truth exactly");
+        let rel = s
+            .certificate
+            .relative_gap(s.energy)
+            .expect("a non-zero bound");
+        let wrong = s
+            .labels
+            .iter()
+            .zip(&truth)
+            .filter(|(a, b)| usize::from(**a) != **b)
+            .count();
+        assert!(
+            rel < 0.05,
+            "a structured instance should certify inside 5%: {rel:.4}"
+        );
+        assert_eq!(
+            wrong, 0,
+            "and the labelling should recover the truth exactly"
+        );
 
         let mut rng = Pcg::new(0xF00D, 1);
         let rc: Vec<f64> = (0..n * q).map(|_| rng.f64() * 3.0).collect();
         let adversarial = grid_labelling(w, h, q, &rc, 1.0);
         let a = solve(&adversarial, 60, 8, 0x1234);
-        let arel = a.certificate.relative_gap(a.energy).expect("a non-zero bound");
-        assert!(arel > 4.0 * rel, "structure must be what closes the gap: {rel:.4} vs {arel:.4}");
+        let arel = a
+            .certificate
+            .relative_gap(a.energy)
+            .expect("a non-zero bound");
+        assert!(
+            arel > 4.0 * rel,
+            "structure must be what closes the gap: {rel:.4} vs {arel:.4}"
+        );
         for m in [&structured, &adversarial] {
             assert!(dual_bound(m, 8, 1).bound > separable_lower_bound(m));
         }
@@ -1025,14 +1186,29 @@ mod tests {
     #[test]
     fn a_certificate_from_no_evidence_is_refused() {
         let m = random_instance(3, 3, 2, 0.5, 1);
-        for bad in [vec![], vec![0.0], vec![-1.0], vec![f64::NAN], vec![f64::INFINITY]] {
+        for bad in [
+            vec![],
+            vec![0.0],
+            vec![-1.0],
+            vec![f64::NAN],
+            vec![f64::INFINITY],
+        ] {
             assert!(
                 std::panic::catch_unwind(|| lower_bound(&m, &bad, 4, 1)).is_err(),
                 "betas {bad:?} must be refused"
             );
         }
-        assert!(std::panic::catch_unwind(|| lower_bound(&m, &[1.0], 0, 1)).is_err(), "zero forests");
-        assert!(std::panic::catch_unwind(|| dual_bound(&m, 0, 1)).is_err(), "zero forests");
-        assert!(dual_bound(&m, 1, 1).bound.is_finite(), "and one forest works");
+        assert!(
+            std::panic::catch_unwind(|| lower_bound(&m, &[1.0], 0, 1)).is_err(),
+            "zero forests"
+        );
+        assert!(
+            std::panic::catch_unwind(|| dual_bound(&m, 0, 1)).is_err(),
+            "zero forests"
+        );
+        assert!(
+            dual_bound(&m, 1, 1).bound.is_finite(),
+            "and one forest works"
+        );
     }
 }

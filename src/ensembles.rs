@@ -54,7 +54,10 @@ pub enum Bonds {
 /// If `n` is below 2, where there is no pair to couple.
 #[must_use]
 pub fn sherrington_kirkpatrick(n: usize, seed: u64) -> Graph {
-    assert!(n >= 2, "a Sherrington-Kirkpatrick instance needs at least one pair");
+    assert!(
+        n >= 2,
+        "a Sherrington-Kirkpatrick instance needs at least one pair"
+    );
     let mut rng = Pcg::new(seed, 0x5B_0000);
     let scale = 1.0 / (n as f64).sqrt();
     let mut b = GraphBuilder::new(n);
@@ -82,7 +85,10 @@ pub fn sherrington_kirkpatrick(n: usize, seed: u64) -> Graph {
 /// so the two bonds would silently sum into one of double weight.
 #[must_use]
 pub fn edwards_anderson_3d(l: usize, bonds: Bonds, seed: u64) -> Graph {
-    assert!(l >= 3, "a periodic cubic lattice below 3x3x3 doubles its own bonds");
+    assert!(
+        l >= 3,
+        "a periodic cubic lattice below 3x3x3 doubles its own bonds"
+    );
     let n = l * l * l;
     let mut rng = Pcg::new(seed, 0x3D_0000);
     let at = |x: usize, y: usize, z: usize| ((z % l) * l + (y % l)) * l + (x % l);
@@ -190,13 +196,21 @@ impl Tile {
 /// zero.
 #[must_use]
 pub fn tile_planted_2d(l: usize, mix: [f64; 3], seed: u64) -> Planted {
-    assert!(l >= 4 && l.is_multiple_of(2), "tile planting needs an even side of at least 4, got {l}");
+    assert!(
+        l >= 4 && l.is_multiple_of(2),
+        "tile planting needs an even side of at least 4, got {l}"
+    );
     let total: f64 = mix.iter().sum();
-    assert!(mix.iter().all(|&p| p >= 0.0) && total > 0.0, "mix must be non-negative and non-zero");
+    assert!(
+        mix.iter().all(|&p| p >= 0.0) && total > 0.0,
+        "mix must be non-negative and non-zero"
+    );
 
     let n = l * l;
     let mut rng = Pcg::new(seed, 0x71_1E00);
-    let sigma: Vec<i8> = (0..n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+    let sigma: Vec<i8> = (0..n)
+        .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+        .collect();
     let at = |x: usize, y: usize| (y % l) * l + (x % l);
 
     let mut b = GraphBuilder::new(n);
@@ -228,7 +242,12 @@ pub fn tile_planted_2d(l: usize, mix: [f64; 3], seed: u64) -> Planted {
         }
     }
 
-    Planted { graph: b.build(), ground_state: sigma, ground_energy: energy, loops: frustrated }
+    Planted {
+        graph: b.build(),
+        ground_state: sigma,
+        ground_energy: energy,
+        loops: frustrated,
+    }
 }
 
 // ---- deceptive cluster loops --------------------------------------------------------------------
@@ -264,14 +283,25 @@ pub fn deceptive_cluster_loops(
     lambda: f64,
     seed: u64,
 ) -> Planted {
-    assert!(m >= 2 && n >= 2, "a cluster loop needs a 2x2 block of cells, got {m}x{n}");
-    assert!(t >= 1 && loops >= 1, "need at least one qubit per shore and one loop");
-    assert!(lambda >= 1.0, "cluster bonds must be at least as heavy as inter-cell bonds");
+    assert!(
+        m >= 2 && n >= 2,
+        "a cluster loop needs a 2x2 block of cells, got {m}x{n}"
+    );
+    assert!(
+        t >= 1 && loops >= 1,
+        "need at least one qubit per shore and one loop"
+    );
+    assert!(
+        lambda >= 1.0,
+        "cluster bonds must be at least as heavy as inter-cell bonds"
+    );
 
     let nodes = 2 * t * m * n;
     let idx = |i: usize, j: usize, u: usize, k: usize| ((i * n) + j) * 2 * t + u * t + k;
     let mut rng = Pcg::new(seed, 0xDC_1000);
-    let sigma: Vec<i8> = (0..nodes).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+    let sigma: Vec<i8> = (0..nodes)
+        .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+        .collect();
     let mut b = GraphBuilder::new(nodes);
     let gauge = |i: usize, j: usize| f64::from(sigma[i]) * f64::from(sigma[j]);
 
@@ -290,19 +320,21 @@ pub fn deceptive_cluster_loops(
     for _ in 0..loops {
         let i = (rng.f64() * (m - 1) as f64) as usize % (m - 1);
         let j = (rng.f64() * (n - 1) as f64) as usize % (n - 1);
-        let k: Vec<usize> = (0..4).map(|_| (rng.f64() * t as f64) as usize % t).collect();
+        let k: Vec<usize> = (0..4)
+            .map(|_| (rng.f64() * t as f64) as usize % t)
+            .collect();
         // Cells A=(i,j) B=(i+1,j) C=(i+1,j+1) D=(i,j+1). Vertical hops use shore 0, horizontal
         // hops shore 1, so the two ends inside a cell always sit on opposite shores and the
         // intra-cell step is a single K_{t,t} bond.
         let cycle = [
-            (idx(i, j, 0, k[0]), idx(i + 1, j, 0, k[0])),         // A -> B, inter
-            (idx(i + 1, j, 0, k[0]), idx(i + 1, j, 1, k[1])),     // inside B, intra
+            (idx(i, j, 0, k[0]), idx(i + 1, j, 0, k[0])), // A -> B, inter
+            (idx(i + 1, j, 0, k[0]), idx(i + 1, j, 1, k[1])), // inside B, intra
             (idx(i + 1, j, 1, k[1]), idx(i + 1, j + 1, 1, k[1])), // B -> C, inter
             (idx(i + 1, j + 1, 1, k[1]), idx(i + 1, j + 1, 0, k[2])), // inside C, intra
             (idx(i + 1, j + 1, 0, k[2]), idx(i, j + 1, 0, k[2])), // C -> D, inter
-            (idx(i, j + 1, 0, k[2]), idx(i, j + 1, 1, k[3])),     // inside D, intra
-            (idx(i, j + 1, 1, k[3]), idx(i, j, 1, k[3])),         // D -> A, inter
-            (idx(i, j, 1, k[3]), idx(i, j, 0, k[0])),             // inside A, intra
+            (idx(i, j + 1, 0, k[2]), idx(i, j + 1, 1, k[3])), // inside D, intra
+            (idx(i, j + 1, 1, k[3]), idx(i, j, 1, k[3])), // D -> A, inter
+            (idx(i, j, 1, k[3]), idx(i, j, 0, k[0])),     // inside A, intra
         ];
         let inter = [0usize, 2, 4, 6];
         let broken = inter[(rng.f64() * 4.0) as usize % 4];
@@ -314,7 +346,12 @@ pub fn deceptive_cluster_loops(
 
     let intra = (m * n * t * t) as f64;
     let energy = -lambda * intra - loops as f64 * (4.0 * lambda + 2.0);
-    Planted { graph: b.build(), ground_state: sigma, ground_energy: energy, loops }
+    Planted {
+        graph: b.build(),
+        ground_state: sigma,
+        ground_energy: energy,
+        loops,
+    }
 }
 
 #[cfg(test)]
@@ -337,7 +374,9 @@ mod tests {
 
     /// Weight of edge `(i, j)`, or `None` if there is none.
     fn bond(g: &Graph, i: usize, j: usize) -> Option<f64> {
-        (g.offset[i]..g.offset[i + 1]).find(|&k| g.nbr[k] as usize == j).map(|k| g.w[k])
+        (g.offset[i]..g.offset[i + 1])
+            .find(|&k| g.nbr[k] as usize == j)
+            .map(|k| g.w[k])
     }
 
     /// Mean and mean-square of the energy over ALL `2^n` states, by enumeration.
@@ -407,7 +446,11 @@ mod tests {
             }
             t / m
         };
-        assert!((mean * n as f64 - 1.0).abs() < 0.05, "n*var was {}", mean * n as f64);
+        assert!(
+            (mean * n as f64 - 1.0).abs() < 0.05,
+            "n*var was {}",
+            mean * n as f64
+        );
         assert!(first.abs() < 0.003, "mean coupling {first} should be zero");
     }
 
@@ -426,7 +469,10 @@ mod tests {
             let (mean, ms) = spectrum_moments(&g);
             assert!(mean.abs() < 1e-9, "n={n}: <E> was {mean}");
             let want = sum_j_squared(&g);
-            assert!((ms - want).abs() / want < 1e-12, "n={n}: <E^2> {ms} vs sum J^2 {want}");
+            assert!(
+                (ms - want).abs() / want < 1e-12,
+                "n={n}: <E^2> {ms} vs sum J^2 {want}"
+            );
         }
     }
 
@@ -438,13 +484,17 @@ mod tests {
             for seed in 1..=3u64 {
                 let g = sherrington_kirkpatrick(n, seed);
                 let (_s, brute) = Exhaustive.solve(&g);
-                let e = Elimination::default().ground_state(&g).expect("dense but small");
+                let e = Elimination::default()
+                    .ground_state(&g)
+                    .expect("dense but small");
                 let elim = e.ground_energy.expect("min-sum was run");
-                assert!((brute - elim).abs() < 1e-9, "n={n} seed={seed}: {brute} vs {elim}");
+                assert!(
+                    (brute - elim).abs() < 1e-9,
+                    "n={n} seed={seed}: {brute} vs {elim}"
+                );
             }
         }
     }
-
 
     #[test]
     fn the_ground_energy_density_approaches_the_published_limit() {
@@ -462,9 +512,18 @@ mod tests {
         const PARISI: f64 = -0.7632;
         let small = density(10, 24);
         let large = density(16, 24);
-        assert!(small > PARISI && large > PARISI, "{small} and {large} must sit above {PARISI}");
-        assert!(large < small - 0.01, "the density must deepen with n: {small} then {large}");
-        assert!(large - PARISI < 0.2, "n=16 should be within 0.2 of the limit, was {large}");
+        assert!(
+            small > PARISI && large > PARISI,
+            "{small} and {large} must sit above {PARISI}"
+        );
+        assert!(
+            large < small - 0.01,
+            "the density must deepen with n: {small} then {large}"
+        );
+        assert!(
+            large - PARISI < 0.2,
+            "n=16 should be within 0.2 of the limit, was {large}"
+        );
     }
 
     // ---- 3D Edwards-Anderson --------------------------------------------------------------------
@@ -491,8 +550,9 @@ mod tests {
                             at(x, y, z + l - 1),
                         ];
                         want.sort_unstable();
-                        let mut got: Vec<usize> =
-                            (g.offset[i]..g.offset[i + 1]).map(|k| g.nbr[k] as usize).collect();
+                        let mut got: Vec<usize> = (g.offset[i]..g.offset[i + 1])
+                            .map(|k| g.nbr[k] as usize)
+                            .collect();
                         got.sort_unstable();
                         assert_eq!(got, want, "site ({x},{y},{z}) at l={l}");
                     }
@@ -504,7 +564,10 @@ mod tests {
     #[test]
     fn plus_minus_bonds_are_unit_and_gaussian_bonds_are_not() {
         let pm = edwards_anderson_3d(6, Bonds::PlusMinusJ, 4);
-        assert!(pm.w.iter().all(|&w| w == 1.0 || w == -1.0), "+/-J must be exactly +/-1");
+        assert!(
+            pm.w.iter().all(|&w| w == 1.0 || w == -1.0),
+            "+/-J must be exactly +/-1"
+        );
         let neg = pm.w.iter().filter(|&&w| w < 0.0).count() / 2;
         let m = pm.n_edges;
         // Binomial(648, 1/2): four standard deviations is 2*sqrt(m).
@@ -512,7 +575,10 @@ mod tests {
         assert!(dev < 2.0 * (m as f64).sqrt(), "{neg} of {m} bonds negative");
 
         let gs = edwards_anderson_3d(6, Bonds::Gaussian, 4);
-        assert!(gs.w.iter().any(|&w| (w.abs() - 1.0).abs() > 1e-6), "Gaussian bonds are continuous");
+        assert!(
+            gs.w.iter().any(|&w| (w.abs() - 1.0).abs() > 1e-6),
+            "Gaussian bonds are continuous"
+        );
         let var = sum_j_squared(&gs) / gs.n_edges as f64;
         assert!((var - 1.0).abs() < 0.25, "unit variance, got {var}");
     }
@@ -533,9 +599,24 @@ mod tests {
                 for x in 0..l {
                     // the three plaquettes with a corner here, one per plane
                     let faces = [
-                        [at(x, y, z), at(x + 1, y, z), at(x + 1, y + 1, z), at(x, y + 1, z)],
-                        [at(x, y, z), at(x + 1, y, z), at(x + 1, y, z + 1), at(x, y, z + 1)],
-                        [at(x, y, z), at(x, y + 1, z), at(x, y + 1, z + 1), at(x, y, z + 1)],
+                        [
+                            at(x, y, z),
+                            at(x + 1, y, z),
+                            at(x + 1, y + 1, z),
+                            at(x, y + 1, z),
+                        ],
+                        [
+                            at(x, y, z),
+                            at(x + 1, y, z),
+                            at(x + 1, y, z + 1),
+                            at(x, y, z + 1),
+                        ],
+                        [
+                            at(x, y, z),
+                            at(x, y + 1, z),
+                            at(x, y + 1, z + 1),
+                            at(x, y, z + 1),
+                        ],
                     ];
                     for f in faces {
                         let mut prod = 1.0;
@@ -552,7 +633,10 @@ mod tests {
         }
         assert_eq!(total, 3 * l * l * l);
         let dev = (frustrated as f64 - total as f64 / 2.0).abs();
-        assert!(dev < 2.0 * (total as f64).sqrt(), "{frustrated} of {total} faces frustrated");
+        assert!(
+            dev < 2.0 * (total as f64).sqrt(),
+            "{frustrated} of {total} faces frustrated"
+        );
     }
 
     #[test]
@@ -565,7 +649,9 @@ mod tests {
         for bonds in [Bonds::PlusMinusJ, Bonds::Gaussian] {
             let g = edwards_anderson_3d(l, bonds, 6);
             let mut rng = Pcg::new(99, 1);
-            let gauge: Vec<i8> = (0..g.n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+            let gauge: Vec<i8> = (0..g.n)
+                .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+                .collect();
             let mut b = GraphBuilder::new(g.n);
             for i in 0..g.n {
                 for k in g.offset[i]..g.offset[i + 1] {
@@ -577,15 +663,30 @@ mod tests {
             }
             let gauged = b.build();
             let el = Elimination::default();
-            let a = el.ground_state(&g).expect("3x3x3 fits").ground_energy.expect("min-sum");
-            let c = el.ground_state(&gauged).expect("same shape").ground_energy.expect("min-sum");
+            let a = el
+                .ground_state(&g)
+                .expect("3x3x3 fits")
+                .ground_energy
+                .expect("min-sum");
+            let c = el
+                .ground_state(&gauged)
+                .expect("same shape")
+                .ground_energy
+                .expect("min-sum");
             assert!((a - c).abs() < 1e-9, "{bonds:?}: {a} vs gauged {c}");
 
             // and the state elimination returns really is optimal there: no single flip improves.
-            let s = el.ground_state(&g).expect("3x3x3 fits").ground_state.expect("min-sum");
+            let s = el
+                .ground_state(&g)
+                .expect("3x3x3 fits")
+                .ground_state
+                .expect("min-sum");
             for i in 0..g.n {
                 let delta = 2.0 * f64::from(s[i]) * g.field(i, &s);
-                assert!(delta > -1e-9, "flipping {i} lowers the reported ground energy by {delta}");
+                assert!(
+                    delta > -1e-9,
+                    "flipping {i} lowers the reported ground energy by {delta}"
+                );
             }
         }
     }
@@ -632,13 +733,21 @@ mod tests {
         // Each plaquette read back out of the built graph and enumerated over its sixteen states.
         // This is the per-term claim the global argument rests on, and it also pins the class
         // degeneracies 2/4/8 that name the classes.
-        for mix in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 1.0, 1.0]] {
+        for mix in [
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+        ] {
             let p = tile_planted_2d(6, mix, 12);
             for t in tiles_of(6) {
-                let w: Vec<f64> =
-                    (0..4).map(|k| bond(&p.graph, t[k], t[(k + 1) % 4]).expect("tile bond")).collect();
+                let w: Vec<f64> = (0..4)
+                    .map(|k| bond(&p.graph, t[k], t[(k + 1) % 4]).expect("tile bond"))
+                    .collect();
                 let e = |s: [i8; 4]| -> f64 {
-                    -(0..4).map(|k| w[k] * f64::from(s[k]) * f64::from(s[(k + 1) % 4])).sum::<f64>()
+                    -(0..4)
+                        .map(|k| w[k] * f64::from(s[k]) * f64::from(s[(k + 1) % 4]))
+                        .sum::<f64>()
                 };
                 let mut best = f64::INFINITY;
                 let mut hits = 0;
@@ -654,7 +763,11 @@ mod tests {
                     }
                 }
                 let planted: [i8; 4] = std::array::from_fn(|k| p.ground_state[t[k]]);
-                assert!((e(planted) - best).abs() < 1e-9, "tile {t:?} planted {} vs {best}", e(planted));
+                assert!(
+                    (e(planted) - best).abs() < 1e-9,
+                    "tile {t:?} planted {} vs {best}",
+                    e(planted)
+                );
                 let class = match (best, hits) {
                     (b, 2) if (b + 4.0).abs() < 1e-9 => Tile::C1,
                     (b, 4) if (b + 4.0).abs() < 1e-9 => Tile::C2,
@@ -671,13 +784,25 @@ mod tests {
     fn the_planted_state_really_is_a_ground_state_of_the_tiled_lattice() {
         // Against enumeration where it runs, and against exact elimination past it. The closed-form
         // energy is predicted before the graph is built, so this checks the arithmetic too.
-        for mix in [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [2.0, 1.0, 1.0], [0.0, 1.0, 3.0]] {
+        for mix in [
+            [1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [2.0, 1.0, 1.0],
+            [0.0, 1.0, 3.0],
+        ] {
             for seed in 1..=3u64 {
                 let p = tile_planted_2d(4, mix, seed);
                 let (_s, brute) = Exhaustive.solve(&p.graph);
                 let planted = p.graph.energy(&p.ground_state);
-                assert!((planted - brute).abs() < 1e-9, "{mix:?} seed={seed}: {planted} vs {brute}");
-                assert!((planted - p.ground_energy).abs() < 1e-9, "closed form {}", p.ground_energy);
+                assert!(
+                    (planted - brute).abs() < 1e-9,
+                    "{mix:?} seed={seed}: {planted} vs {brute}"
+                );
+                assert!(
+                    (planted - p.ground_energy).abs() < 1e-9,
+                    "closed form {}",
+                    p.ground_energy
+                );
             }
         }
         for l in [6, 8] {
@@ -687,7 +812,11 @@ mod tests {
                 .expect("a torus of this side fits the width cap")
                 .ground_energy
                 .expect("min-sum was run");
-            assert!((p.ground_energy - e).abs() < 1e-9, "l={l}: planted {} vs exact {e}", p.ground_energy);
+            assert!(
+                (p.ground_energy - e).abs() < 1e-9,
+                "l={l}: planted {} vs exact {e}",
+                p.ground_energy
+            );
         }
     }
 
@@ -700,10 +829,13 @@ mod tests {
         assert_eq!(a.ground_energy, b.ground_energy);
         assert_ne!(a.ground_state, c.ground_state);
 
-        let (s, _) = RandomGuess { tries: 20_000, seed: 2 }.solve(&a.graph);
+        let (s, _) = RandomGuess {
+            tries: 20_000,
+            seed: 2,
+        }
+        .solve(&a.graph);
         assert!(!a.solved(&s), "random guessing solved a planted instance");
     }
-
 
     #[test]
     fn the_mixture_is_what_makes_a_tiled_lattice_hard() {
@@ -718,7 +850,11 @@ mod tests {
             for iseed in 1..=4u64 {
                 let p = tile_planted_2d(8, mix, iseed);
                 for sseed in 1..=4u64 {
-                    let (s, _) = SteepestDescent { restarts: 50, seed: sseed }.solve(&p.graph);
+                    let (s, _) = SteepestDescent {
+                        restarts: 50,
+                        seed: sseed,
+                    }
+                    .solve(&p.graph);
                     total += 1;
                     if p.solved(&s) {
                         solved += 1;
@@ -729,8 +865,14 @@ mod tests {
         };
         let degenerate = rate([0.0, 0.0, 1.0]);
         let mixed = rate([1.0, 1.0, 1.0]);
-        assert!(degenerate > 0.9, "all-C3 is the easy end of the family, got {degenerate}");
-        assert!(mixed < 0.25, "an even mix should defeat greedy, got {mixed}");
+        assert!(
+            degenerate > 0.9,
+            "all-C3 is the easy end of the family, got {degenerate}"
+        );
+        assert!(
+            mixed < 0.25,
+            "an even mix should defeat greedy, got {mixed}"
+        );
     }
 
     // ---- deceptive cluster loops ------------------------------------------------------------------
@@ -768,7 +910,10 @@ mod tests {
         for i in 0..p.graph.n {
             for k in p.graph.offset[i]..p.graph.offset[i + 1] {
                 let j = p.graph.nbr[k] as usize;
-                assert!(bond(&c, i, j).is_some(), "edge ({i},{j}) is not a Chimera edge");
+                assert!(
+                    bond(&c, i, j).is_some(),
+                    "edge ({i},{j}) is not a Chimera edge"
+                );
             }
         }
         // every intra-cell bond present, at least lambda, and satisfied by the planted state
@@ -780,7 +925,10 @@ mod tests {
                         let w = bond(&p.graph, u, v).expect("intra-cell bond");
                         assert!(w.abs() >= lambda - 1e-9, "cluster bond {w} below lambda");
                         let sat = w * f64::from(p.ground_state[u]) * f64::from(p.ground_state[v]);
-                        assert!(sat > 0.0, "cluster bond ({u},{v}) is broken at the planted state");
+                        assert!(
+                            sat > 0.0,
+                            "cluster bond ({u},{v}) is broken at the planted state"
+                        );
                     }
                 }
             }
@@ -820,7 +968,11 @@ mod tests {
             for iseed in 1..=4u64 {
                 let p = deceptive_cluster_loops(3, 3, 4, 24, lambda, iseed);
                 for sseed in 1..=4u64 {
-                    let (s, _) = SteepestDescent { restarts: 40, seed: sseed }.solve(&p.graph);
+                    let (s, _) = SteepestDescent {
+                        restarts: 40,
+                        seed: sseed,
+                    }
+                    .solve(&p.graph);
                     total += 1;
                     if p.solved(&s) {
                         solved += 1;
@@ -831,8 +983,14 @@ mod tests {
         };
         let light = rate(1.0);
         let heavy = rate(8.0);
-        assert!(light > 0.5, "light clusters should mostly be solved, got {light}");
-        assert!(heavy < 0.1, "heavy clusters should defeat single-spin descent, got {heavy}");
+        assert!(
+            light > 0.5,
+            "light clusters should mostly be solved, got {light}"
+        );
+        assert!(
+            heavy < 0.1,
+            "heavy clusters should defeat single-spin descent, got {heavy}"
+        );
     }
 
     #[test]
@@ -845,8 +1003,15 @@ mod tests {
         let idx = |i: usize, j: usize, u: usize, k: usize| ((i * n) + j) * 2 * t + u * t + k;
         for iseed in 1..=4u64 {
             let p = deceptive_cluster_loops(m, n, t, 24, lambda, iseed);
-            let (s, _) = SteepestDescent { restarts: 40, seed: 3 }.solve(&p.graph);
-            assert!(!p.solved(&s), "seed {iseed} was solved; the test size no longer deceives");
+            let (s, _) = SteepestDescent {
+                restarts: 40,
+                seed: 3,
+            }
+            .solve(&p.graph);
+            assert!(
+                !p.solved(&s),
+                "seed {iseed} was solved; the test size no longer deceives"
+            );
             for i in 0..m {
                 for j in 0..n {
                     for a in 0..t {
@@ -877,7 +1042,11 @@ mod tests {
         for iseed in 1..=4u64 {
             let p = deceptive_cluster_loops(m, n, t, 8, 4.0, iseed);
             for sseed in 1..=4u64 {
-                let (mut s, _) = SteepestDescent { restarts: 40, seed: sseed }.solve(&p.graph);
+                let (mut s, _) = SteepestDescent {
+                    restarts: 40,
+                    seed: sseed,
+                }
+                .solve(&p.graph);
                 total += 1;
                 if p.solved(&s) {
                     single += 1;
@@ -912,7 +1081,10 @@ mod tests {
                 }
             }
         }
-        assert!(single * 2 < total, "single-spin descent should mostly fail, got {single}/{total}");
+        assert!(
+            single * 2 < total,
+            "single-spin descent should mostly fail, got {single}/{total}"
+        );
         assert!(
             cluster * 2 > total && cluster > single,
             "cluster moves should mostly succeed, got {cluster}/{total} against {single}/{total}"

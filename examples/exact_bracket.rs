@@ -62,7 +62,12 @@ fn main() {
             // root; without one it spends its first descent finding what tabu found in milliseconds.
             let t = tabu::search(
                 &g,
-                &tabu::Params { iterations: 20_000, tenure: n / 4, restart_after: Some(2_000) , start: None },
+                &tabu::Params {
+                    iterations: 20_000,
+                    tenure: n / 4,
+                    restart_after: Some(2_000),
+                    start: None,
+                },
                 seed,
             );
             let pa = popanneal::run(
@@ -154,6 +159,8 @@ fn main() {
     println!("  every bound sits at or below the proved optimum, and every heuristic at or above.");
     println!("\nREADING: the gap between `decoupled` and `optimum` is what the harder bounds are");
     println!("competing to close, and the gap between `optimum` and `tabu` is what the heuristics");
-    println!("are competing to close. At this size both are measurable against truth; at G-set size");
+    println!(
+        "are competing to close. At this size both are measurable against truth; at G-set size"
+    );
     println!("neither is, which is why `gset_gap` reports a bracket instead of a number.");
 }

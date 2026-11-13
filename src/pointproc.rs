@@ -176,7 +176,9 @@ pub fn unit_autocorrelation(beta: f64, h: f64, m: f64, lifetime: Lifetime, t: f6
             let mut k = 1usize;
             while (k - 1) as f64 * m <= t {
                 let a = t - (k - 1) as f64 * m;
-                on += (erlang_excess(k, rate, a) - 2.0 * erlang_excess(k, rate, a - m) + erlang_excess(k, rate, a - 2.0 * m)) / m;
+                on += (erlang_excess(k, rate, a) - 2.0 * erlang_excess(k, rate, a - m)
+                    + erlang_excess(k, rate, a - 2.0 * m))
+                    / m;
                 k += 1;
             }
             (on - p) / q
@@ -239,7 +241,10 @@ impl<'g> PointProcess<'g> {
     /// If `m` is not positive and finite.
     #[must_use]
     pub fn new(g: &'g Graph, beta: f64, m: f64, lifetime: Lifetime, seed: u64) -> Self {
-        assert!(m.is_finite() && m > 0.0, "the spike lifetime must be positive, got {m}");
+        assert!(
+            m.is_finite() && m > 0.0,
+            "the spike lifetime must be positive, got {m}"
+        );
         PointProcess {
             g,
             beta,
@@ -261,14 +266,28 @@ impl<'g> PointProcess<'g> {
     /// state held before this call's change, so a caller can weight observables by it.
     fn step_until(&mut self, horizon: f64) -> f64 {
         let n = self.g.n;
-        let rates: Vec<f64> = (0..n).map(|i| if self.s[i] < 0 { self.birth_rate(i) } else { 0.0 }).collect();
+        let rates: Vec<f64> = (0..n)
+            .map(|i| {
+                if self.s[i] < 0 {
+                    self.birth_rate(i)
+                } else {
+                    0.0
+                }
+            })
+            .collect();
         let total: f64 = rates.iter().sum();
-        let (next_exp, who_exp) = self
-            .expiry
-            .iter()
-            .enumerate()
-            .fold((f64::INFINITY, usize::MAX), |acc, (i, &e)| if e < acc.0 { (e, i) } else { acc });
-        let wait = if total > 0.0 { -(self.rng.f64().max(1e-300)).ln() / total } else { f64::INFINITY };
+        let (next_exp, who_exp) =
+            self.expiry
+                .iter()
+                .enumerate()
+                .fold((f64::INFINITY, usize::MAX), |acc, (i, &e)| {
+                    if e < acc.0 { (e, i) } else { acc }
+                });
+        let wait = if total > 0.0 {
+            -(self.rng.f64().max(1e-300)).ln() / total
+        } else {
+            f64::INFINITY
+        };
         let t_birth = self.t + wait;
         let start = self.t;
         if t_birth.min(next_exp) >= horizon {
@@ -321,8 +340,17 @@ impl<'g> PointProcess<'g> {
     /// # Panics
     ///
     /// If `batch` is not positive and finite.
-    pub fn batch_means(&mut self, burn: f64, batch: f64, batches: usize, observables: &[Observable<'_>]) -> Vec<Vec<f64>> {
-        assert!(batch.is_finite() && batch > 0.0, "a batch must last a positive, finite time, got {batch}");
+    pub fn batch_means(
+        &mut self,
+        burn: f64,
+        batch: f64,
+        batches: usize,
+        observables: &[Observable<'_>],
+    ) -> Vec<Vec<f64>> {
+        assert!(
+            batch.is_finite() && batch > 0.0,
+            "a batch must last a positive, finite time, got {batch}"
+        );
         self.integrate(self.t + burn, |_, _| {});
         let mut out = vec![Vec::with_capacity(batches); observables.len()];
         let mut sums = vec![0.0f64; observables.len()];
@@ -341,7 +369,13 @@ impl<'g> PointProcess<'g> {
     }
 
     /// The state read at `count` regularly spaced times, `spacing` apart, starting after `burn`.
-    pub fn trace(&mut self, burn: f64, spacing: f64, count: usize, observable: impl Fn(&[i8]) -> f64) -> Vec<f64> {
+    pub fn trace(
+        &mut self,
+        burn: f64,
+        spacing: f64,
+        count: usize,
+        observable: impl Fn(&[i8]) -> f64,
+    ) -> Vec<f64> {
         self.integrate(self.t + burn, |_, _| {});
         let mut out = Vec::with_capacity(count);
         for _ in 0..count {
@@ -379,7 +413,10 @@ mod tests {
                     }
                 });
                 let got = on / total;
-                assert!((got - want).abs() < 0.01, "h {h}, {lifetime:?}: on {got} vs {want}");
+                assert!(
+                    (got - want).abs() < 0.01,
+                    "h {h}, {lifetime:?}: on {got} vs {want}"
+                );
             }
         }
     }
@@ -401,7 +438,10 @@ mod tests {
             let mut pp = PointProcess::new(&g, beta, 1.0, lifetime, 11);
             let mut law = vec![0.0f64; 8];
             pp.integrate(1e5, |s, dt| {
-                let x = s.iter().enumerate().fold(0usize, |a, (i, &v)| if v > 0 { a | (1 << i) } else { a });
+                let x = s
+                    .iter()
+                    .enumerate()
+                    .fold(0usize, |a, (i, &v)| if v > 0 { a | (1 << i) } else { a });
                 law[x] += dt;
             });
             let total: f64 = law.iter().sum();
@@ -446,22 +486,39 @@ mod tests {
                 let means = pp.batch_means(50.0, batch, batches, &[&on]);
                 let (v, se) = long_run_variance(&means[0], batch);
                 let exact = unit_variance(beta, h, m, lifetime);
-                assert!(se < 0.02 * exact, "h {h}, {lifetime:?}: standard error {se} is not resolving {exact}");
-                assert!((v - exact).abs() < 4.0 * se + bias * exact, "h {h}, {lifetime:?}: batch means {v} +- {se}, exact {exact}");
+                assert!(
+                    se < 0.02 * exact,
+                    "h {h}, {lifetime:?}: standard error {se} is not resolving {exact}"
+                );
+                assert!(
+                    (v - exact).abs() < 4.0 * se + bias * exact,
+                    "h {h}, {lifetime:?}: batch means {v} +- {se}, exact {exact}"
+                );
                 got.push((v, se));
             }
-            let exact_ratio = unit_variance(beta, h, m, Lifetime::Exponential) / unit_variance(beta, h, m, Lifetime::Fixed);
-            assert!((exact_ratio - 2.0).abs() < 1e-12, "h {h}: the exact ratio is {exact_ratio}");
+            let exact_ratio = unit_variance(beta, h, m, Lifetime::Exponential)
+                / unit_variance(beta, h, m, Lifetime::Fixed);
+            assert!(
+                (exact_ratio - 2.0).abs() < 1e-12,
+                "h {h}: the exact ratio is {exact_ratio}"
+            );
             let ((vf, sf), (ve, s_e)) = (got[0], got[1]);
             let ratio = ve / vf;
             let se_ratio = ratio * ((sf / vf).powi(2) + (s_e / ve).powi(2)).sqrt();
-            assert!((ratio - 2.0).abs() < 4.0 * se_ratio + 2.0 * 2.0 * bias, "h {h}: measured ratio {ratio} +- {se_ratio}, exact 2");
+            assert!(
+                (ratio - 2.0).abs() < 4.0 * se_ratio + 2.0 * 2.0 * bias,
+                "h {h}: measured ratio {ratio} +- {se_ratio}, exact 2"
+            );
         }
         // The general law, as algebra: a lifetime with coefficient of variation c costs 1 + c^2.
         let (wait, m) = (0.8f64, 1.0f64);
         let fixed = renewal_variance(wait, wait, m, 0.0);
         let uniform = renewal_variance(wait, wait, m, m / 3f64.sqrt());
-        assert!((uniform / fixed - 4.0 / 3.0).abs() < 1e-12, "uniform on [0, 2m]: {}", uniform / fixed);
+        assert!(
+            (uniform / fixed - 4.0 / 3.0).abs() < 1e-12,
+            "uniform on [0, 2m]: {}",
+            uniform / fixed
+        );
     }
 
     /// **The exact autocorrelation, held three ways.** Its integral is [`unit_tau`], which comes
@@ -480,20 +537,36 @@ mod tests {
                 let mut integral = 0.0;
                 // Simpson's rule; the fixed lifetime's kinks at multiples of m fall on panel edges.
                 for i in 0..=steps {
-                    let w = if i == 0 || i == steps { 1.0 } else if i % 2 == 1 { 4.0 } else { 2.0 };
-                    integral += w * dt / 3.0 * unit_autocorrelation(beta, h, m, lifetime, i as f64 * dt);
+                    let w = if i == 0 || i == steps {
+                        1.0
+                    } else if i % 2 == 1 {
+                        4.0
+                    } else {
+                        2.0
+                    };
+                    integral +=
+                        w * dt / 3.0 * unit_autocorrelation(beta, h, m, lifetime, i as f64 * dt);
                 }
                 let tau = unit_tau(beta, h, m, lifetime);
-                assert!((integral / tau - 1.0).abs() < 1e-6, "h {h}, {lifetime:?}: int rho {integral}, tau {tau}");
+                assert!(
+                    (integral / tau - 1.0).abs() < 1e-6,
+                    "h {h}, {lifetime:?}: int rho {integral}, tau {tau}"
+                );
             }
         }
         for i in 0..=100 {
             let t = i as f64 * m / 100.0;
             let want = 2.0 * (-t / m).exp() - 1.0;
             let got = unit_autocorrelation(beta, 0.0, m, Lifetime::Fixed, t);
-            assert!((got - want).abs() < 1e-12, "t {t}: {got} vs closed form {want}");
+            assert!(
+                (got - want).abs() < 1e-12,
+                "t {t}: {got} vs closed form {want}"
+            );
         }
-        assert!(unit_autocorrelation(beta, 0.0, m, Lifetime::Fixed, m) < -0.26, "the lobe at t = m is 2/e - 1");
+        assert!(
+            unit_autocorrelation(beta, 0.0, m, Lifetime::Fixed, m) < -0.26,
+            "the lobe at t = m is 2/e - 1"
+        );
 
         let g = one_unit(0.0);
         let mut pp = PointProcess::new(&g, beta, m, Lifetime::Fixed, 31);
@@ -502,9 +575,15 @@ mod tests {
         let mean = x.iter().sum::<f64>() / n as f64;
         let var = x.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n as f64;
         for lag in [5usize, 10, 15, 20] {
-            let c = (0..n - lag).map(|i| (x[i] - mean) * (x[i + lag] - mean)).sum::<f64>() / ((n - lag) as f64 * var);
+            let c = (0..n - lag)
+                .map(|i| (x[i] - mean) * (x[i + lag] - mean))
+                .sum::<f64>()
+                / ((n - lag) as f64 * var);
             let want = unit_autocorrelation(beta, 0.0, m, Lifetime::Fixed, lag as f64 * 0.1);
-            assert!((c - want).abs() < 0.01, "lag {lag}: simulated {c}, exact {want}");
+            assert!(
+                (c - want).abs() < 0.01,
+                "lag {lag}: simulated {c}, exact {want}"
+            );
         }
     }
 
@@ -522,25 +601,58 @@ mod tests {
     fn sokal_window_misreads_a_fixed_lifetime() {
         let (beta, m, spacing) = (1.0, 1.0, 0.1);
         let window = |h: f64, lifetime: Lifetime| {
-            spacing * crate::certify::sokal_window(100_000, |k| unit_autocorrelation(beta, h, m, lifetime, k as f64 * spacing))
+            spacing
+                * crate::certify::sokal_window(100_000, |k| {
+                    unit_autocorrelation(beta, h, m, lifetime, k as f64 * spacing)
+                })
         };
         for &(h, bias) in &[(0.0f64, -0.0810f64), (0.7, 0.1331)] {
             let exact = unit_tau(beta, h, m, Lifetime::Fixed);
             let read = window(h, Lifetime::Fixed) / exact - 1.0;
-            assert!((read - bias).abs() < 5e-4, "h {h}: the window reads {read:+.4}, measured {bias:+.4}");
-            let full = spacing * (0.5 + (1..=1200).map(|k| unit_autocorrelation(beta, h, m, Lifetime::Fixed, k as f64 * spacing)).sum::<f64>());
-            assert!((full / exact - 1.0).abs() < 1e-9, "h {h}: the unwindowed sum {full} vs {exact}");
-            let exp_read = window(h, Lifetime::Exponential) / unit_tau(beta, h, m, Lifetime::Exponential) - 1.0;
-            assert!(exp_read.abs() < 0.02, "h {h}: exponential read {exp_read:+.4}");
+            assert!(
+                (read - bias).abs() < 5e-4,
+                "h {h}: the window reads {read:+.4}, measured {bias:+.4}"
+            );
+            let full = spacing
+                * (0.5
+                    + (1..=1200)
+                        .map(|k| {
+                            unit_autocorrelation(beta, h, m, Lifetime::Fixed, k as f64 * spacing)
+                        })
+                        .sum::<f64>());
+            assert!(
+                (full / exact - 1.0).abs() < 1e-9,
+                "h {h}: the unwindowed sum {full} vs {exact}"
+            );
+            let exp_read = window(h, Lifetime::Exponential)
+                / unit_tau(beta, h, m, Lifetime::Exponential)
+                - 1.0;
+            assert!(
+                exp_read.abs() < 0.02,
+                "h {h}: exponential read {exp_read:+.4}"
+            );
         }
         let ratio0 = window(0.0, Lifetime::Exponential) / window(0.0, Lifetime::Fixed);
         let ratio7 = window(0.7, Lifetime::Exponential) / window(0.7, Lifetime::Fixed);
-        assert!((ratio0 - 2.170).abs() < 0.005 && (ratio7 - 1.797).abs() < 0.005, "window ratios {ratio0}, {ratio7}");
+        assert!(
+            (ratio0 - 2.170).abs() < 0.005 && (ratio7 - 1.797).abs() < 0.005,
+            "window ratios {ratio0}, {ratio7}"
+        );
 
         let g = one_unit(0.0);
         let mut pp = PointProcess::new(&g, beta, m, Lifetime::Fixed, 41);
-        let x = pp.trace(50.0, spacing, 1_000_000, |s| if s[0] > 0 { 1.0 } else { 0.0 });
-        let read = crate::certify::tau_int_sokal(&x) * spacing / unit_tau(beta, 0.0, m, Lifetime::Fixed) - 1.0;
-        assert!((read + 0.081).abs() < 0.02, "tau_int on a simulated trace reads {read:+.4}");
+        let x = pp.trace(
+            50.0,
+            spacing,
+            1_000_000,
+            |s| if s[0] > 0 { 1.0 } else { 0.0 },
+        );
+        let read = crate::certify::tau_int_sokal(&x) * spacing
+            / unit_tau(beta, 0.0, m, Lifetime::Fixed)
+            - 1.0;
+        assert!(
+            (read + 0.081).abs() < 0.02,
+            "tau_int on a simulated trace reads {read:+.4}"
+        );
     }
 }

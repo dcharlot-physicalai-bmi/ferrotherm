@@ -75,11 +75,23 @@ pub fn weaker(a: Evidence, b: Evidence) -> Evidence {
 /// against nothing is not an advantage.
 #[must_use]
 pub fn advantage_after_readout(baseline_j: f64, dynamics_j: f64, reads: u64, e_read: f64) -> f64 {
-    assert!(baseline_j.is_finite() && baseline_j >= 0.0, "baseline must be a non-negative energy, got {baseline_j}");
-    assert!(dynamics_j.is_finite() && dynamics_j >= 0.0, "dynamics must be a non-negative energy, got {dynamics_j}");
-    assert!(e_read.is_finite() && e_read >= 0.0, "a read price must be a non-negative energy, got {e_read}");
+    assert!(
+        baseline_j.is_finite() && baseline_j >= 0.0,
+        "baseline must be a non-negative energy, got {baseline_j}"
+    );
+    assert!(
+        dynamics_j.is_finite() && dynamics_j >= 0.0,
+        "dynamics must be a non-negative energy, got {dynamics_j}"
+    );
+    assert!(
+        e_read.is_finite() && e_read >= 0.0,
+        "a read price must be a non-negative energy, got {e_read}"
+    );
     let total = dynamics_j + reads as f64 * e_read;
-    assert!(total > 0.0, "a claimed advantage needs something in the denominator");
+    assert!(
+        total > 0.0,
+        "a claimed advantage needs something in the denominator"
+    );
     baseline_j / total
 }
 
@@ -99,13 +111,31 @@ pub fn advantage_after_readout(baseline_j: f64, dynamics_j: f64, reads: u64, e_r
 /// If `reads` is zero (a claim with no readout has no readout bound to report), if the advantage is
 /// not positive and finite, or if either energy is negative or non-finite.
 #[must_use]
-pub fn read_budget_for_advantage(baseline_j: f64, dynamics_j: f64, reads: u64, advantage: f64) -> Option<f64> {
+pub fn read_budget_for_advantage(
+    baseline_j: f64,
+    dynamics_j: f64,
+    reads: u64,
+    advantage: f64,
+) -> Option<f64> {
     assert!(reads > 0, "a claim that reads nothing has no readout bound");
-    assert!(advantage > 0.0 && advantage.is_finite(), "an advantage is positive and finite, got {advantage}");
-    assert!(baseline_j.is_finite() && baseline_j >= 0.0, "baseline must be a non-negative energy, got {baseline_j}");
-    assert!(dynamics_j.is_finite() && dynamics_j >= 0.0, "dynamics must be a non-negative energy, got {dynamics_j}");
+    assert!(
+        advantage > 0.0 && advantage.is_finite(),
+        "an advantage is positive and finite, got {advantage}"
+    );
+    assert!(
+        baseline_j.is_finite() && baseline_j >= 0.0,
+        "baseline must be a non-negative energy, got {baseline_j}"
+    );
+    assert!(
+        dynamics_j.is_finite() && dynamics_j >= 0.0,
+        "dynamics must be a non-negative energy, got {dynamics_j}"
+    );
     let budget = baseline_j / advantage - dynamics_j;
-    if budget > 0.0 { Some(budget / reads as f64) } else { None }
+    if budget > 0.0 {
+        Some(budget / reads as f64)
+    } else {
+        None
+    }
 }
 
 /// Per-operation energy prices, in joules. These describe a DEVICE MODEL, not measured silicon,
@@ -561,7 +591,10 @@ mod tests {
             Evidence::Simulated,
             "metered over simulated is simulated, whichever way round it is written"
         );
-        assert_eq!(weaker(Z1_SPICE.evidence, KV260_MEASURED.evidence), Evidence::Simulated);
+        assert_eq!(
+            weaker(Z1_SPICE.evidence, KV260_MEASURED.evidence),
+            Evidence::Simulated
+        );
         // It is an order, and the order is the argument.
         assert!(Evidence::Metered > Evidence::Measured);
         assert!(Evidence::Measured > Evidence::Simulated);
@@ -569,7 +602,10 @@ mod tests {
         assert!(Evidence::Derived > Evidence::Projected);
         assert!(Evidence::Projected > Evidence::Unstated);
         // An unstated price drags any comparison to the bottom, which is the point of grading it.
-        assert_eq!(weaker(KV260_MEASURED.evidence, Prices::UNSTATED.evidence), Evidence::Unstated);
+        assert_eq!(
+            weaker(KV260_MEASURED.evidence, Prices::UNSTATED.evidence),
+            Evidence::Unstated
+        );
     }
 
     /// The one price in this crate that was metered says so in the type, not only in the prose.
@@ -587,7 +623,11 @@ mod tests {
         // OVER THE CATALOGUE, not over a list written here. This test used to walk its own three
         // entries and conclude "exactly one price in this crate was metered" -- a count of the
         // test's array, which two later entries joined the crate without ever entering.
-        assert_eq!(CATALOGUE.len(), graded.len(), "a machine joined the table without a grade here");
+        assert_eq!(
+            CATALOGUE.len(),
+            graded.len(),
+            "a machine joined the table without a grade here"
+        );
         let mut metered = Vec::new();
         for ((name, p), (want_name, want)) in CATALOGUE.iter().zip(graded) {
             assert_eq!(*name, want_name);
@@ -606,20 +646,38 @@ mod tests {
                 "KV260_WRITABLE_METERED" => KV260_WRITABLE_METERED,
                 other => panic!("{other} is in the table and has no constant named here"),
             };
-            assert_eq!(p.source, constant.source, "{name} is bound to another machine's prices");
-            for (got, want) in [(p.e_sample, constant.e_sample), (p.e_read, constant.e_read), (p.e_write, constant.e_write)] {
-                assert_eq!(got.to_bits(), want.to_bits(), "{name}: a price that is not its constant's");
+            assert_eq!(
+                p.source, constant.source,
+                "{name} is bound to another machine's prices"
+            );
+            for (got, want) in [
+                (p.e_sample, constant.e_sample),
+                (p.e_read, constant.e_read),
+                (p.e_write, constant.e_write),
+            ] {
+                assert_eq!(
+                    got.to_bits(),
+                    want.to_bits(),
+                    "{name}: a price that is not its constant's"
+                );
             }
             if p.evidence == Evidence::Metered {
                 // Metered means this project's protocol on this project's instrument, and the
                 // source has to say which instrument.
-                assert!(p.source.contains("INA260"), "{name} claims a meter and names none");
+                assert!(
+                    p.source.contains("INA260"),
+                    "{name} claims a meter and names none"
+                );
                 metered.push(*name);
             }
         }
         assert_eq!(
             metered,
-            ["KV260_MEASURED", "KV260_AXI_METERED", "KV260_WRITABLE_METERED"],
+            [
+                "KV260_MEASURED",
+                "KV260_AXI_METERED",
+                "KV260_WRITABLE_METERED"
+            ],
             "all three on the one board we own, and no other machine may claim the grade"
         );
         // and the grade must agree with the prose, or one of them is lying
@@ -631,9 +689,11 @@ mod tests {
     fn evidence_prints_as_the_word_it_is() {
         assert_eq!(Evidence::Metered.to_string(), "metered");
         assert_eq!(Evidence::Projected.to_string(), "projected");
-        assert_ne!(Evidence::Derived.to_string(), Evidence::Simulated.to_string());
+        assert_ne!(
+            Evidence::Derived.to_string(),
+            Evidence::Simulated.to_string()
+        );
     }
-
 
     #[test]
     fn write_to_sample_ratio_is_the_finding() {
@@ -656,7 +716,10 @@ mod tests {
     fn a_cited_price_is_recomputed_from_the_figure_its_own_source_quotes() {
         // "20 GSamples/s/W" -> 1 / 20e9 J per sample.
         let src = AIA_16NM_SAMPLER.source;
-        assert!(src.contains("20 GSamples/s/W"), "the source no longer quotes the figure it is built from");
+        assert!(
+            src.contains("20 GSamples/s/W"),
+            "the source no longer quotes the figure it is built from"
+        );
         let want = 1.0 / 20e9;
         assert!(
             (AIA_16NM_SAMPLER.e_sample - want).abs() < 1e-18,
@@ -664,7 +727,10 @@ mod tests {
             AIA_16NM_SAMPLER.e_sample
         );
         // And the arithmetic in the source text must agree with itself.
-        assert!(src.contains("5.0e-11"), "the source states a converted value that must match");
+        assert!(
+            src.contains("5.0e-11"),
+            "the source states a converted value that must match"
+        );
 
         // The same discipline for the other cited figure: the ASIC's stated pJ per update.
         assert!(PEGASUS_28NM_ASIC.source.contains("1.2 pJ/update"));
@@ -673,7 +739,10 @@ mod tests {
         // The board figures are re-derived from sensor logs elsewhere; here, just that they still
         // quote the protocol their grade depends on.
         for p in [KV260_MEASURED, KV260_AXI_METERED] {
-            assert!(p.source.contains("INA260"), "a metered grade must name its instrument");
+            assert!(
+                p.source.contains("INA260"),
+                "a metered grade must name its instrument"
+            );
         }
     }
 
@@ -686,20 +755,37 @@ mod tests {
     fn the_measured_board_price_prices_sampling_and_refuses_the_rest() {
         // 1,024 p-bits at 100 MHz, two clocks per sweep, one second of running.
         let flips = 1024u64 * 50_000_000;
-        let l = Ledger { samples: flips, reads: 0, writes: 0 };
+        let l = Ledger {
+            samples: flips,
+            reads: 0,
+            writes: 0,
+        };
         let joules = l.joules(&KV260_MEASURED).expect("sampling alone is priced");
         // 0.5554 W for one second, reproduced from the per-flip figure.
-        assert!((joules - 0.5554).abs() < 0.005, "one second of the measured fabric = {joules} J");
+        assert!(
+            (joules - 0.5554).abs() < 0.005,
+            "one second of the measured fabric = {joules} J"
+        );
 
         // The gap against the projection this crate exists to test, stated as a ratio rather than
         // as a slogan. Extropic's SPICE table says 7.09 fJ; this board says 10.85 pJ.
         let ratio = KV260_MEASURED.e_sample / Z1_SPICE.e_sample;
-        assert!((1500.0..1560.0).contains(&ratio), "measured / projected = {ratio}");
+        assert!(
+            (1500.0..1560.0).contains(&ratio),
+            "measured / projected = {ratio}"
+        );
 
         // A workload that reads or writes cannot be priced from a sampling-only measurement, and
         // the ledger says so instead of charging zero for the parts nobody metered.
-        assert!(!KV260_MEASURED.is_stated(), "reads and writes are unstated, not free");
-        let with_io = Ledger { samples: flips, reads: 1, writes: 0 };
+        assert!(
+            !KV260_MEASURED.is_stated(),
+            "reads and writes are unstated, not free"
+        );
+        let with_io = Ledger {
+            samples: flips,
+            reads: 1,
+            writes: 0,
+        };
         assert_eq!(
             with_io.joules(&KV260_MEASURED),
             None,
@@ -712,7 +798,11 @@ mod tests {
         // The failure this prevents: every fabric in the tree once declared Z1_SPICE, so a Hitachi
         // CMOS annealer and a laptop CPU both reported Extropic's pre-silicon SPICE estimates as
         // their own energy. Nothing was lying; nothing had been asked whose numbers those were.
-        let l = Ledger { samples: 1_000, reads: 10, writes: 1 };
+        let l = Ledger {
+            samples: 1_000,
+            reads: 10,
+            writes: 1,
+        };
         assert!(l.joules(&Z1_SPICE).unwrap() > 0.0);
         assert_eq!(
             l.joules(&Prices::UNSTATED),
@@ -740,7 +830,10 @@ mod tests {
         assert_eq!(cpu.ledger().writes, 0);
         let sched = crate::schedule::Schedule::default();
         let p = Program::from_graph(&crate::ising::lattice2d(4, 1.0), &sched);
-        assert!(cpu.program(&p).is_empty(), "a pairwise lattice loads on the CPU device");
+        assert!(
+            cpu.program(&p).is_empty(),
+            "a pairwise lattice loads on the CPU device"
+        );
         assert_eq!(cpu.ledger().writes, 16, "one write per node flashed");
     }
 
@@ -749,7 +842,11 @@ mod tests {
         // A workload that reflashes the whole graph faster than the device sustains is not fast,
         // it is unphysical -- and pricing it describes a run that could not have happened.
         // `reflash_hz_cap` was declared and read by nothing.
-        let l = Ledger { samples: 0, reads: 0, writes: 500 };
+        let l = Ledger {
+            samples: 0,
+            reads: 0,
+            writes: 500,
+        };
         // 500 node-writes over a 100-node graph is 5 full reflashes; at 1 Hz that is 5 seconds.
         assert_eq!(l.reflash_seconds(&Z1_SPICE, 100), Some(5.0));
         assert_eq!(
@@ -770,13 +867,25 @@ mod tests {
     #[test]
     fn the_best_measured_update_sits_between_the_projection_and_our_fabric() {
         let (z1, asic, kv) = (Z1_SPICE, PEGASUS_28NM_ASIC, KV260_MEASURED);
-        assert!(z1.e_sample < asic.e_sample && asic.e_sample < kv.e_sample, "energies ascend");
-        assert!(z1.evidence < asic.evidence && asic.evidence < kv.evidence, "and so do the grades");
+        assert!(
+            z1.e_sample < asic.e_sample && asic.e_sample < kv.e_sample,
+            "energies ascend"
+        );
+        assert!(
+            z1.evidence < asic.evidence && asic.evidence < kv.evidence,
+            "and so do the grades"
+        );
 
         let fpga_over_asic = kv.e_sample / asic.e_sample;
-        assert!((fpga_over_asic - 9.04).abs() < 0.01, "FPGA fabric over ASIC: {fpga_over_asic}");
+        assert!(
+            (fpga_over_asic - 9.04).abs() < 0.01,
+            "FPGA fabric over ASIC: {fpga_over_asic}"
+        );
         let asic_over_projection = asic.e_sample / z1.e_sample;
-        assert!((asic_over_projection - 169.25).abs() < 0.01, "ASIC over projection: {asic_over_projection}");
+        assert!(
+            (asic_over_projection - 169.25).abs() < 0.01,
+            "ASIC over projection: {asic_over_projection}"
+        );
 
         // a comparison inherits the weaker grade, in either direction
         assert_eq!(weaker(asic.evidence, kv.evidence), Evidence::Measured);
@@ -785,25 +894,41 @@ mod tests {
         // The like-for-like figure against anyone's WALL power is the whole board, not the
         // increment: 3.6917 W with the fabric on, over 1,024 p-bits at 50 MHz of updates each.
         let whole_board: f64 = 3.6917 / 5.12e10;
-        assert!((whole_board - 7.21e-11).abs() < 1e-13, "whole-board J per flip: {whole_board}");
-        assert!(whole_board / kv.e_sample > 6.0, "the increment flatters by more than six");
+        assert!(
+            (whole_board - 7.21e-11).abs() < 1e-13,
+            "whole-board J per flip: {whole_board}"
+        );
+        assert!(
+            whole_board / kv.e_sample > 6.0,
+            "the increment flatters by more than six"
+        );
 
         // the table: appended, named once each, and the ASIC priced like the KV260 -- samples only
         assert_eq!(CATALOGUE.len(), 7);
         assert_eq!(CATALOGUE[3].0, "PEGASUS_28NM_ASIC");
-        assert_eq!(CATALOGUE[4].0, "KV260_AXI_METERED", "appended, so every earlier index holds");
-        assert_eq!(CATALOGUE[6].0, "KV260_WRITABLE_METERED", "and the metered write appended after it");
+        assert_eq!(
+            CATALOGUE[4].0, "KV260_AXI_METERED",
+            "appended, so every earlier index holds"
+        );
+        assert_eq!(
+            CATALOGUE[6].0, "KV260_WRITABLE_METERED",
+            "and the metered write appended after it"
+        );
         for (i, (a, _)) in CATALOGUE.iter().enumerate() {
             for (b, _) in &CATALOGUE[i + 1..] {
                 assert_ne!(a, b, "a machine named twice");
             }
         }
-        assert!(asic.e_read.is_nan() && asic.e_write.is_nan(), "folded into the figure, not zero");
+        assert!(
+            asic.e_read.is_nan() && asic.e_write.is_nan(),
+            "folded into the figure, not zero"
+        );
     }
 
     /// Per-pass mean power of each arm, and the host program's own account of each arm.
     type ArmMeans = std::collections::BTreeMap<(u32, String), f64>;
-    type ArmFacts = std::collections::BTreeMap<(u32, String), std::collections::BTreeMap<String, f64>>;
+    type ArmFacts =
+        std::collections::BTreeMap<(u32, String), std::collections::BTreeMap<String, f64>>;
 
     fn parse_sensor_log(text: &str) -> (ArmMeans, ArmFacts, usize) {
         let mut sums: std::collections::BTreeMap<(u32, String), (f64, usize)> = Default::default();
@@ -813,7 +938,9 @@ mod tests {
             let t: Vec<&str> = line.split_whitespace().collect();
             match t.first().copied() {
                 Some("S") => {
-                    let e = sums.entry((t[1].parse().unwrap(), t[2].to_string())).or_insert((0.0, 0));
+                    let e = sums
+                        .entry((t[1].parse().unwrap(), t[2].to_string()))
+                        .or_insert((0.0, 0));
                     e.0 += t[3].parse::<f64>().unwrap() * 1e-6;
                     e.1 += 1;
                 }
@@ -835,14 +962,22 @@ mod tests {
                 _ => {}
             }
         }
-        (sums.into_iter().map(|(k, (s, n))| (k, s / n as f64)).collect(), facts, flags)
+        (
+            sums.into_iter()
+                .map(|(k, (s, n))| (k, s / n as f64))
+                .collect(),
+            facts,
+            flags,
+        )
     }
 
     /// Mean and standard error of one difference PER PASS: the 768 samples of an arm share sensor
     /// conversion windows and are not 768 measurements, but the 8 passes are 8.
     fn paired(means: &ArmMeans, hi: &str, lo: &str) -> (f64, f64, usize) {
         let d: Vec<f64> = (1..=64)
-            .filter_map(|p| Some(means.get(&(p, hi.to_string()))? - means.get(&(p, lo.to_string()))?))
+            .filter_map(|p| {
+                Some(means.get(&(p, hi.to_string()))? - means.get(&(p, lo.to_string()))?)
+            })
             .collect();
         let n = d.len() as f64;
         let m = d.iter().sum::<f64>() / n;
@@ -855,9 +990,13 @@ mod tests {
     /// its evidence.
     #[test]
     fn the_metered_write_is_rederived_from_its_own_sensor_log() {
-        let (means, facts, flags) =
-            parse_sensor_log(include_str!("../measurements/kv260-write-2026-09-22/write_meter_1.dat"));
-        assert_eq!(flags, 0, "a pass during which someone else loaded the FPGA is not evidence");
+        let (means, facts, flags) = parse_sensor_log(include_str!(
+            "../measurements/kv260-write-2026-09-22/write_meter_1.dat"
+        ));
+        assert_eq!(
+            flags, 0,
+            "a pass during which someone else loaded the FPGA is not evidence"
+        );
 
         // CONTROLS WITH KNOWN ANSWERS, taken before either constant is computed.
         let mut node_writes_per_s = 0.0;
@@ -868,17 +1007,26 @@ mod tests {
                 "halt" => {
                     // Held means held: no sweeps, and a popcount that never moves.
                     assert_eq!(kv["sweeps_per_s"], 0.0, "a held fabric does not sweep");
-                    assert_eq!(kv["pop_min"], kv["pop_max"], "a held fabric does not change state");
+                    assert_eq!(
+                        kv["pop_min"], kv["pop_max"],
+                        "a held fabric does not change state"
+                    );
                     held += 1;
                 }
                 arm => {
                     // 100 MHz at FOUR clocks a sweep is 2.5e7 -- what a writable fabric costs where
                     // `FixedFabric` takes two. Measured on the part, not assumed from the RTL.
                     let sweeps = kv["sweeps_per_s"];
-                    assert!((sweeps / 2.5e7 - 1.0).abs() < 1e-4, "{arm}: {sweeps} sweeps/s is not this fabric");
+                    assert!(
+                        (sweeps / 2.5e7 - 1.0).abs() < 1e-4,
+                        "{arm}: {sweeps} sweeps/s is not this fabric"
+                    );
                     if arm == "write" {
                         // The write path is lossless: the shell accepted exactly what was sent.
-                        assert_eq!(kv["words_sent"], kv["words_accepted"], "a dropped word is a wrong bill");
+                        assert_eq!(
+                            kv["words_sent"], kv["words_accepted"],
+                            "a dropped word is a wrong bill"
+                        );
                         assert!(kv["words_sent"] > 0.0, "the write arm must actually write");
                         node_writes_per_s += kv["node_writes_per_s"] / 8.0;
                         words_per_s += kv["words_per_s"] / 8.0;
@@ -891,11 +1039,17 @@ mod tests {
         }
         assert_eq!((wrote, held), (8, 8), "8 passes of each arm");
         // Three words a node, as `ft_write` programs them.
-        assert!((words_per_s / node_writes_per_s - 3.0).abs() < 1e-6, "a node is three config words");
+        assert!(
+            (words_per_s / node_writes_per_s - 3.0).abs() < 1e-6,
+            "a node is three config words"
+        );
 
         let (watts, se, passes) = paired(&means, "write", "idle");
         assert_eq!(passes, 8);
-        assert!(watts / se > 5.0, "a write must clear the sensor's noise: {watts} W, se {se}");
+        assert!(
+            watts / se > 5.0,
+            "a write must clear the sensor's noise: {watts} W, se {se}"
+        );
         let e_write = watts / node_writes_per_s;
         assert!(
             (e_write / KV260_WRITABLE_METERED.e_write - 1.0).abs() < 1e-3,
@@ -919,12 +1073,18 @@ mod tests {
         // WHAT THE WRITE COSTS IN THE UNIT THE FABRIC IS PRICED IN. This is the number that decides
         // whether a schedule belongs in the fabric or in the problem.
         let ratio = e_write / e_sample;
-        assert!((2250.0..2350.0).contains(&ratio), "a node write is {ratio} node updates");
+        assert!(
+            (2250.0..2350.0).contains(&ratio),
+            "a node write is {ratio} node updates"
+        );
 
         // WRITABILITY IS NOT FREE, and this is the only pair of constants that can say so: two
         // fabrics, one board, one method, one sensor.
         let price = KV260_WRITABLE_METERED.e_sample / KV260_AXI_METERED.e_sample;
-        assert!((2.0..2.2).contains(&price), "a writable p-bit flips for {price}x a fixed one");
+        assert!(
+            (2.0..2.2).contains(&price),
+            "a writable p-bit flips for {price}x a fixed one"
+        );
 
         // AND THE MISREADING THE TWO CONSTANTS INVITE. `KV260_AXI_METERED.e_read` is per SPIN, and
         // a read word carries 32 of them, so comparing it to a per-word write makes the write look
@@ -933,9 +1093,15 @@ mod tests {
         let read_per_beat = KV260_AXI_METERED.e_read * 32.0;
         let write_per_beat = e_write / 3.0;
         let beats = read_per_beat / write_per_beat;
-        assert!((1.0..2.0).contains(&beats), "read beat over write beat is {beats}, not a factor of two");
+        assert!(
+            (1.0..2.0).contains(&beats),
+            "read beat over write beat is {beats}, not a factor of two"
+        );
         let per_spin = KV260_AXI_METERED.e_read / write_per_beat;
-        assert!(per_spin < 0.1, "and per SPIN the read looks {per_spin}x a write, which is the trap");
+        assert!(
+            per_spin < 0.1,
+            "and per SPIN the read looks {per_spin}x a write, which is the trap"
+        );
     }
 
     /// The constants in [`KV260_AXI_METERED`] are RE-DERIVED here from the sensor logs they came
@@ -943,22 +1109,35 @@ mod tests {
     /// scratch directory the way an earlier audit's was.
     #[test]
     fn the_metered_read_is_rederived_from_its_own_sensor_log() {
-        let (means, facts, flags) =
-            parse_sensor_log(include_str!("../measurements/kv260-read-2026-09-19/read_meter_1.dat"));
-        assert_eq!(flags, 0, "a pass during which someone else loaded the FPGA is not evidence");
+        let (means, facts, flags) = parse_sensor_log(include_str!(
+            "../measurements/kv260-read-2026-09-19/read_meter_1.dat"
+        ));
+        assert_eq!(
+            flags, 0,
+            "a pass during which someone else loaded the FPGA is not evidence"
+        );
         let (watts, se, passes) = paired(&means, "axi", "idle");
         assert_eq!(passes, 8);
-        assert!(watts / se > 5.0, "a read must clear the sensor's noise: {watts} W, se {se}");
+        assert!(
+            watts / se > 5.0,
+            "a read must clear the sensor's noise: {watts} W, se {se}"
+        );
 
         // CONTROLS WITH KNOWN ANSWERS. 100 MHz and two clocks a sweep is 5.0e7; the PS clock is
         // 20 ppm slow. A port whose width disagreed with the PS would return words that fail this.
         let mut words_per_s = 0.0;
         for ((_, arm), kv) in &facts {
             let sweeps = kv["sweeps_per_s"];
-            assert!((sweeps / 5.0e7 - 1.0).abs() < 1e-4, "{arm}: {sweeps} sweeps/s is not this fabric");
+            assert!(
+                (sweeps / 5.0e7 - 1.0).abs() < 1e-4,
+                "{arm}: {sweeps} sweeps/s is not this fabric"
+            );
             if arm == "axi" {
                 words_per_s += kv["reads_per_s"] / 8.0;
-                assert!(kv["word0_changes"] > 1000.0, "the words read must be a fabric that is moving");
+                assert!(
+                    kv["word0_changes"] > 1000.0,
+                    "the words read must be a fabric that is moving"
+                );
             }
         }
         let e_read = watts / (words_per_s * 32.0);
@@ -971,11 +1150,15 @@ mod tests {
         // THE CONTROL THAT FAILED stays failed. If a later edit starts reporting `axi - cpu` as
         // the bus's share of a read, this is the measurement that says it is not one.
         let (bus, bus_se, _) = paired(&means, "axi", "cpu");
-        assert!(bus < -5.0 * bus_se, "a core stalled on AXI drew LESS than a busy one: {bus} W");
+        assert!(
+            bus < -5.0 * bus_se,
+            "a core stalled on AXI drew LESS than a busy one: {bus} W"
+        );
 
         // The flip, by run/halt on the same placement.
-        let (means, facts, flags) =
-            parse_sensor_log(include_str!("../measurements/kv260-read-2026-09-19/read_meter_2.dat"));
+        let (means, facts, flags) = parse_sensor_log(include_str!(
+            "../measurements/kv260-read-2026-09-19/read_meter_2.dat"
+        ));
         assert_eq!(flags, 0);
         let (watts, se, passes) = paired(&means, "idle", "halt");
         assert_eq!(passes, 8);
@@ -992,26 +1175,59 @@ mod tests {
             }
         }
         let e_sample = watts / flips_per_s;
-        assert!((e_sample / KV260_AXI_METERED.e_sample - 1.0).abs() < 1e-3, "{e_sample:e} J per flip");
+        assert!(
+            (e_sample / KV260_AXI_METERED.e_sample - 1.0).abs() < 1e-3,
+            "{e_sample:e} J per flip"
+        );
 
         // Two meterings of one fabric, thirteen days and one method apart. They must not agree
         // exactly -- the older baseline was an idle PL and includes the clock tree -- and they
         // must not be far apart either.
         let older = KV260_MEASURED.e_sample / KV260_AXI_METERED.e_sample;
-        assert!((1.05..1.35).contains(&older), "idle-PL baseline over run/halt = {older}");
+        assert!(
+            (1.05..1.35).contains(&older),
+            "idle-PL baseline over run/halt = {older}"
+        );
 
         // What the read costs in the unit the fabric is priced in, and what that does to a run
         // that reads its whole state every sweep: the reads are the bill.
         let ratio = KV260_AXI_METERED.e_read / KV260_AXI_METERED.e_sample;
-        assert!((55.0..72.0).contains(&ratio), "a spin read costs {ratio} flips");
-        let every_sweep = Ledger { samples: 1024 * 1000, reads: 1024 * 1000, writes: 0 };
-        let never = Ledger { samples: 1024 * 1000, reads: 0, writes: 0 };
-        let a = every_sweep.joules(&KV260_AXI_METERED).expect("samples and reads are both metered");
-        let b = never.joules(&KV260_AXI_METERED).expect("samples are metered");
-        assert!(a / b > 56.0, "reading every sweep multiplies the bill by {}", a / b);
+        assert!(
+            (55.0..72.0).contains(&ratio),
+            "a spin read costs {ratio} flips"
+        );
+        let every_sweep = Ledger {
+            samples: 1024 * 1000,
+            reads: 1024 * 1000,
+            writes: 0,
+        };
+        let never = Ledger {
+            samples: 1024 * 1000,
+            reads: 0,
+            writes: 0,
+        };
+        let a = every_sweep
+            .joules(&KV260_AXI_METERED)
+            .expect("samples and reads are both metered");
+        let b = never
+            .joules(&KV260_AXI_METERED)
+            .expect("samples are metered");
+        assert!(
+            a / b > 56.0,
+            "reading every sweep multiplies the bill by {}",
+            a / b
+        );
         // And it still refuses what nobody metered.
         assert!(!KV260_AXI_METERED.is_stated());
-        assert_eq!(Ledger { samples: 1, reads: 1, writes: 1 }.joules(&KV260_AXI_METERED), None);
+        assert_eq!(
+            Ledger {
+                samples: 1,
+                reads: 1,
+                writes: 1
+            }
+            .joules(&KV260_AXI_METERED),
+            None
+        );
     }
 
     /// The two directions of the readout question are inverses, checked as a round trip rather than
@@ -1031,20 +1247,34 @@ mod tests {
         ];
         let mut checked = 0usize;
         for &(baseline, dynamics, reads, want) in &cases {
-            let budget = read_budget_for_advantage(baseline, dynamics, reads, want).expect("attainable");
+            let budget =
+                read_budget_for_advantage(baseline, dynamics, reads, want).expect("attainable");
             let back = advantage_after_readout(baseline, dynamics, reads, budget);
-            assert!((back - want).abs() / want < 1e-9, "round trip: asked {want}, budget {budget:e}, got back {back}");
+            assert!(
+                (back - want).abs() / want < 1e-9,
+                "round trip: asked {want}, budget {budget:e}, got back {back}"
+            );
             // and the budget is binding: a read ten percent dearer must lose the claim.
             let dearer = advantage_after_readout(baseline, dynamics, reads, budget * 1.1);
-            assert!(dearer < want, "the budget must be a real ceiling: {dearer} vs {want}");
+            assert!(
+                dearer < want,
+                "the budget must be a real ceiling: {dearer} vs {want}"
+            );
             checked += 1;
         }
         assert_eq!(checked, 3, "every case must be exercised");
 
         // A claim the dynamics alone already break has no readout budget, free readout included.
-        assert_eq!(read_budget_for_advantage(1.0, 1.0, 10, 2.0), None, "dynamics already exceed the budget");
+        assert_eq!(
+            read_budget_for_advantage(1.0, 1.0, 10, 2.0),
+            None,
+            "dynamics already exceed the budget"
+        );
         // and one that is only just attainable still reports a positive budget.
-        assert!(read_budget_for_advantage(1.0, 0.4, 10, 2.0).is_some(), "0.5 > 0.4 leaves room");
+        assert!(
+            read_budget_for_advantage(1.0, 0.4, 10, 2.0).is_some(),
+            "0.5 > 0.4 leaves room"
+        );
     }
 
     /// **Whitelam's ten orders of magnitude require a readout at the Landauer floor.**
@@ -1085,7 +1315,10 @@ mod tests {
         let trajectories = 1000.0f64;
         let units = 784u64 + 512;
         let reads = 2 * units * 1000; // both ends of each trajectory, every unit
-        assert_eq!(reads, 2_592_000, "1296 units read at both ends of 1000 trajectories");
+        assert_eq!(
+            reads, 2_592_000,
+            "1296 units read at both ends of 1000 trajectories"
+        );
 
         let baseline = 5e14 * kt * trajectories;
         let dynamics = 2.9e3 * kt * trajectories;
@@ -1094,11 +1327,15 @@ mod tests {
         // form in its two published numbers and carries no physical constant at all.
         let free = advantage_after_readout(baseline, dynamics, reads, 0.0);
         let paper = 5e14 / 2.9e3;
-        assert!((free - paper).abs() / paper < 1e-12, "free readout must reproduce the paper: {free} vs {paper}");
+        assert!(
+            (free - paper).abs() / paper < 1e-12,
+            "free readout must reproduce the paper: {free} vs {paper}"
+        );
         assert!(free > 1e11, "and the paper says more than 1e11: {free}");
 
         // THE FINDING, in units nobody has to agree on a device to check.
-        let budget = read_budget_for_advantage(baseline, dynamics, reads, 1e11).expect("attainable");
+        let budget =
+            read_budget_for_advantage(baseline, dynamics, reads, 1e11).expect("attainable");
         for &t in &[300.0f64, 301.8] {
             // 300 K is this crate's constant; 301.8 K is what the paper's own kT implies. The
             // conclusion must not turn on which is used, so both are asserted.
@@ -1113,20 +1350,37 @@ mod tests {
         // Ten times the floor already costs an order of magnitude of the headline.
         let floor = crate::floors::readout_floor(1.0, 300.0);
         let at_ten = advantage_after_readout(baseline, dynamics, reads, 10.0 * floor);
-        assert!((2e10..3e10).contains(&at_ten), "at 10x the Landauer floor: {at_ten}");
+        assert!(
+            (2e10..3e10).contains(&at_ten),
+            "at 10x the Landauer floor: {at_ten}"
+        );
         let at_264 = advantage_after_readout(baseline, dynamics, reads, 26.4 * floor);
-        assert!((0.9e10..1.1e10).contains(&at_264), "at 26.4x the Landauer floor: {at_264}");
+        assert!(
+            (0.9e10..1.1e10).contains(&at_264),
+            "at 26.4x the Landauer floor: {at_264}"
+        );
 
         // And what a real, metered read does to it. KV260_AXI_METERED is the only read price in the
         // catalogue graded Metered, and it is one single-beat AXI4-Lite read of one node.
         let metered = advantage_after_readout(baseline, dynamics, reads, KV260_AXI_METERED.e_read);
-        assert!(metered < 10.0, "a metered readout leaves {metered}, not 1e11");
-        assert!(metered > 1.0, "though the computer is still ahead, barely: {metered}");
+        assert!(
+            metered < 10.0,
+            "a metered readout leaves {metered}, not 1e11"
+        );
+        assert!(
+            metered > 1.0,
+            "though the computer is still ahead, barely: {metered}"
+        );
         // The collapse is eleven orders of magnitude, and it is the readout, not the dynamics:
         // the dynamics term is negligible against the readout term at this price.
         let readout_only = reads as f64 * KV260_AXI_METERED.e_read;
-        assert!(readout_only > 1e10 * dynamics, "the readout dwarfs the dynamics: {readout_only} vs {dynamics}");
-        assert!(free / metered > 1e10, "the readout costs eleven orders of magnitude of the claim");
+        assert!(
+            readout_only > 1e10 * dynamics,
+            "the readout dwarfs the dynamics: {readout_only} vs {dynamics}"
+        );
+        assert!(
+            free / metered > 1e10,
+            "the readout costs eleven orders of magnitude of the claim"
+        );
     }
-
 }

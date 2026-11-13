@@ -137,7 +137,10 @@ mod ordering {
                 }
                 b.build()
             }),
-            ("frustrated loops".into(), crate::planted::frustrated_loops(8, 96, 3).graph),
+            (
+                "frustrated loops".into(),
+                crate::planted::frustrated_loops(8, 96, 3).graph,
+            ),
         ];
         for (name, g) in cases {
             let (mf, _) = widths(&g);
@@ -169,7 +172,10 @@ mod ordering {
                 2 * l
             );
             if l >= 10 {
-                assert!(mf > sep, "torus {l}: min-fill {mf} should be worse than {sep}");
+                assert!(
+                    mf > sep,
+                    "torus {l}: min-fill {mf} should be worse than {sep}"
+                );
             }
         }
     }
@@ -191,9 +197,14 @@ mod ordering {
             "this test is about a model min-fill refuses at width {}; it ordered at {mf}",
             e.max_width
         );
-        let out = e.log_partition(&g, 0.4).expect("the dissection order fits inside max_width");
+        let out = e
+            .log_partition(&g, 0.4)
+            .expect("the dissection order fits inside max_width");
         assert!(out.log_z.expect("sum-product ran").is_finite());
-        assert_eq!(out.width, 20, "the torus should be ordered at exactly its treewidth");
+        assert_eq!(
+            out.width, 20,
+            "the torus should be ordered at exactly its treewidth"
+        );
     }
 
     /// The order is a permutation of every vertex, including ones BFS cannot reach.
@@ -219,7 +230,10 @@ mod ordering {
             assert!(!seen[v], "vertex {v} appears twice in the order");
             seen[v] = true;
         }
-        assert!(seen.iter().all(|&x| x), "the order is not a permutation: {order:?}");
+        assert!(
+            seen.iter().all(|&x| x),
+            "the order is not a permutation: {order:?}"
+        );
 
         // And the answer is still right, checked against enumeration on a small graph in pieces:
         // two 4-chains and two isolated spins, 12 spins in all.
@@ -232,10 +246,16 @@ mod ordering {
         }
         let small = sb.build();
         let beta = 0.6;
-        let ln_z = Elimination::default().log_partition(&small, beta).unwrap().log_z.unwrap();
+        let ln_z = Elimination::default()
+            .log_partition(&small, beta)
+            .unwrap()
+            .log_z
+            .unwrap();
         let mut acc = 0.0f64;
         for m in 0u64..(1u64 << 12) {
-            let st: Vec<i8> = (0..12).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let st: Vec<i8> = (0..12)
+                .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             acc += (-beta * small.energy(&st)).exp();
         }
         assert!(
@@ -258,8 +278,9 @@ mod degeneracy_tests {
         let mut best = f64::INFINITY;
         let mut count = 0u64;
         for mask in 0u64..(1u64 << g.n) {
-            let s: Vec<i8> =
-                (0..g.n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             let e = g.energy(&s);
             if e < best - 1e-9 {
                 best = e;
@@ -310,7 +331,9 @@ mod degeneracy_tests {
         ];
 
         for (name, g) in cases {
-            let d = e.ground_degeneracy(&g, (20.0, 40.0)).expect("these are narrow");
+            let d = e
+                .ground_degeneracy(&g, (20.0, 40.0))
+                .expect("these are narrow");
             let want = brute(&g);
             assert_eq!(
                 d.count,
@@ -352,8 +375,9 @@ mod degeneracy_tests {
                 let ln_z = e.log_partition(&g, beta).unwrap().log_z.unwrap();
                 let mut acc = 0.0f64;
                 for m in 0u64..(1u64 << n) {
-                    let s: Vec<i8> =
-                        (0..n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                    let s: Vec<i8> = (0..n)
+                        .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                        .collect();
                     acc += (-beta * g.energy(&s)).exp();
                 }
                 assert!(
@@ -384,7 +408,9 @@ mod degeneracy_tests {
         let e = Elimination::default();
         for n in [21usize, 51, 101] {
             let g = crate::ising::ring(n, -1.0, 0.0);
-            let d = e.ground_degeneracy(&g, (30.0, 60.0)).expect("a ring has width 2");
+            let d = e
+                .ground_degeneracy(&g, (30.0, 60.0))
+                .expect("a ring has width 2");
             assert_eq!(
                 d.count,
                 Some(2 * n as u64),
@@ -408,9 +434,19 @@ mod degeneracy_tests {
         let truth = brute(&g) as f64;
 
         // Deliberately WARM, where the excited levels still contribute and it has not converged.
-        let d = e.ground_degeneracy(&g, (0.5, 1.0)).expect("a ring is narrow");
-        assert!(d.warm.1 >= truth, "the warm estimate {} is below the truth {truth}", d.warm.1);
-        assert!(d.cold.1 >= truth, "the cold estimate {} is below the truth {truth}", d.cold.1);
+        let d = e
+            .ground_degeneracy(&g, (0.5, 1.0))
+            .expect("a ring is narrow");
+        assert!(
+            d.warm.1 >= truth,
+            "the warm estimate {} is below the truth {truth}",
+            d.warm.1
+        );
+        assert!(
+            d.cold.1 >= truth,
+            "the cold estimate {} is below the truth {truth}",
+            d.cold.1
+        );
         assert!(
             d.cold.1 <= d.warm.1,
             "colder must be tighter: warm {} cold {}",
@@ -422,7 +458,10 @@ mod degeneracy_tests {
             "at beta 0.5 and 1.0 this has not converged and must not name an integer, got {:?}",
             d.count
         );
-        assert!(d.residual() > 1e-6, "an unconverged pair should show a residual");
+        assert!(
+            d.residual() > 1e-6,
+            "an unconverged pair should show a residual"
+        );
     }
 
     /// A degenerate temperature names no integer, and does not panic.
@@ -444,7 +483,9 @@ mod degeneracy_tests {
             (30.0, 30.0),
             (-20.0, -40.0),
         ] {
-            let d = e.ground_degeneracy(&g, betas).expect("a ring is narrow whatever the beta");
+            let d = e
+                .ground_degeneracy(&g, betas)
+                .expect("a ring is narrow whatever the beta");
             assert!(
                 d.count.is_none(),
                 "betas {betas:?} must name no integer, got {:?} (warm {:?}, cold {:?})",
@@ -497,7 +538,11 @@ impl Degeneracy {
     pub fn residual(&self) -> f64 {
         let (_, w) = self.warm;
         let (_, c) = self.cold;
-        if c.abs() > 0.0 { (w - c).abs() / c.abs() } else { (w - c).abs() }
+        if c.abs() > 0.0 {
+            (w - c).abs() / c.abs()
+        } else {
+            (w - c).abs()
+        }
     }
 }
 
@@ -572,7 +617,11 @@ pub(crate) fn induced_width(n: usize, adj: &[Vec<usize>], order: &[usize]) -> us
         if !alive[v] {
             continue;
         }
-        let live: Vec<usize> = nbr[v].iter().copied().filter(|&u| alive[u] && u != v).collect();
+        let live: Vec<usize> = nbr[v]
+            .iter()
+            .copied()
+            .filter(|&u| alive[u] && u != v)
+            .collect();
         width = width.max(live.len());
         // Eliminating v makes its live neighbours a clique -- the fill edges.
         for i in 0..live.len() {
@@ -686,8 +735,16 @@ fn dissect(sub: &[usize], adj: &[Vec<usize>], out: &mut Vec<usize>) {
     let Some((_, cut)) = best else {
         // Disconnected, or too shallow to split: BFS reached only part of the subset, or every
         // level is an endpoint. Order what BFS reached, then the rest, rather than looping.
-        let reached: Vec<usize> = sub.iter().copied().filter(|v| level.contains_key(v)).collect();
-        let rest: Vec<usize> = sub.iter().copied().filter(|v| !level.contains_key(v)).collect();
+        let reached: Vec<usize> = sub
+            .iter()
+            .copied()
+            .filter(|v| level.contains_key(v))
+            .collect();
+        let rest: Vec<usize> = sub
+            .iter()
+            .copied()
+            .filter(|v| !level.contains_key(v))
+            .collect();
         if rest.is_empty() || reached.is_empty() {
             out.extend_from_slice(sub);
         } else {
@@ -698,8 +755,11 @@ fn dissect(sub: &[usize], adj: &[Vec<usize>], out: &mut Vec<usize>) {
     };
 
     let sep: std::collections::BTreeSet<usize> = by_level[cut].iter().copied().collect();
-    let before: Vec<usize> =
-        sub.iter().copied().filter(|v| level.get(v).is_some_and(|&d| d < cut)).collect();
+    let before: Vec<usize> = sub
+        .iter()
+        .copied()
+        .filter(|v| level.get(v).is_some_and(|&d| d < cut))
+        .collect();
     let after: Vec<usize> = sub
         .iter()
         .copied()
@@ -793,14 +853,20 @@ fn initial_tables(g: &Graph, beta: f64) -> Vec<Table> {
     for i in 0..g.n {
         if g.h[i] != 0.0 {
             // -h s
-            out.push(Table { vars: vec![i], vals: vec![beta * g.h[i], -beta * g.h[i]] });
+            out.push(Table {
+                vars: vec![i],
+                vals: vec![beta * g.h[i], -beta * g.h[i]],
+            });
         }
         for k in g.offset[i]..g.offset[i + 1] {
             let j = g.nbr[k] as usize;
             if j > i {
                 let w = beta * g.w[k];
                 // index bit0 = i, bit1 = j; value is -w * s_i * s_j
-                out.push(Table { vars: vec![i, j], vals: vec![-w, w, w, -w] });
+                out.push(Table {
+                    vars: vec![i, j],
+                    vals: vec![-w, w, w, -w],
+                });
             }
         }
     }
@@ -809,7 +875,11 @@ fn initial_tables(g: &Graph, beta: f64) -> Vec<Table> {
 
 fn adjacency(g: &Graph) -> Vec<Vec<usize>> {
     (0..g.n)
-        .map(|i| (g.offset[i]..g.offset[i + 1]).map(|k| g.nbr[k] as usize).collect())
+        .map(|i| {
+            (g.offset[i]..g.offset[i + 1])
+                .map(|k| g.nbr[k] as usize)
+                .collect()
+        })
         .collect()
 }
 
@@ -886,7 +956,11 @@ impl Elimination {
     /// count. A non-finite or negative beta likewise returns the bracket unnamed rather than
     /// rounding it into a number.
     pub fn ground_degeneracy(&self, g: &Graph, betas: (f64, f64)) -> Result<Degeneracy, TooWide> {
-        let (warm, cold) = if betas.0 < betas.1 { betas } else { (betas.1, betas.0) };
+        let (warm, cold) = if betas.0 < betas.1 {
+            betas
+        } else {
+            (betas.1, betas.0)
+        };
         let e0 = self
             .ground_state(g)?
             .ground_energy
@@ -912,10 +986,7 @@ impl Elimination {
         //
         // This is the crate's own "identical verdicts" tell, in its smallest form: the two subjects
         // agreed because they were one subject.
-        let usable = warm.is_finite()
-            && cold.is_finite()
-            && warm > 0.0
-            && cold > warm;
+        let usable = warm.is_finite() && cold.is_finite() && warm > 0.0 && cold > warm;
         let n = cold_est.round();
         let count = (usable
             && n >= 1.0
@@ -924,7 +995,12 @@ impl Elimination {
             && (cold_est - n).abs() < 1e-6)
             .then_some(n as u64);
 
-        Ok(Degeneracy { ground_energy: e0, warm: (warm, warm_est), cold: (cold, cold_est), count })
+        Ok(Degeneracy {
+            ground_energy: e0,
+            warm: (warm, warm_est),
+            cold: (cold, cold_est),
+            count,
+        })
     }
 
     /// Exact single-site marginals `P(s_i = +1)` at inverse temperature `beta`.
@@ -971,12 +1047,21 @@ impl Elimination {
         // for 2n eliminations rather than after the first one.
         let w = self.width(g);
         if w > self.max_width {
-            return Err(TooWide::Width { width: w, max: self.max_width });
+            return Err(TooWide::Width {
+                width: w,
+                max: self.max_width,
+            });
         }
         let mut out = Vec::with_capacity(g.n);
         for i in 0..g.n {
-            let plus = self.log_partition(&pin(g, i, 1.0), beta)?.log_z.expect("sum-product was run");
-            let minus = self.log_partition(&pin(g, i, -1.0), beta)?.log_z.expect("sum-product was run");
+            let plus = self
+                .log_partition(&pin(g, i, 1.0), beta)?
+                .log_z
+                .expect("sum-product was run");
+            let minus = self
+                .log_partition(&pin(g, i, -1.0), beta)?
+                .log_z
+                .expect("sum-product was run");
             // The pinned node is left in the graph as an isolated free spin in both runs, so its
             // factor of two cancels along with everything else that does not depend on v.
             let delta = 2.0 * beta * g.h[i] + plus - minus;
@@ -1018,13 +1103,20 @@ impl Elimination {
         let adj = adjacency(g);
         let (mf_order, mf_width) = min_fill_order(g.n, &adj);
         let (sep_order, sep_width) = separator_order(g.n, &adj);
-        if sep_width < mf_width { (sep_order, sep_width) } else { (mf_order, mf_width) }
+        if sep_width < mf_width {
+            (sep_order, sep_width)
+        } else {
+            (mf_order, mf_width)
+        }
     }
 
     fn run(&self, g: &Graph, beta: f64, min_sum: bool) -> Result<Exact, TooWide> {
         let (order, width) = Self::order_for(g);
         if width > self.max_width {
-            return Err(TooWide::Width { width, max: self.max_width });
+            return Err(TooWide::Width {
+                width,
+                max: self.max_width,
+            });
         }
 
         let mut tables = initial_tables(g, beta);
@@ -1088,7 +1180,11 @@ impl Elimination {
             // decision tables were retained to the end, making the real peak `sum_k 2^{m_k}`. At the
             // default `max_width` of 24 that is 16 MB of dead allocation per variable, and
             // `ground_degeneracy` runs sum-product twice per query.
-            let mut choice = if min_sum { vec![false; 1 << m] } else { Vec::new() };
+            let mut choice = if min_sum {
+                vec![false; 1 << m]
+            } else {
+                Vec::new()
+            };
             let mut assign = vec![0i8; g.n];
 
             for idx in 0..(1usize << m) {
@@ -1147,7 +1243,12 @@ impl Elimination {
                 log_z: None,
             })
         } else {
-            Ok(Exact { width, ground_energy: None, ground_state: None, log_z: Some(-constant) })
+            Ok(Exact {
+                width,
+                ground_energy: None,
+                ground_state: None,
+                log_z: Some(-constant),
+            })
         }
     }
 }
@@ -1234,8 +1335,10 @@ impl Elimination {
         beta: f64,
         max_slices: usize,
     ) -> Result<Sliced, TooWide> {
-        let (pinned, width) = choose_pins(g, self.max_width, max_slices)
-            .ok_or(TooWide::Width { width: Elimination::order_for(g).1, max: self.max_width })?;
+        let (pinned, width) = choose_pins(g, self.max_width, max_slices).ok_or(TooWide::Width {
+            width: Elimination::order_for(g).1,
+            max: self.max_width,
+        })?;
         let k = pinned.len();
         let mut terms: Vec<f64> = Vec::with_capacity(1 << k);
         for mask in 0u64..(1u64 << k) {
@@ -1274,8 +1377,10 @@ impl Elimination {
     /// Never: the slices are run with min-sum, so a ground state is always present, and there is
     /// always at least one slice.
     pub fn ground_state_sliced(&self, g: &Graph, max_slices: usize) -> Result<Sliced, TooWide> {
-        let (pinned, width) = choose_pins(g, self.max_width, max_slices)
-            .ok_or(TooWide::Width { width: Elimination::order_for(g).1, max: self.max_width })?;
+        let (pinned, width) = choose_pins(g, self.max_width, max_slices).ok_or(TooWide::Width {
+            width: Elimination::order_for(g).1,
+            max: self.max_width,
+        })?;
         let k = pinned.len();
         let mut best: Option<(f64, Vec<i8>)> = None;
         for mask in 0u64..(1u64 << k) {
@@ -1522,7 +1627,10 @@ mod tests {
         }
         for i in 2..5 {
             let p = f64::from(seen[i]) / f64::from(draws);
-            assert!((p - 0.5).abs() < 0.05, "free spin {i} is not uniform: {p:.3}");
+            assert!(
+                (p - 0.5).abs() < 0.05,
+                "free spin {i} is not uniform: {p:.3}"
+            );
         }
         assert!(
             (d.log_z() - (crate::free_energy::exact_log_z(&g, 1.0))).abs() < 1e-9,
@@ -1540,8 +1648,15 @@ mod tests {
             other => panic!("a wide model must be refused by name: {other:?}"),
         }
         // The state budget binds before the width does on anything dense enough to reach it.
-        let msg = DrawError::TooMuchState { bytes: 1 << 30, limit: MAX_DRAW_STATE }.to_string();
-        assert!(msg.contains("SUM"), "the refusal must say why a sampler costs more: {msg}");
+        let msg = DrawError::TooMuchState {
+            bytes: 1 << 30,
+            limit: MAX_DRAW_STATE,
+        }
+        .to_string();
+        assert!(
+            msg.contains("SUM"),
+            "the refusal must say why a sampler costs more: {msg}"
+        );
     }
 
     /// A graph with fields, wide enough that a low cap refuses it outright.
@@ -1584,9 +1699,15 @@ mod tests {
                 "seed {seed}: the fixture must be too wide for the cap, or nothing is sliced"
             );
 
-            let sl = capped.log_partition_sliced(&g, 0.7, 4096).expect("slicing should reach it");
+            let sl = capped
+                .log_partition_sliced(&g, 0.7, 4096)
+                .expect("slicing should reach it");
             assert!(!sl.pinned.is_empty(), "seed {seed}: nothing was pinned");
-            assert!(sl.width <= 3, "seed {seed}: width {} still over the cap", sl.width);
+            assert!(
+                sl.width <= 3,
+                "seed {seed}: width {} still over the cap",
+                sl.width
+            );
             assert_eq!(sl.slices, 1 << sl.pinned.len());
             let got = sl.log_z.unwrap();
             assert!(
@@ -1594,7 +1715,9 @@ mod tests {
                 "seed {seed}: sliced log Z {got:.12} against direct {want_lz:.12}"
             );
 
-            let sg = capped.ground_state_sliced(&g, 4096).expect("slicing should reach it");
+            let sg = capped
+                .ground_state_sliced(&g, 4096)
+                .expect("slicing should reach it");
             let ge = sg.ground_energy.unwrap();
             assert!(
                 (ge - want_e).abs() < 1e-9,
@@ -1616,7 +1739,10 @@ mod tests {
             let sl = capped.ground_state_sliced(&g, 4096).unwrap();
             let st = sl.ground_state.unwrap();
             assert_eq!(st.len(), g.n);
-            assert!(st.iter().all(|&v| v == 1 || v == -1), "seed {seed}: not a spin state");
+            assert!(
+                st.iter().all(|&v| v == 1 || v == -1),
+                "seed {seed}: not a spin state"
+            );
             let e = g.energy(&st);
             assert!(
                 (e - sl.ground_energy.unwrap()).abs() < 1e-9,
@@ -1633,11 +1759,14 @@ mod tests {
             let g = sliceable(12, seed);
             let mut want = f64::INFINITY;
             for m in 0u64..(1u64 << g.n) {
-                let st: Vec<i8> =
-                    (0..g.n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let st: Vec<i8> = (0..g.n)
+                    .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 want = want.min(g.energy(&st));
             }
-            let sl = Elimination { max_width: 3 }.ground_state_sliced(&g, 8192).unwrap();
+            let sl = Elimination { max_width: 3 }
+                .ground_state_sliced(&g, 8192)
+                .unwrap();
             let got = sl.ground_energy.unwrap();
             assert!(
                 (got - want).abs() < 1e-9,
@@ -1650,10 +1779,20 @@ mod tests {
     #[test]
     fn a_graph_that_fits_is_solved_without_pinning_anything() {
         let g = crate::ising::ring(12, 1.0, 0.3);
-        let sl = Elimination::default().log_partition_sliced(&g, 0.5, 64).unwrap();
-        assert!(sl.pinned.is_empty(), "a ring needs no pinning: {:?}", sl.pinned);
+        let sl = Elimination::default()
+            .log_partition_sliced(&g, 0.5, 64)
+            .unwrap();
+        assert!(
+            sl.pinned.is_empty(),
+            "a ring needs no pinning: {:?}",
+            sl.pinned
+        );
         assert_eq!(sl.slices, 1);
-        let want = Elimination::default().log_partition(&g, 0.5).unwrap().log_z.unwrap();
+        let want = Elimination::default()
+            .log_partition(&g, 0.5)
+            .unwrap()
+            .log_z
+            .unwrap();
         assert!((sl.log_z.unwrap() - want).abs() < 1e-12);
     }
 
@@ -1666,7 +1805,6 @@ mod tests {
             other => panic!("four slices cannot narrow this to width two: {other:?}"),
         }
     }
-
 
     /// THE INCREMENTAL ORDER MUST EQUAL THE FULL-RESCAN ORDER, EXACTLY.
     ///
@@ -1754,7 +1892,11 @@ mod tests {
             crate::ising::chimera(2, 2, 4, 1.0),
         ] {
             let adj = adjacency(&g);
-            assert_eq!(min_fill_order(g.n, &adj), reference(g.n, &adj), "on a built graph");
+            assert_eq!(
+                min_fill_order(g.n, &adj),
+                reference(g.n, &adj),
+                "on a built graph"
+            );
             checked += 1;
         }
         assert!(checked > 100, "only {checked} graphs compared");
@@ -1781,14 +1923,17 @@ mod tests {
             let g = b.build();
             let beta = 0.8;
 
-            let got = Elimination::default().marginals(&g, beta).expect("narrow enough");
+            let got = Elimination::default()
+                .marginals(&g, beta)
+                .expect("narrow enough");
 
             // Brute force: sum exp(-beta E) over every state, and over the states with s_i = +1.
             let mut z = 0.0f64;
             let mut zi = vec![0.0f64; n];
             for mask in 0..(1u32 << n) {
-                let s: Vec<i8> =
-                    (0..n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let s: Vec<i8> = (0..n)
+                    .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 let wgt = (-beta * g.energy(&s)).exp();
                 z += wgt;
                 for i in 0..n {
@@ -1819,7 +1964,10 @@ mod tests {
                 let got = Elimination::default().marginals(&g, beta).unwrap()[0];
                 // P(+1) = e^{beta h} / (e^{beta h} + e^{-beta h}) = sigma(2 beta h)
                 let want = 1.0 / (1.0 + (-2.0 * beta * h).exp());
-                assert!((got - want).abs() < 1e-13, "h {h}, beta {beta}: {got} vs {want}");
+                assert!(
+                    (got - want).abs() < 1e-13,
+                    "h {h}, beta {beta}: {got} vs {want}"
+                );
             }
         }
     }
@@ -1866,7 +2014,10 @@ mod tests {
             .fold(0.0f64, f64::max);
         // Three sigma on 40k correlated draws is comfortably inside this; the point is that the
         // comparison is possible at all on 42 spins.
-        assert!(worst < 0.02, "worst |sampled - exact| marginal = {worst:.4}");
+        assert!(
+            worst < 0.02,
+            "worst |sampled - exact| marginal = {worst:.4}"
+        );
     }
 
     #[test]
@@ -1914,7 +2065,9 @@ mod tests {
         for (n, p, seed) in [(10, 0.3, 1), (14, 0.2, 2), (16, 0.15, 3), (12, 0.5, 4)] {
             let g = random_sparse(n, p, seed);
             let (bs, be) = Exhaustive.solve(&g);
-            let e = Elimination::default().ground_state(&g).expect("small enough");
+            let e = Elimination::default()
+                .ground_state(&g)
+                .expect("small enough");
             let ge = e.ground_energy.unwrap();
             assert!(
                 (ge - be).abs() < 1e-9,
@@ -1944,8 +2097,15 @@ mod tests {
                 z += (-beta * g.energy(&s)).exp();
             }
             let want = z.ln();
-            let got = Elimination::default().log_partition(&g, beta).unwrap().log_z.unwrap();
-            assert!((got - want).abs() < 1e-9, "n={n} beta={beta}: {got} vs {want}");
+            let got = Elimination::default()
+                .log_partition(&g, beta)
+                .unwrap()
+                .log_z
+                .unwrap();
+            assert!(
+                (got - want).abs() < 1e-9,
+                "n={n} beta={beta}: {got} vs {want}"
+            );
         }
     }
 
@@ -1961,7 +2121,11 @@ mod tests {
         let el = Elimination::default();
         assert_eq!(el.width(&g), 1, "a path has induced width 1");
         let e = el.ground_state(&g).unwrap();
-        assert_eq!(e.ground_energy.unwrap(), -((n - 1) as f64), "every bond satisfiable");
+        assert_eq!(
+            e.ground_energy.unwrap(),
+            -((n - 1) as f64),
+            "every bond satisfiable"
+        );
         assert!(e.ground_state.unwrap().windows(2).all(|w| w[0] == w[1]));
     }
 
@@ -1987,7 +2151,11 @@ mod tests {
         // asserting that a heuristic is optimal, which it is not past width 5 -- see the table in
         // the module docs. The bound is on measured behaviour, and a regression past it means the
         // ordering got worse, not that the answer got wrong.
-        assert!(el.width(&g) <= 8, "min-fill measured 8 on this strip; got {}", el.width(&g));
+        assert!(
+            el.width(&g) <= 8,
+            "min-fill measured 8 on this strip; got {}",
+            el.width(&g)
+        );
         let e = el.ground_state(&g).unwrap();
         let bonds = (w - 1) * h + w * (h - 1);
         assert_eq!(e.ground_energy.unwrap(), -(bonds as f64));
@@ -2006,7 +2174,9 @@ mod tests {
     fn it_agrees_with_a_planted_wishart_optimum_where_width_allows() {
         // Two independent notions of truth, cross-checked.
         let p = crate::planted::frustrated_loops(4, 12, 3);
-        let e = Elimination { max_width: 20 }.ground_state(&p.graph).unwrap();
+        let e = Elimination { max_width: 20 }
+            .ground_state(&p.graph)
+            .unwrap();
         assert!((e.ground_energy.unwrap() - p.ground_energy).abs() < 1e-9);
     }
 }
@@ -2027,7 +2197,11 @@ mod closed_form {
                 for i in 0..n - 1 {
                     b.couple(i, i + 1, 1.0);
                 }
-                let got = Elimination::default().log_partition(&b.build(), beta).unwrap().log_z.unwrap();
+                let got = Elimination::default()
+                    .log_partition(&b.build(), beta)
+                    .unwrap()
+                    .log_z
+                    .unwrap();
                 let want = 2f64.ln() + (n - 1) as f64 * (2.0 * beta.cosh()).ln();
                 assert!(
                     (got - want).abs() < 1e-9 * want.abs().max(1.0),
@@ -2181,7 +2355,10 @@ impl Elimination {
     pub fn draws(&self, g: &Graph, beta: f64) -> Result<Draws, DrawError> {
         let (order, width) = Self::order_for(g);
         if width > self.max_width {
-            return Err(DrawError::Wide(TooWide::Width { width, max: self.max_width }));
+            return Err(DrawError::Wide(TooWide::Width {
+                width,
+                max: self.max_width,
+            }));
         }
 
         let mut tables = initial_tables(g, beta);
@@ -2198,7 +2375,11 @@ impl Elimination {
                 // only owes it `ln 2`; a sampler that skipped it would return whatever the state
                 // vector was initialised to, which is not a draw.
                 constant -= std::f64::consts::LN_2;
-                steps.push(Step { v, scope: Vec::new(), logit: vec![0.0] });
+                steps.push(Step {
+                    v,
+                    scope: Vec::new(),
+                    logit: vec![0.0],
+                });
                 continue;
             }
 
@@ -2215,7 +2396,10 @@ impl Elimination {
             let m = scope.len();
             state_bytes = state_bytes.saturating_add((1usize << m) * core::mem::size_of::<f64>());
             if state_bytes > MAX_DRAW_STATE {
-                return Err(DrawError::TooMuchState { bytes: state_bytes, limit: MAX_DRAW_STATE });
+                return Err(DrawError::TooMuchState {
+                    bytes: state_bytes,
+                    limit: MAX_DRAW_STATE,
+                });
             }
             let mut vals = vec![0.0f64; 1 << m];
             let mut logit = vec![0.0f64; 1 << m];
@@ -2241,13 +2425,20 @@ impl Elimination {
             if m == 0 {
                 constant += vals[0];
             } else {
-                tables.push(Table { vars: scope.clone(), vals });
+                tables.push(Table {
+                    vars: scope.clone(),
+                    vals,
+                });
             }
             steps.push(Step { v, scope, logit });
         }
         for t in &tables {
             constant += t.vals[0];
         }
-        Ok(Draws { n: g.n, steps, log_z: -constant })
+        Ok(Draws {
+            n: g.n,
+            steps,
+            log_z: -constant,
+        })
     }
 }

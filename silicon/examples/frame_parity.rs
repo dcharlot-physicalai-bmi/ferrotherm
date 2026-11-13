@@ -10,7 +10,7 @@
 // This is the check that showed the library was writing frames no vendor tool would: 20 of the
 // 40 frames in `lab_fabric.bit` had odd parity, against 0 of 21,680 in four Vivado designs.
 use ferrotherm_silicon::bitstream::{find_sync, to_words};
-use ferrotherm_silicon::ecc::{survey, Survey};
+use ferrotherm_silicon::ecc::{Survey, survey};
 use ferrotherm_silicon::usplus;
 
 /// One reading of a file: the geometry tried and what it found.
@@ -22,14 +22,18 @@ struct Reading {
 
 /// The frame-data words of a big-endian 7-series stream.
 fn seven_series(bytes: &[u8]) -> Vec<u32> {
-    let Some(at) = find_sync(bytes) else { return Vec::new() };
+    let Some(at) = find_sync(bytes) else {
+        return Vec::new();
+    };
     frame_data(&to_words(&bytes[at..]))
 }
 
 /// The frame-data words of a little-endian `UltraScale+` boot image.
 fn ultrascale(bytes: &[u8]) -> Vec<u32> {
     let w = usplus::words(bytes);
-    let Some(at) = usplus::config_start(&w) else { return Vec::new() };
+    let Some(at) = usplus::config_start(&w) else {
+        return Vec::new();
+    };
     frame_data(&w[at..])
 }
 
@@ -109,7 +113,11 @@ fn main() {
         }
         for r in &found {
             let s = r.survey;
-            let fit = if s.remainder == 0 { "" } else { " <- does not divide, wrong family" };
+            let fit = if s.remainder == 0 {
+                ""
+            } else {
+                " <- does not divide, wrong family"
+            };
             println!(
                 "  {:<12} {:>3} words/frame: {} frames, {} occupied, {} odd, {} words left over{fit}",
                 r.family, r.words_per_frame, s.frames, s.occupied, s.odd, s.remainder

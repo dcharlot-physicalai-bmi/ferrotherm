@@ -38,7 +38,10 @@ pub const RETURN_BUFFER_SAFE: usize = 1024;
 
 // The margin is a claim about the chip, so it is held against the chip's number -- at compile
 // time, where raising one constant without the other cannot get as far as a board.
-const _: () = assert!(RETURN_BUFFER_SAFE * 2 <= FTDI_RETURN_BUFFER, "no margin under the FTDI's buffer");
+const _: () = assert!(
+    RETURN_BUFFER_SAFE * 2 <= FTDI_RETURN_BUFFER,
+    "no margin under the FTDI's buffer"
+);
 
 /// One write to the chip and the number of reply bytes to collect before the next.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +77,10 @@ pub fn plan_capturing_shift(tx: &[u8]) -> Vec<Step> {
         cmd.push((len >> 8) as u8);
         cmd.extend_from_slice(chunk);
         cmd.push(SEND_IMMEDIATE);
-        steps.push(Step { cmd, reads: chunk.len() });
+        steps.push(Step {
+            cmd,
+            reads: chunk.len(),
+        });
     }
     let last = tx[n - 1];
     let mut cmd = prefix; // still holds the Shift-DR entry when `tx` was a single byte
@@ -105,13 +111,28 @@ mod tests {
         let steps = plan_capturing_shift(&tx);
         // Two steps is what the uncut plan had too (the body, then the last byte), so "more than
         // one" would have passed on the defect. The bound below is the claim; this is its shadow.
-        assert!(steps.len() > 2, "a reply larger than the buffer must be cut, not sent whole");
+        assert!(
+            steps.len() > 2,
+            "a reply larger than the buffer must be cut, not sent whole"
+        );
         for (i, s) in steps.iter().enumerate() {
-            assert!(s.reads <= RETURN_BUFFER_SAFE, "step {i} generates {} reply bytes", s.reads);
-            assert_eq!(s.cmd.last(), Some(&SEND_IMMEDIATE), "step {i} must flush its reply");
+            assert!(
+                s.reads <= RETURN_BUFFER_SAFE,
+                "step {i} generates {} reply bytes",
+                s.reads
+            );
+            assert_eq!(
+                s.cmd.last(),
+                Some(&SEND_IMMEDIATE),
+                "step {i} must flush its reply"
+            );
         }
         let total: usize = steps.iter().map(|s| s.reads).sum();
-        assert_eq!(total, tx.len() - 1 + 2, "whole bytes, then the 7-bit byte, then the TMS byte");
+        assert_eq!(
+            total,
+            tx.len() - 1 + 2,
+            "whole bytes, then the 7-bit byte, then the TMS byte"
+        );
     }
 
     /// Cutting the shift must not change what is shifted. Walk the commands as the chip would
@@ -124,7 +145,11 @@ mod tests {
         // 0x3A, and with that a plan that drops the bit entirely walked back to the same payload.
         *tx.last_mut().expect("non-empty") = 0xC3;
         let steps = plan_capturing_shift(&tx);
-        assert_eq!(&steps[0].cmd[..3], &[CLK_TMS, 0x02, 0x01], "the shift is entered exactly once");
+        assert_eq!(
+            &steps[0].cmd[..3],
+            &[CLK_TMS, 0x02, 0x01],
+            "the shift is entered exactly once"
+        );
         let mut payload = Vec::new();
         let mut entries = 0;
         for s in &steps {
@@ -159,7 +184,10 @@ mod tests {
                 }
             }
         }
-        assert_eq!(entries, 1, "Shift-DR must be entered once, not once per piece");
+        assert_eq!(
+            entries, 1,
+            "Shift-DR must be entered once, not once per piece"
+        );
         assert_eq!(payload, tx);
     }
 
@@ -171,6 +199,10 @@ mod tests {
         assert_eq!(steps[0].reads, 2);
         assert_eq!(&steps[0].cmd[..3], &[CLK_TMS, 0x02, 0x01]);
         assert_eq!(steps[0].cmd[5], 0xA5 & 0x7F);
-        assert_eq!(steps[0].cmd[8], 0x80 | 0x01, "bit 7 rides the TMS clock with TMS high");
+        assert_eq!(
+            steps[0].cmd[8],
+            0x80 | 0x01,
+            "bit 7 rides the TMS clock with TMS high"
+        );
     }
 }

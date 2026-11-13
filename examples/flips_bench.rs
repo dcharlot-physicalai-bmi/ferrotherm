@@ -38,10 +38,18 @@ fn main() {
     // full die: 576 x 468 = 269,568 nodes (die dimensions unpublished; area matches the vendor's
     // stated pbit count)
     let (w, h) = (576usize, 468usize);
-    println!("building Z1-topology grid {w} x {h} = {} nodes, degree 16...", w * h);
+    println!(
+        "building Z1-topology grid {w} x {h} = {} nodes, degree 16...",
+        w * h
+    );
     let t0 = Instant::now();
     let g = z1_grid(w, h, 0.08, 0.0);
-    println!("  built in {:.1} s; {} edges; {} color classes\n", t0.elapsed().as_secs_f64(), g.n_edges, g.classes.len());
+    println!(
+        "  built in {:.1} s; {} edges; {} color classes\n",
+        t0.elapsed().as_secs_f64(),
+        g.n_edges,
+        g.classes.len()
+    );
 
     let mut smp = Sampler::new(&g, 0.9, 0xBE7C);
     // warmup
@@ -54,21 +62,48 @@ fn main() {
     let flips = (n_sweeps * g.n) as f64;
     let fps = flips / dt;
     let ns_per_flip = 1e9 / fps;
-    println!("single-thread CPU chromatic Gibbs, {} sweeps of {} nodes in {:.2} s:", n_sweeps, g.n, dt);
+    println!(
+        "single-thread CPU chromatic Gibbs, {} sweeps of {} nodes in {:.2} s:",
+        n_sweeps, g.n, dt
+    );
     println!("  {fps:.2e} flips/s   ({ns_per_flip:.1} ns/flip)");
     if let Quiet::Yes { load1: Some(l) } = quiet {
         println!("  (1-minute load average {l:.2} -- the machine was this code's)");
     }
-    println!("  independent samples/s at K_mix = 250 sweeps: {:.2}\n", fps / (250.0 * g.n as f64));
+    println!(
+        "  independent samples/s at K_mix = 250 sweeps: {:.2}\n",
+        fps / (250.0 * g.n as f64)
+    );
 
     println!("joules per flip = platform watts / flips per second (our E_compute convention):");
-    println!("  {:>22} {:>14} {:>22}", "platform assumption", "J/flip", "vs Z1 SPICE 7.09 fJ");
-    for (label, watts) in [("5 W (embedded)", 5.0), ("15 W (Orin NX class)", 15.0), ("30 W (laptop pkg)", 30.0), ("60 W (desktop pkg)", 60.0)] {
+    println!(
+        "  {:>22} {:>14} {:>22}",
+        "platform assumption", "J/flip", "vs Z1 SPICE 7.09 fJ"
+    );
+    for (label, watts) in [
+        ("5 W (embedded)", 5.0),
+        ("15 W (Orin NX class)", 15.0),
+        ("30 W (laptop pkg)", 30.0),
+        ("60 W (desktop pkg)", 60.0),
+    ] {
         let jpf = watts / fps;
-        println!("  {:>22} {:>11.1} pJ {:>18.0}x", label, jpf * 1e12, jpf / Z1_SPICE.e_sample);
+        println!(
+            "  {:>22} {:>11.1} pJ {:>18.0}x",
+            label,
+            jpf * 1e12,
+            jpf / Z1_SPICE.e_sample
+        );
     }
-    println!("\nREADING: this is ONE CPU thread of portable safe Rust — the floor, not the ceiling. The browser");
-    println!("WebGPU bench (gibbs_bench.html) measures the same sweep on whatever GPU the visitor owns; the");
-    println!("Aadit 2022 measured anchor says optimized digital samplers sit within 5-18x of physics-native");
-    println!("hardware on throughput, so the decisive comparison is measured-GPU vs the 7.09 fJ projection.");
+    println!(
+        "\nREADING: this is ONE CPU thread of portable safe Rust — the floor, not the ceiling. The browser"
+    );
+    println!(
+        "WebGPU bench (gibbs_bench.html) measures the same sweep on whatever GPU the visitor owns; the"
+    );
+    println!(
+        "Aadit 2022 measured anchor says optimized digital samplers sit within 5-18x of physics-native"
+    );
+    println!(
+        "hardware on throughput, so the decisive comparison is measured-GPU vs the 7.09 fJ projection."
+    );
 }

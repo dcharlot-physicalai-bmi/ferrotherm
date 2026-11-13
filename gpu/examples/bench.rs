@@ -15,7 +15,9 @@ fn main() {
     let a = gpu.adapter();
     println!("adapter: {} ({:?}, {:?})", a.name, a.device_type, a.backend);
     if !gpu.is_hardware() {
-        println!("\nThis is a software rasteriser. Timings below describe a CPU pretending to be a");
+        println!(
+            "\nThis is a software rasteriser. Timings below describe a CPU pretending to be a"
+        );
         println!("GPU, so they are printed and NOT reported as a speedup.");
     }
     println!();
@@ -31,7 +33,10 @@ fn main() {
         v[v.len() / 2]
     };
     println!("median of {repeats} runs, {sweeps} sweeps each\n");
-    println!("{:>6}  {:>8}  {:>11}  {:>11}  {:>9}", "l", "nodes", "gpu ms", "cpu ms", "ratio");
+    println!(
+        "{:>6}  {:>8}  {:>11}  {:>11}  {:>9}",
+        "l", "nodes", "gpu ms", "cpu ms", "ratio"
+    );
     for l in [16usize, 32, 64, 128, 256, 512] {
         let g = lattice2d(l, 1.0);
         let n = l * l;
@@ -70,13 +75,22 @@ fn main() {
         println!("{l:>6}  {n:>8}  {gpu_ms:>11.1}  {cpu_ms:>11.1}  {ratio:>9}");
     }
     println!();
-    println!("THE CPU COLUMN IS ONE CORE. `Sampler::sweeps` is single-threaded, so every ratio above");
-    println!("is a whole GPU against one core of {}, which is the oldest way to flatter a GPU", std::thread::available_parallelism().map_or(1, std::num::NonZero::get));
+    println!(
+        "THE CPU COLUMN IS ONE CORE. `Sampler::sweeps` is single-threaded, so every ratio above"
+    );
+    println!(
+        "is a whole GPU against one core of {}, which is the oldest way to flatter a GPU",
+        std::thread::available_parallelism().map_or(1, std::num::NonZero::get)
+    );
     println!("benchmark. Measured against all cores it is 12x, not 54x -- see examples/joules.rs,");
     println!("which also prices both sides in joules and finds the GPU 10x cheaper per update.");
     println!();
-    println!("The GPU loses on small models and that is the honest shape of the result: fixed cost");
-    println!("per run does not shrink, so there has to be enough work to amortise it. The crossover");
+    println!(
+        "The GPU loses on small models and that is the honest shape of the result: fixed cost"
+    );
+    println!(
+        "per run does not shrink, so there has to be enough work to amortise it. The crossover"
+    );
     println!("is the number worth quoting, not the peak.");
     println!();
     println!("Sweeps: {sweeps}. Both run the same update rule -- the shader text comes from the");

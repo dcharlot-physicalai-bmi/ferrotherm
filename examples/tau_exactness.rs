@@ -35,7 +35,7 @@
 //
 // run: cargo run --release --example tau_exactness
 
-use ferrotherm::autocorr::{tau_int_fundamental, Kernel};
+use ferrotherm::autocorr::{Kernel, tau_int_fundamental};
 use ferrotherm::certify::{tau_estimate, tau_int, tau_int_sokal};
 use ferrotherm::fft::autocovariance;
 use ferrotherm::gibbs::Sampler;
@@ -70,7 +70,9 @@ fn grid_glass(w: usize, h: usize, seed: u64) -> Graph {
 /// The first version of this example carried its own lag-summing operator; at `beta = 2` that sum
 /// needs some `5e7` lags of a 4,096-state operator and never returned.
 fn tau_exact(g: &Graph, beta: f64) -> f64 {
-    tau_int_fundamental(g, beta, Kernel::ChromaticGibbs, |s| g.energy(s)).expect("12 spins, energy varies").tau_int
+    tau_int_fundamental(g, beta, Kernel::ChromaticGibbs, |s| g.energy(s))
+        .expect("12 spins, energy varies")
+        .tau_int
 }
 
 /// This keeps summing past Sokal's window for as long as the empirical autocorrelation is still
@@ -124,8 +126,9 @@ fn tau_batch(trace: &[f64], b: usize) -> f64 {
     if var <= 0.0 {
         return f64::INFINITY;
     }
-    let means: Vec<f64> =
-        (0..b).map(|i| trace[i * len..(i + 1) * len].iter().sum::<f64>() / len as f64).collect();
+    let means: Vec<f64> = (0..b)
+        .map(|i| trace[i * len..(i + 1) * len].iter().sum::<f64>() / len as f64)
+        .collect();
     let vb = means.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / (b as f64 - 1.0);
     (len as f64 * vb / (2.0 * var)).max(0.5)
 }
@@ -181,14 +184,28 @@ fn main() {
         "  model    {w}x{h} open grid, {n} spins, random +-1 couplings, fields in [-0.2, 0.2]; {} colour classes",
         g.classes.len()
     );
-    println!("  oracle   autocorr::tau_int_fundamental on all 2^{n} states: one dense solve per temperature, no lags");
-    println!("  chain    gibbs::Sampler, the same sweep, traces of L sweeps after a burn-in of 20 tau, 16 reps\n");
-    println!("  estimators   S = certify::tau_int_sokal (Sokal, window at 5 tau, the crate's tau_int until");
-    println!("               2026-09-28); G = certify::tau_int (Geyer's initial monotone sequence, now);");
-    println!("               C = certify::tau_estimate (the larger of G and batch means at N/20, what every");
-    println!("               error bar carries); X = Sokal's sum extended past the window while rho stays");
+    println!(
+        "  oracle   autocorr::tau_int_fundamental on all 2^{n} states: one dense solve per temperature, no lags"
+    );
+    println!(
+        "  chain    gibbs::Sampler, the same sweep, traces of L sweeps after a burn-in of 20 tau, 16 reps\n"
+    );
+    println!(
+        "  estimators   S = certify::tau_int_sokal (Sokal, window at 5 tau, the crate's tau_int until"
+    );
+    println!(
+        "               2026-09-28); G = certify::tau_int (Geyer's initial monotone sequence, now);"
+    );
+    println!(
+        "               C = certify::tau_estimate (the larger of G and batch means at N/20, what every"
+    );
+    println!(
+        "               error bar carries); X = Sokal's sum extended past the window while rho stays"
+    );
     println!("               above twice its noise; B = batch means, 20 batches.");
-    println!("               Each cell is estimate / exact, mean over 16 reps, with sd/mean in brackets.\n");
+    println!(
+        "               Each cell is estimate / exact, mean over 16 reps, with sd/mean in brackets.\n"
+    );
     let mults = [30.0f64, 100.0, 1_000.0, 10_000.0];
     // The longest trace this run will draw, per rep: 2^26 sweeps (a 2^27-point transform, 2 GB).
     // Cells past it print '-' rather than being quietly skipped.
@@ -198,7 +215,11 @@ fn main() {
         "  {:>5} {:>12}   {}",
         "beta",
         "tau exact",
-        mults.iter().map(|m| format!("{:>44}", format!("L = {m:.0} tau: S / G / C / X / B"))).collect::<Vec<_>>().join("  ")
+        mults
+            .iter()
+            .map(|m| format!("{:>44}", format!("L = {m:.0} tau: S / G / C / X / B")))
+            .collect::<Vec<_>>()
+            .join("  ")
     );
     let mut worst: Vec<(f64, &str, f64)> = Vec::new(); // (mult, estimator, worst |ratio - 1|)
     for &beta in &[0.5f64, 1.0, 1.5, 2.0] {
@@ -207,12 +228,16 @@ fn main() {
         for &mlt in &mults {
             let len = ((mlt * te).ceil() as usize).max(64);
             if len > cap {
-                cells.push(format!("{:>8} {:>8} {:>8} {:>8} {:>8}", "-", "-", "-", "-", "-"));
+                cells.push(format!(
+                    "{:>8} {:>8} {:>8} {:>8} {:>8}",
+                    "-", "-", "-", "-", "-"
+                ));
                 continue;
             }
             let burn = ((20.0 * te).ceil() as usize).max(16);
             let e = tau_sampled(&g, beta, len, burn, 16);
-            let f = |(m, sd): (f64, f64)| format!("{:.2}({:.0}%)", m / te, 100.0 * sd / m.max(1e-300));
+            let f =
+                |(m, sd): (f64, f64)| format!("{:.2}({:.0}%)", m / te, 100.0 * sd / m.max(1e-300));
             cells.push(format!(
                 "{:>8} {:>8} {:>8} {:>8} {:>8}",
                 f(e.sokal),
@@ -221,20 +246,34 @@ fn main() {
                 f(e.extended),
                 f(e.batch)
             ));
-            for (name, (m, _)) in
-                [("S", e.sokal), ("G", e.geyer), ("C", e.carried), ("X", e.extended), ("B", e.batch)]
-            {
+            for (name, (m, _)) in [
+                ("S", e.sokal),
+                ("G", e.geyer),
+                ("C", e.carried),
+                ("X", e.extended),
+                ("B", e.batch),
+            ] {
                 worst.push((mlt, name, (m / te - 1.0).abs()));
             }
         }
         println!("  {beta:>5.2} {te:>12.2}   {}", cells.join("  "));
     }
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  A cell below 1 UNDERSTATES the true autocorrelation time at that trace length, so every ESS");
-    println!("  derived from it is too large by the inverse and every cost per independent sample too small.");
-    println!("  The exact column is linear algebra on the transition operator and pi: no sampling error, no");
-    println!("  window. An S cell that stays flat as L grows is not a short-trace bias -- it is the window");
-    println!("  closing on a fast mode and never summing a slow one, and no trace length repairs it.");
+    println!(
+        "  A cell below 1 UNDERSTATES the true autocorrelation time at that trace length, so every ESS"
+    );
+    println!(
+        "  derived from it is too large by the inverse and every cost per independent sample too small."
+    );
+    println!(
+        "  The exact column is linear algebra on the transition operator and pi: no sampling error, no"
+    );
+    println!(
+        "  window. An S cell that stays flat as L grows is not a short-trace bias -- it is the window"
+    );
+    println!(
+        "  closing on a fast mode and never summing a slow one, and no trace length repairs it."
+    );
     println!("\n  Worst |estimate/exact - 1| over the five temperatures:");
     for &mlt in &mults {
         let row: Vec<String> = ["S", "G", "C", "X", "B"]
@@ -250,6 +289,8 @@ fn main() {
             .collect();
         println!("    L = {mlt:>5.0} tau:   {}", row.join("   "));
     }
-    println!("\n  This crate's examples typically hold 4,000 draws; at a tau of 100 draws that is L = 40 tau.");
+    println!(
+        "\n  This crate's examples typically hold 4,000 draws; at a tau of 100 draws that is L = 40 tau."
+    );
     println!("  Read the column nearest that for what those examples' ESS figures were worth.");
 }

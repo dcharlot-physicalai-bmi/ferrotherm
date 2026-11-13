@@ -114,7 +114,9 @@ fn add_bit(acc: &mut [u64], x: u64) {
 #[cfg(test)]
 #[inline]
 fn lane_value(acc: &[u64], lane: usize) -> u32 {
-    acc.iter().enumerate().fold(0u32, |v, (j, plane)| v | (((plane >> lane) & 1) as u32) << j)
+    acc.iter().enumerate().fold(0u32, |v, (j, plane)| {
+        v | (((plane >> lane) & 1) as u32) << j
+    })
 }
 
 /// A state packed 64 replicas to the word, sampled by bitwise Gibbs.
@@ -247,13 +249,18 @@ impl<'g> Multispin<'g> {
     #[must_use]
     pub fn replica(&self, r: usize) -> Vec<i8> {
         assert!(r < REPLICAS, "replica {r} of {REPLICAS}");
-        self.words.iter().map(|w| if (w >> r) & 1 == 1 { 1i8 } else { -1 }).collect()
+        self.words
+            .iter()
+            .map(|w| if (w >> r) & 1 == 1 { 1i8 } else { -1 })
+            .collect()
     }
 
     /// Every replica's energy.
     #[must_use]
     pub fn energies(&self) -> Vec<f64> {
-        (0..REPLICAS).map(|r| self.graph.energy(&self.replica(r))).collect()
+        (0..REPLICAS)
+            .map(|r| self.graph.energy(&self.replica(r)))
+            .collect()
     }
 
     /// One full sweep: every site, every replica. Returns the random words actually drawn.
@@ -365,8 +372,9 @@ mod tests {
     fn exact_energy(g: &Graph, beta: f64) -> f64 {
         let (mut z, mut ez) = (0.0f64, 0.0f64);
         for mask in 0u64..(1u64 << g.n) {
-            let st: Vec<i8> =
-                (0..g.n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let st: Vec<i8> = (0..g.n)
+                .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             let e = g.energy(&st);
             let w = (-beta * e).exp();
             z += w;
@@ -576,8 +584,15 @@ mod tests {
             v.dedup();
             v
         };
-        assert_eq!(mags, vec![1.0], "the fixture must be pm-J to exercise this path: {mags:?}");
-        assert!(g.w.iter().any(|&w| w < 0.0), "and it must actually have negative couplings");
+        assert_eq!(
+            mags,
+            vec![1.0],
+            "the fixture must be pm-J to exercise this path: {mags:?}"
+        );
+        assert!(
+            g.w.iter().any(|&w| w < 0.0),
+            "and it must actually have negative couplings"
+        );
 
         let beta = 0.4;
         let want = exact_energy(&g, beta);
@@ -628,7 +643,10 @@ mod tests {
         let g = b.build();
         let beta = 0.4;
         let m = Multispin::new(&g, beta, 2).expect("a cancelled edge is not a second magnitude");
-        assert_eq!(m.degree[0], 2, "the dead edge must not raise site 0's degree");
+        assert_eq!(
+            m.degree[0], 2,
+            "the dead edge must not raise site 0's degree"
+        );
         assert_eq!(m.degree[4], 2, "nor site 4's");
 
         let mut m = Multispin::new(&g, beta, 2).unwrap();
@@ -662,7 +680,10 @@ mod tests {
             "drew {per_site:.2} words per site; the cap is {PRECISION} and the scalar path it \
              replaces costs 128 u32 draws"
         );
-        assert!(per_site > 1.0, "drew {per_site:.2} words per site, which is too few to be a draw");
+        assert!(
+            per_site > 1.0,
+            "drew {per_site:.2} words per site, which is too few to be a draw"
+        );
     }
 
     /// The stored probability is far closer to the true one than any certificate can resolve.
@@ -709,7 +730,10 @@ mod tests {
         }
         let trials = f64::from(sweeps) * (g.n * REPLICAS) as f64;
         let got = f64::from(up) / trials;
-        assert!((got - want).abs() < 0.01, "P(up) {got:.4} against {want:.4}");
+        assert!(
+            (got - want).abs() < 0.01,
+            "P(up) {got:.4} against {want:.4}"
+        );
     }
 
     /// The ledger prices replicas, not words.

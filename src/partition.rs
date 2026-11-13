@@ -175,7 +175,10 @@ impl core::fmt::Display for PartitionError {
                  approximate without saying so"
             ),
             PartitionError::TooManyBits { bits, limit } => {
-                write!(f, "{bits} bits per weight, but a u64 draw carries at most {limit}")
+                write!(
+                    f,
+                    "{bits} bits per weight, but a u64 draw carries at most {limit}"
+                )
             }
             PartitionError::TooManyToEnumerate { n, limit } => write!(
                 f,
@@ -251,9 +254,15 @@ impl Instance {
             total += u128::from(w);
         }
         if total > u128::from(MAX_TOTAL) {
-            return Err(PartitionError::TooHeavy { total, limit: MAX_TOTAL });
+            return Err(PartitionError::TooHeavy {
+                total,
+                limit: MAX_TOTAL,
+            });
         }
-        Ok(Instance { a: weights.to_vec(), total: total as u64 })
+        Ok(Instance {
+            a: weights.to_vec(),
+            total: total as u64,
+        })
     }
 
     /// The weights, in the order they were given.
@@ -299,7 +308,13 @@ impl Instance {
     /// set would report a discrepancy for a partition nobody described.
     #[must_use]
     pub fn signed_sum(&self, s: &[i8]) -> i64 {
-        assert_eq!(s.len(), self.a.len(), "{} spins for {} weights", s.len(), self.a.len());
+        assert_eq!(
+            s.len(),
+            self.a.len(),
+            "{} spins for {} weights",
+            s.len(),
+            self.a.len()
+        );
         let mut d: i64 = 0;
         for (i, (&ai, &si)) in self.a.iter().zip(s.iter()).enumerate() {
             assert!(si == 1 || si == -1, "spin {i} is {si}; spins are +1 or -1");
@@ -400,8 +415,12 @@ impl Instance {
         // (value, Reverse(representative)): the max-heap pops the largest value, and among equal
         // values the SMALLEST index, which is what makes this deterministic rather than a function
         // of heap internals.
-        let mut heap: BinaryHeap<(u64, Reverse<usize>)> =
-            self.a.iter().enumerate().map(|(i, &v)| (v, Reverse(i))).collect();
+        let mut heap: BinaryHeap<(u64, Reverse<usize>)> = self
+            .a
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (v, Reverse(i)))
+            .collect();
         // Each differencing step is an "opposite sets" edge between two representatives. n-1 steps
         // over n items, each joining two distinct components, so this is a spanning tree.
         let mut opposite: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -446,7 +465,10 @@ impl Instance {
     pub fn exact_optimum(&self) -> Result<Partition, PartitionError> {
         let n = self.a.len();
         if n > MAX_ENUMERABLE {
-            return Err(PartitionError::TooManyToEnumerate { n, limit: MAX_ENUMERABLE });
+            return Err(PartitionError::TooManyToEnumerate {
+                n,
+                limit: MAX_ENUMERABLE,
+            });
         }
         let mut signs = vec![1i8; n];
         let mut sum = self.total as i64;
@@ -463,7 +485,10 @@ impl Instance {
                 best_signs.copy_from_slice(&signs);
             }
         }
-        Ok(Partition { signs: best_signs, discrepancy: best })
+        Ok(Partition {
+            signs: best_signs,
+            discrepancy: best,
+        })
     }
 }
 
@@ -482,7 +507,10 @@ pub fn uniform(n: usize, bits: u32, seed: u64) -> Result<Instance, PartitionErro
         return Err(PartitionError::Empty);
     }
     if bits > MAX_BITS {
-        return Err(PartitionError::TooManyBits { bits, limit: MAX_BITS });
+        return Err(PartitionError::TooManyBits {
+            bits,
+            limit: MAX_BITS,
+        });
     }
     let mut rng = Pcg::new(seed, 0x9A_0000);
     let mask = (1u64 << bits) - 1;
@@ -556,8 +584,11 @@ mod tests {
 
     /// Every one of the `2^n` sign assignments, in mask order.
     fn states(n: usize) -> impl Iterator<Item = Vec<i8>> {
-        (0..(1u64 << n))
-            .map(move |mask| (0..n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect())
+        (0..(1u64 << n)).map(move |mask| {
+            (0..n)
+                .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect()
+        })
     }
 
     /// Fraction of instances with a perfect partition, by exhaustive enumeration.
@@ -614,8 +645,15 @@ mod tests {
             let g = inst.graph();
             let n = inst.n();
             assert_eq!(g.n, n);
-            assert_eq!(g.n_edges, n * (n - 1) / 2, "the partitioning model is fully connected");
-            assert!(g.h.iter().all(|&h| h == 0.0), "number partitioning has no fields");
+            assert_eq!(
+                g.n_edges,
+                n * (n - 1) / 2,
+                "the partitioning model is fully connected"
+            );
+            assert!(
+                g.h.iter().all(|&h| h == 0.0),
+                "number partitioning has no fields"
+            );
             let c = inst.offset();
             for s in states(n) {
                 let d = inst.discrepancy(&s);
@@ -627,7 +665,11 @@ mod tests {
                     inst.weights(),
                     g.energy(&s)
                 );
-                assert_eq!(inst.energy(&s), g.energy(&s), "the graph-free energy must agree");
+                assert_eq!(
+                    inst.energy(&s),
+                    g.energy(&s),
+                    "the graph-free energy must agree"
+                );
             }
         }
     }
@@ -667,7 +709,11 @@ mod tests {
             let d = inst.discrepancy(&s);
             let squared = (d * d) as f64;
             assert_eq!(right.energy(&s) + c, squared);
-            assert_eq!(2.0 * halved.energy(&s), right.energy(&s), "it is exactly half, always");
+            assert_eq!(
+                2.0 * halved.energy(&s),
+                right.energy(&s),
+                "it is exactly half, always"
+            );
             if halved.energy(&s) + c != squared {
                 wrong += 1;
             }
@@ -680,8 +726,14 @@ mod tests {
                 arg_halved = s.clone();
             }
         }
-        assert_eq!(wrong, 16, "the halved form misses the squared discrepancy on every state");
-        assert_eq!(arg_right, arg_halved, "and yet it picks the same ground state, which is why");
+        assert_eq!(
+            wrong, 16,
+            "the halved form misses the squared discrepancy on every state"
+        );
+        assert_eq!(
+            arg_right, arg_halved,
+            "and yet it picks the same ground state, which is why"
+        );
     }
 
     /// The optimum found by enumeration is the optimum [`crate::oracle::Exhaustive`] finds on the
@@ -692,7 +744,13 @@ mod tests {
     /// AND on the state is what says the reduction and the shortcut are the same problem.
     #[test]
     fn exact_optimum_matches_oracle_exhaustive_through_the_reduction() {
-        for (n, bits, seed) in [(8usize, 6u32, 1u64), (10, 10, 2), (12, 8, 3), (12, 18, 4), (11, 22, 5)] {
+        for (n, bits, seed) in [
+            (8usize, 6u32, 1u64),
+            (10, 10, 2),
+            (12, 8, 3),
+            (12, 18, 4),
+            (11, 22, 5),
+        ] {
             let inst = uniform(n, bits, seed).unwrap();
             let opt = inst.exact_optimum().unwrap();
             let (state, e) = Exhaustive.solve(&inst.graph());
@@ -731,12 +789,22 @@ mod tests {
         // far below and far above, at the ends the exactness ceiling allows
         let low = perfect_fraction(n, 7, 200);
         let high = perfect_fraction(n, 21, 200);
-        assert!(low >= 0.98, "kappa = {}: perfect fraction {low}", kappa(n, 7));
-        assert!(high <= 0.02, "kappa = {}: perfect fraction {high}", kappa(n, 21));
+        assert!(
+            low >= 0.98,
+            "kappa = {}: perfect fraction {low}",
+            kappa(n, 7)
+        );
+        assert!(
+            high <= 0.02,
+            "kappa = {}: perfect fraction {high}",
+            kappa(n, 21)
+        );
 
         // and the whole ladder in between never goes back up
-        let ladder: Vec<(u32, f64)> =
-            [7u32, 10, 12, 13, 14, 16, 18, 21].iter().map(|&m| (m, perfect_fraction(n, m, 200))).collect();
+        let ladder: Vec<(u32, f64)> = [7u32, 10, 12, 13, 14, 16, 18, 21]
+            .iter()
+            .map(|&m| (m, perfect_fraction(n, m, 200)))
+            .collect();
         for w in ladder.windows(2) {
             assert!(
                 w[1].1 <= w[0].1,
@@ -749,7 +817,10 @@ mod tests {
         }
         // kappa = 1 exactly is already past the half-way point at this size
         let at_one = ladder.iter().find(|(m, _)| *m == 14).unwrap().1;
-        assert!(at_one < 0.5, "kappa = 1 should be past the crossing at n = 14, got {at_one}");
+        assert!(
+            at_one < 0.5,
+            "kappa = 1 should be past the crossing at n = 14, got {at_one}"
+        );
 
         // the crossing follows the finite-size law over six sizes
         for n in [8usize, 10, 12, 14, 16, 18] {
@@ -850,15 +921,24 @@ mod tests {
                 }
             }
         }
-        assert_eq!(four_losses, 0, "measured: no four-tuple in 1..=12 beats differencing");
+        assert_eq!(
+            four_losses, 0,
+            "measured: no four-tuple in 1..=12 beats differencing"
+        );
 
         // and five is where it breaks, on the textbook instance and on the smallest one
-        for (w, kk_want, opt_want) in
-            [([8u64, 7, 6, 5, 4], 2u64, 0u64), ([3, 3, 2, 2, 2], 2, 0)]
-        {
+        for (w, kk_want, opt_want) in [([8u64, 7, 6, 5, 4], 2u64, 0u64), ([3, 3, 2, 2, 2], 2, 0)] {
             let inst = Instance::new(&w).unwrap();
-            assert_eq!(inst.karmarkar_karp().discrepancy(), kk_want, "differencing on {w:?}");
-            assert_eq!(inst.exact_optimum().unwrap().discrepancy(), opt_want, "optimum of {w:?}");
+            assert_eq!(
+                inst.karmarkar_karp().discrepancy(),
+                kk_want,
+                "differencing on {w:?}"
+            );
+            assert_eq!(
+                inst.exact_optimum().unwrap().discrepancy(),
+                opt_want,
+                "optimum of {w:?}"
+            );
         }
         let mut five_losses = 0;
         let mut five_total = 0;
@@ -879,7 +959,11 @@ mod tests {
                 }
             }
         }
-        assert_eq!((five_losses, five_total), (189, 2002), "measured over sorted five-tuples");
+        assert_eq!(
+            (five_losses, five_total),
+            (189, 2002),
+            "measured over sorted five-tuples"
+        );
     }
 
     /// The lower bound is a bound, and it is not vacuous.
@@ -916,7 +1000,11 @@ mod tests {
         // parity: an odd total can never be split evenly
         let odd = Instance::new(&[4, 4, 4, 1]).unwrap();
         assert_eq!(odd.lower_bound(), 1);
-        assert_eq!(odd.exact_optimum().unwrap().discrepancy(), 3, "and here the bound is slack");
+        assert_eq!(
+            odd.exact_optimum().unwrap().discrepancy(),
+            3,
+            "and here the bound is slack"
+        );
         assert!(odd.is_perfect(1) && !odd.is_perfect(3));
     }
 
@@ -933,15 +1021,27 @@ mod tests {
         for s in states(4) {
             let d = inst.discrepancy(&s);
             assert_eq!(g.energy(&s) + inst.offset(), (d * d) as f64);
-            assert_eq!(g.energy(&s).fract(), 0.0, "an exact integer, not nearly one");
+            assert_eq!(
+                g.energy(&s).fract(),
+                0.0,
+                "an exact integer, not nearly one"
+            );
         }
         assert_eq!(
             Instance::new(&[MAX_TOTAL, 1]),
-            Err(PartitionError::TooHeavy { total: u128::from(MAX_TOTAL) + 1, limit: MAX_TOTAL })
+            Err(PartitionError::TooHeavy {
+                total: u128::from(MAX_TOTAL) + 1,
+                limit: MAX_TOTAL
+            })
         );
 
         // past the ceiling, by hand, with the same couplings this module would have used
-        let big = [(1u64 << 28) + 1, (1 << 28) + 3, (1 << 28) + 5, (1 << 28) + 7];
+        let big = [
+            (1u64 << 28) + 1,
+            (1 << 28) + 3,
+            (1 << 28) + 5,
+            (1 << 28) + 7,
+        ];
         let mut b = GraphBuilder::new(4);
         for i in 0..4 {
             for j in (i + 1)..4 {
@@ -955,7 +1055,8 @@ mod tests {
         let exact = d * d - c;
         let got = huge.energy(&up) as i128;
         assert_ne!(
-            got, exact,
+            got,
+            exact,
             "if this ever agrees, the ceiling can be raised; it disagreed by {} when written",
             (got - exact).abs()
         );
@@ -976,20 +1077,36 @@ mod tests {
     #[test]
     fn refusals_name_what_was_seen_and_draws_are_reproducible() {
         assert_eq!(Instance::new(&[]), Err(PartitionError::Empty));
-        assert_eq!(Instance::new(&[3, 0, 1]), Err(PartitionError::ZeroWeight { index: 1 }));
+        assert_eq!(
+            Instance::new(&[3, 0, 1]),
+            Err(PartitionError::ZeroWeight { index: 1 })
+        );
         assert_eq!(uniform(0, 4, 1), Err(PartitionError::Empty));
         assert_eq!(
             uniform(4, 64, 1),
-            Err(PartitionError::TooManyBits { bits: 64, limit: MAX_BITS })
+            Err(PartitionError::TooManyBits {
+                bits: 64,
+                limit: MAX_BITS
+            })
         );
-        assert!(matches!(uniform(64, 30, 1), Err(PartitionError::TooHeavy { .. })));
+        assert!(matches!(
+            uniform(64, 30, 1),
+            Err(PartitionError::TooHeavy { .. })
+        ));
         assert_eq!(
             Instance::new(&[1; 30]).unwrap().exact_optimum(),
-            Err(PartitionError::TooManyToEnumerate { n: 30, limit: MAX_ENUMERABLE })
+            Err(PartitionError::TooManyToEnumerate {
+                n: 30,
+                limit: MAX_ENUMERABLE
+            })
         );
         let said = PartitionError::ZeroWeight { index: 7 }.to_string();
         assert!(said.contains('7'), "{said}");
-        let said = PartitionError::TooHeavy { total: 99, limit: MAX_TOTAL }.to_string();
+        let said = PartitionError::TooHeavy {
+            total: 99,
+            limit: MAX_TOTAL,
+        }
+        .to_string();
         assert!(said.contains("99") && said.contains("94906265"), "{said}");
         let said = PartitionError::TooManyToEnumerate { n: 40, limit: 27 }.to_string();
         assert!(said.contains("2^39") && said.contains("27"), "{said}");
@@ -1001,7 +1118,11 @@ mod tests {
         let inst = uniform(2000, 8, 3).unwrap();
         assert_eq!(inst.weights().iter().copied().min(), Some(1));
         assert_eq!(inst.weights().iter().copied().max(), Some(256));
-        assert_eq!(uniform(50, 0, 3).unwrap().weights(), [1u64; 50], "zero bits is the range {{1}}");
+        assert_eq!(
+            uniform(50, 0, 3).unwrap().weights(),
+            [1u64; 50],
+            "zero bits is the range {{1}}"
+        );
         assert_eq!(kappa(20, 10), 0.5);
     }
 

@@ -132,10 +132,16 @@ impl core::fmt::Display for Refused {
                  eta, including 0, which turns it into plain single-sample REINFORCE"
             ),
             Refused::Empty => {
-                write!(f, "no logits were given, so there is no gradient to estimate")
+                write!(
+                    f,
+                    "no logits were given, so there is no gradient to estimate"
+                )
             }
             Refused::NoSamples => {
-                write!(f, "zero samples were asked for, and the mean of no samples is not a number")
+                write!(
+                    f,
+                    "zero samples were asked for, and the mean of no samples is not a number"
+                )
             }
             Refused::Arity { logits, objective } => write!(
                 f,
@@ -286,7 +292,10 @@ pub fn gumbel_softmax(logits: &[f64], tau: f64, r: &mut Pcg) -> Result<Vec<f64>,
     }
     check_tau(tau)?;
     check_logits(logits)?;
-    let z: Vec<f64> = logits.iter().map(|&l| (l + crate::perturb::gumbel(r)) / tau).collect();
+    let z: Vec<f64> = logits
+        .iter()
+        .map(|&l| (l + crate::perturb::gumbel(r)) / tau)
+        .collect();
     let mx = z.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     let mut y: Vec<f64> = z.iter().map(|&v| (v - mx).exp()).collect();
     let total: f64 = y.iter().sum();
@@ -362,7 +371,10 @@ impl ControlVariate {
     /// No control variate: REBAR degenerates to single-sample REINFORCE without a baseline.
     #[must_use]
     pub fn none() -> Self {
-        ControlVariate { eta: 0.0, lambda: 1.0 }
+        ControlVariate {
+            eta: 0.0,
+            lambda: 1.0,
+        }
     }
 }
 
@@ -408,7 +420,11 @@ struct Moments {
 
 impl Moments {
     fn new(k: usize) -> Self {
-        Moments { n: 0, mean: vec![0.0; k], m2: vec![0.0; k] }
+        Moments {
+            n: 0,
+            mean: vec![0.0; k],
+            m2: vec![0.0; k],
+        }
     }
 
     fn push(&mut self, x: &[f64]) {
@@ -432,7 +448,11 @@ impl Moments {
 }
 
 fn check_tau(tau: f64) -> Result<(), Refused> {
-    if tau > 0.0 && tau.is_finite() { Ok(()) } else { Err(Refused::BadTemperature { tau }) }
+    if tau > 0.0 && tau.is_finite() {
+        Ok(())
+    } else {
+        Err(Refused::BadTemperature { tau })
+    }
 }
 
 fn check_logits(theta: &[f64]) -> Result<(), Refused> {
@@ -449,7 +469,10 @@ fn check_call<O: Objective>(theta: &[f64], f: &O, samples: usize) -> Result<(), 
         return Err(Refused::Empty);
     }
     if theta.len() != f.arity() {
-        return Err(Refused::Arity { logits: theta.len(), objective: f.arity() });
+        return Err(Refused::Arity {
+            logits: theta.len(),
+            objective: f.arity(),
+        });
     }
     if samples == 0 {
         return Err(Refused::NoSamples);
@@ -645,7 +668,11 @@ pub fn rebar_grad<O: Objective>(
             let (p, q) = (sigma(theta[i]), sigma(-theta[i]));
             let u = if s[i] > 0.0 { q + p * v } else { q * v };
             zt[i] = theta[i] + u.ln() - (-u).ln_1p();
-            dzt[i] = if s[i] > 0.0 { 1.0 - q / u } else { 1.0 - p / (1.0 - u) };
+            dzt[i] = if s[i] > 0.0 {
+                1.0 - q / u
+            } else {
+                1.0 - p / (1.0 - u)
+            };
             r_un[i] = relaxed_spin(z[i], lambda);
             r_cond[i] = relaxed_spin(zt[i], lambda);
         }
@@ -710,12 +737,18 @@ fn enumerate<O: Objective>(theta: &[f64], f: &O) -> Result<(f64, Vec<f64>), Refu
         return Err(Refused::Empty);
     }
     if theta.len() != f.arity() {
-        return Err(Refused::Arity { logits: theta.len(), objective: f.arity() });
+        return Err(Refused::Arity {
+            logits: theta.len(),
+            objective: f.arity(),
+        });
     }
     check_logits(theta)?;
     let n = theta.len();
     if n > ENUMERATION_LIMIT {
-        return Err(Refused::TooLargeToEnumerate { spins: n, limit: ENUMERATION_LIMIT });
+        return Err(Refused::TooLargeToEnumerate {
+            spins: n,
+            limit: ENUMERATION_LIMIT,
+        });
     }
     let mut grad = vec![0.0; n];
     let mut mean = 0.0;
@@ -754,7 +787,10 @@ pub fn multilinear_grad<O: Objective>(theta: &[f64], f: &O) -> Result<Vec<f64>, 
         return Err(Refused::Empty);
     }
     if theta.len() != f.arity() {
-        return Err(Refused::Arity { logits: theta.len(), objective: f.arity() });
+        return Err(Refused::Arity {
+            logits: theta.len(),
+            objective: f.arity(),
+        });
     }
     check_logits(theta)?;
     let m: Vec<f64> = theta.iter().map(|&t| 2.0 * sigma(t) - 1.0).collect();
@@ -820,11 +856,15 @@ mod tests {
     /// The worst per-coordinate deviation from `want`, in units of the estimate's own standard
     /// error. This is the CLT yardstick every convergence assertion here is stated in.
     fn worst_sigma(e: &GradEstimate, want: &[f64]) -> f64 {
-        (0..want.len()).map(|i| (e.grad[i] - want[i]).abs() / e.stderr[i]).fold(0.0f64, f64::max)
+        (0..want.len())
+            .map(|i| (e.grad[i] - want[i]).abs() / e.stderr[i])
+            .fold(0.0f64, f64::max)
     }
 
     fn worst_abs(got: &[f64], want: &[f64]) -> f64 {
-        (0..want.len()).map(|i| (got[i] - want[i]).abs()).fold(0.0f64, f64::max)
+        (0..want.len())
+            .map(|i| (got[i] - want[i]).abs())
+            .fold(0.0f64, f64::max)
     }
 
     /// ORACLE: the multilinear closed form, `E[f(s)] = f(m)`, computed in `O(edges)` with no
@@ -841,7 +881,10 @@ mod tests {
             let enumerated = exact_grad(&th, &f).unwrap();
             let closed = multilinear_grad(&th, &f).unwrap();
             let w = worst_abs(&enumerated, &closed);
-            assert!(w < 1e-13, "n={n}: enumeration and closed form differ by {w:e}");
+            assert!(
+                w < 1e-13,
+                "n={n}: enumeration and closed form differ by {w:e}"
+            );
 
             // And the same for the objective itself: E[f(s)] must be f(E[s]).
             let m: Vec<f64> = th.iter().map(|&t| 2.0 * sigma(t) - 1.0).collect();
@@ -850,7 +893,10 @@ mod tests {
 
             // A non-trivial gradient, or the agreement above means nothing.
             let scale = closed.iter().fold(0.0f64, |a, b| a.max(b.abs()));
-            assert!(scale > 0.02, "n={n}: the fixture's gradient is {scale:e}, too flat to test");
+            assert!(
+                scale > 0.02,
+                "n={n}: the fixture's gradient is {scale:e}, too flat to test"
+            );
         }
     }
 
@@ -870,10 +916,18 @@ mod tests {
                 s[i] = if mask >> i & 1 == 1 { 1 } else { -1 };
                 x[i] = f64::from(s[i]);
             }
-            assert_eq!(f.value(&x), g.energy(&s), "corner {mask} disagrees with Graph::energy");
+            assert_eq!(
+                f.value(&x),
+                g.energy(&s),
+                "corner {mask} disagrees with Graph::energy"
+            );
             f.grad(&x, &mut out);
             for i in 0..g.n {
-                assert_eq!(out[i], -g.field(i, &s), "corner {mask} site {i}: grad is not -field");
+                assert_eq!(
+                    out[i],
+                    -g.field(i, &s),
+                    "corner {mask} site {i}: grad is not -field"
+                );
             }
         }
     }
@@ -901,11 +955,17 @@ mod tests {
 
         let rebar = rebar_grad(&th, ControlVariate::new(1.0, 0.5).unwrap(), &f, n, 5).unwrap();
         let w = worst_sigma(&rebar, &exact);
-        assert!(w < 5.0, "REBAR is off the exact gradient by {w:.2} standard errors");
+        assert!(
+            w < 5.0,
+            "REBAR is off the exact gradient by {w:.2} standard errors"
+        );
         // ... and its forward value is the discrete objective, also inside the CLT band.
         let ev = exact_value(&th, &f).unwrap();
         let dv = (rebar.value - ev).abs() / rebar.value_stderr;
-        assert!(dv < 5.0, "REBAR's value is {dv:.2} standard errors off E[f] = {ev}");
+        assert!(
+            dv < 5.0,
+            "REBAR's value is {dv:.2} standard errors off E[f] = {ev}"
+        );
 
         let gs = gumbel_softmax_grad(&th, 1.0, &f, n, 5).unwrap();
         let bias = worst_abs(&gs.grad, &exact);
@@ -950,14 +1010,26 @@ mod tests {
             let bias = worst_abs(&e.grad, &exact);
             let var = e.total_variance();
             if let Some((pb, pv)) = prev {
-                assert!(bias < pb, "tau={tau}: bias {bias:.5} did not fall below {pb:.5}");
-                assert!(var > pv, "tau={tau}: variance {var:.4} did not rise above {pv:.4}");
+                assert!(
+                    bias < pb,
+                    "tau={tau}: bias {bias:.5} did not fall below {pb:.5}"
+                );
+                assert!(
+                    var > pv,
+                    "tau={tau}: variance {var:.4} did not rise above {pv:.4}"
+                );
             }
             prev = Some((bias, var));
         }
         let (bias, var) = prev.unwrap();
-        assert!(bias < 0.01, "the coldest rung should be nearly unbiased, got {bias:.5}");
-        assert!(var > 5.0, "and should have paid for it in variance, got {var:.4}");
+        assert!(
+            bias < 0.01,
+            "the coldest rung should be nearly unbiased, got {bias:.5}"
+        );
+        assert!(
+            var > 5.0,
+            "and should have paid for it in variance, got {var:.4}"
+        );
     }
 
     /// (2) As `tau -> 0` the relaxation converges to the discrete draw IN DISTRIBUTION.
@@ -1010,9 +1082,15 @@ mod tests {
             }
             coupling /= m as f64;
             mean_relaxed /= m as f64;
-            assert!(coupling < prev, "tau={tau}: coupling {coupling:.6} did not fall");
+            assert!(
+                coupling < prev,
+                "tau={tau}: coupling {coupling:.6} did not fall"
+            );
             let ratio = coupling / tau;
-            assert!(ratio < 1.1 * limit, "tau={tau}: coupling/tau {ratio:.4} is not O(tau)");
+            assert!(
+                ratio < 1.1 * limit,
+                "tau={tau}: coupling/tau {ratio:.4} is not O(tau)"
+            );
             if tau <= 0.1 {
                 assert!(
                     (ratio / limit - 1.0).abs() < 0.03,
@@ -1035,9 +1113,15 @@ mod tests {
             let p = sigma(theta);
             let dev = (up as f64 - m as f64 * p).abs();
             let tol = 4.0 * (m as f64 * p * (1.0 - p)).sqrt();
-            assert!(dev < tol, "tau={tau}: {up} of {m} up, off by {dev:.0} (tol {tol:.0})");
+            assert!(
+                dev < tol,
+                "tau={tau}: {up} of {m} up, off by {dev:.0} (tol {tol:.0})"
+            );
         }
-        assert!(prev < 0.01, "the coldest rung is still {prev:.6} from the discrete draw");
+        assert!(
+            prev < 0.01,
+            "the coldest rung is still {prev:.6} from the discrete draw"
+        );
         // And the first moment has converged to the discrete one, `E[s] = 2 sigma(theta) - 1`.
         let m1 = 2.0 * sigma(theta) - 1.0;
         assert!(
@@ -1049,7 +1133,10 @@ mod tests {
         // `sigma(z/tau)` rounds to exactly 1 once `|z|/tau` passes ~37. Worth asserting rather than
         // discovering: below that temperature the relaxed draw IS the discrete draw, bit for bit,
         // and its gradient is exactly zero.
-        assert_eq!(saturated_at[0], 0, "tau = 1 should never reach the corner in f64");
+        assert_eq!(
+            saturated_at[0], 0,
+            "tau = 1 should never reach the corner in f64"
+        );
         assert!(
             saturated_at[6] > m / 2,
             "tau = 0.01 should saturate to the corner; only {} of {m} did",
@@ -1074,10 +1161,22 @@ mod tests {
         let rb = rebar_grad(&th, ControlVariate::new(1.0, 0.5).unwrap(), &f, n, 5).unwrap();
         let gs = gumbel_softmax_grad(&th, 1.0, &f, n, 5).unwrap();
 
-        assert_eq!(st.value, st.discrete_value, "straight-through's forward pass is not discrete");
-        assert_eq!(rb.value, rb.discrete_value, "REBAR's forward pass is not discrete");
-        assert_eq!(st.value, rb.value, "the same seed gave two different discrete forward passes");
-        assert_eq!(gs.discrete_value, rb.discrete_value, "the discrete draws are not shared");
+        assert_eq!(
+            st.value, st.discrete_value,
+            "straight-through's forward pass is not discrete"
+        );
+        assert_eq!(
+            rb.value, rb.discrete_value,
+            "REBAR's forward pass is not discrete"
+        );
+        assert_eq!(
+            st.value, rb.value,
+            "the same seed gave two different discrete forward passes"
+        );
+        assert_eq!(
+            gs.discrete_value, rb.discrete_value,
+            "the discrete draws are not shared"
+        );
         assert!(
             (gs.value - gs.discrete_value).abs() > 0.01,
             "the relaxed objective {} and the discrete one {} are the same number, so nothing was \
@@ -1090,7 +1189,10 @@ mod tests {
         // the identity Jacobian three times worse again at 0.286.
         let exact = multilinear_grad(&th, &f).unwrap();
         let sig = worst_sigma(&st, &exact);
-        assert!(sig > 20.0, "straight-through must be biased; it is within {sig:.1} sigma");
+        assert!(
+            sig > 20.0,
+            "straight-through must be biased; it is within {sig:.1} sigma"
+        );
         let id = straight_through_grad(&th, Through::Identity, &f, n, 5).unwrap();
         assert!(
             worst_abs(&id.grad, &exact) > worst_abs(&st.grad, &exact),
@@ -1126,8 +1228,15 @@ mod tests {
         let f = Multilinear::new(&g);
         let th = logits(n, 11);
         let gates: Vec<Gate> = (0..n).map(|i| Gate::PNot { bit: i, p_theta: i }).collect();
-        let prog = Program { gates, graphs: Vec::new(), n_params: n };
-        let init = State { bits: vec![-1i8; n], reals: Vec::new() };
+        let prog = Program {
+            gates,
+            graphs: Vec::new(),
+            n_params: n,
+        };
+        let init = State {
+            bits: vec![-1i8; n],
+            reals: Vec::new(),
+        };
         let loss = |s: &State| g.energy(&s.bits);
 
         // The program and this module are the same distribution, or the comparison is meaningless.
@@ -1144,7 +1253,10 @@ mod tests {
             let p = sigma(th[i]);
             let dev = (f64::from(up[i]) - f64::from(draws) * p).abs();
             let tol = 4.0 * (f64::from(draws) * p * (1.0 - p)).sqrt();
-            assert!(dev < tol, "site {i}: the program's marginal is not sigma(theta), off {dev:.0}");
+            assert!(
+                dev < tol,
+                "site {i}: the program's marginal is not sigma(theta), off {dev:.0}"
+            );
         }
 
         let (b, reps) = (512usize, 400usize);
@@ -1157,15 +1269,20 @@ mod tests {
             acc[1].push(&rebar_grad(&th, cv, &f, b, seed).unwrap().grad);
             acc[2].push(&gumbel_softmax_grad(&th, 1.0, &f, b, seed).unwrap().grad);
         }
-        let per_sample: Vec<f64> =
-            acc.iter().map(|m| m.variance().iter().sum::<f64>() * b as f64).collect();
+        let per_sample: Vec<f64> = acc
+            .iter()
+            .map(|m| m.variance().iter().sum::<f64>() * b as f64)
+            .collect();
         let (v_reinforce, v_rebar, v_gs) = (per_sample[0], per_sample[1], per_sample[2]);
         assert!(
             v_rebar * 1.25 < v_reinforce,
             "measured REBAR {v_rebar:.4} against REINFORCE {v_reinforce:.4}; the direction this \
              test records is REBAR quieter"
         );
-        assert!(v_gs * 5.0 < v_rebar, "measured relaxation {v_gs:.4} against REBAR {v_rebar:.4}");
+        assert!(
+            v_gs * 5.0 < v_rebar,
+            "measured relaxation {v_gs:.4} against REBAR {v_rebar:.4}"
+        );
 
         // The cheap one is the wrong one: the same batches, 21x quieter, and off the exact answer.
         let exact = multilinear_grad(&th, &f).unwrap();
@@ -1195,11 +1312,17 @@ mod tests {
         let g = glass(8, 7);
         let th = logits(8, 11);
         let n = 100_000;
-        let (cv1, cv0) = (ControlVariate::new(1.0, 0.5).unwrap(), ControlVariate::none());
+        let (cv1, cv0) = (
+            ControlVariate::new(1.0, 0.5).unwrap(),
+            ControlVariate::none(),
+        );
         let mut var1 = [0.0f64; 2];
         let mut var0 = [0.0f64; 2];
         for (k, c) in [0.0f64, 20.0].into_iter().enumerate() {
-            let f = Shifted { inner: Multilinear::new(&g), c };
+            let f = Shifted {
+                inner: Multilinear::new(&g),
+                c,
+            };
             let exact = multilinear_grad(&th, &f).unwrap();
             let a = rebar_grad(&th, cv1, &f, n, 5).unwrap();
             let b = rebar_grad(&th, cv0, &f, n, 5).unwrap();
@@ -1241,8 +1364,15 @@ mod tests {
         let th = logits(n, 11);
         let exact = multilinear_grad(&th, &f).unwrap();
         let gates: Vec<Gate> = (0..n).map(|i| Gate::PNot { bit: i, p_theta: i }).collect();
-        let prog = Program { gates, graphs: Vec::new(), n_params: n };
-        let init = State { bits: vec![-1i8; n], reals: Vec::new() };
+        let prog = Program {
+            gates,
+            graphs: Vec::new(),
+            n_params: n,
+        };
+        let init = State {
+            bits: vec![-1i8; n],
+            reals: Vec::new(),
+        };
         let loss = |s: &State| g.energy(&s.bits);
 
         let (b, reps) = (8usize, 25_000usize);
@@ -1272,9 +1402,19 @@ mod tests {
         );
 
         // The same total sample count, this module's estimator, and no shrinkage.
-        let rb = rebar_grad(&th, ControlVariate::new(1.0, 0.5).unwrap(), &f, reps * b, 77).unwrap();
+        let rb = rebar_grad(
+            &th,
+            ControlVariate::new(1.0, 0.5).unwrap(),
+            &f,
+            reps * b,
+            77,
+        )
+        .unwrap();
         let sig = worst_sigma(&rb, &exact);
-        assert!(sig < 5.0, "REBAR should hit the unshrunk gradient: {sig:.2} sigma");
+        assert!(
+            sig < 5.0,
+            "REBAR should hit the unshrunk gradient: {sig:.2} sigma"
+        );
     }
 
     /// ORACLE: the logistic distribution's closed-form variance, `pi^2/3`.
@@ -1295,9 +1435,16 @@ mod tests {
         // The sample variance of a logistic has sd = var * sqrt((2 + kurt)/m) with excess kurtosis
         // 1.2; four of those is the allowance.
         let tol = 4.0 * want * (3.2 / m as f64).sqrt();
-        assert!((var - want).abs() < tol, "variance {var:.5}, closed form {want:.5}");
+        assert!(
+            (var - want).abs() < tol,
+            "variance {var:.5}, closed form {want:.5}"
+        );
         let se = (var / m as f64).sqrt();
-        assert!(acc.mean[0].abs() < 4.0 * se, "mean {:.5} is not zero", acc.mean[0]);
+        assert!(
+            acc.mean[0].abs() < 4.0 * se,
+            "mean {:.5} is not zero",
+            acc.mean[0]
+        );
     }
 
     /// ORACLE: the softmax itself. The argmax of a Gumbel-perturbed score is a draw from
@@ -1320,10 +1467,16 @@ mod tests {
                 let y = gumbel_softmax(&logits, tau, &mut r).unwrap();
                 let s: f64 = y.iter().sum();
                 assert!((s - 1.0).abs() < 1e-12, "tau={tau}: the draw sums to {s}");
-                assert!(y.iter().all(|&v| v > 0.0 && v <= 1.0), "tau={tau}: left the simplex");
+                assert!(
+                    y.iter().all(|&v| v > 0.0 && v <= 1.0),
+                    "tau={tau}: left the simplex"
+                );
                 if tau > 1.0 {
                     // Hot, so no class rounds to the corner; cold, and the winner does.
-                    assert!(y.iter().all(|&v| v < 1.0), "tau={tau}: a hot draw hit the corner");
+                    assert!(
+                        y.iter().all(|&v| v < 1.0),
+                        "tau={tau}: a hot draw hit the corner"
+                    );
                 }
                 let mut best = 0;
                 for k in 1..4 {
@@ -1337,7 +1490,10 @@ mod tests {
                 let p = ex[k] / total;
                 let dev = (f64::from(counts[k]) - f64::from(m) * p).abs();
                 let tol = 4.0 * (f64::from(m) * p * (1.0 - p)).sqrt();
-                assert!(dev < tol, "tau={tau} class {k}: off by {dev:.0} draws (tol {tol:.0})");
+                assert!(
+                    dev < tol,
+                    "tau={tau} class {k}: off by {dev:.0} draws (tol {tol:.0})"
+                );
             }
         }
     }
@@ -1392,12 +1548,18 @@ mod tests {
         );
         assert_eq!(
             rebar_grad(&[0.1, 0.2], ControlVariate::none(), &f, 10, 1).unwrap_err(),
-            Refused::Arity { logits: 2, objective: 4 }
+            Refused::Arity {
+                logits: 2,
+                objective: 4
+            }
         );
         assert_eq!(exact_grad(&[], &f).unwrap_err(), Refused::Empty);
         assert_eq!(
             exact_grad(&[f64::INFINITY, 0.0, 0.0, 0.0], &f).unwrap_err(),
-            Refused::BadLogit { index: 0, theta: f64::INFINITY }
+            Refused::BadLogit {
+                index: 0,
+                theta: f64::INFINITY
+            }
         );
         assert_eq!(
             ControlVariate::new(f64::INFINITY, 1.0).unwrap_err(),
@@ -1407,26 +1569,41 @@ mod tests {
             ControlVariate::new(1.0, -1.0).unwrap_err(),
             Refused::BadTemperature { tau: -1.0 }
         );
-        assert_eq!(gumbel_softmax(&[], 1.0, &mut Pcg::new(1, 1)).unwrap_err(), Refused::Empty);
+        assert_eq!(
+            gumbel_softmax(&[], 1.0, &mut Pcg::new(1, 1)).unwrap_err(),
+            Refused::Empty
+        );
 
         let big = glass(ENUMERATION_LIMIT + 1, 6);
         let fb = Multilinear::new(&big);
         let wide = vec![0.1; big.n];
         assert_eq!(
             exact_value(&wide, &fb).unwrap_err(),
-            Refused::TooLargeToEnumerate { spins: ENUMERATION_LIMIT + 1, limit: ENUMERATION_LIMIT }
+            Refused::TooLargeToEnumerate {
+                spins: ENUMERATION_LIMIT + 1,
+                limit: ENUMERATION_LIMIT
+            }
         );
         // ... and the closed form still answers at that size, which is what it is for.
         assert_eq!(multilinear_grad(&wide, &fb).unwrap().len(), big.n);
 
         for e in [
             Refused::BadTemperature { tau: 0.0 },
-            Refused::BadLogit { index: 1, theta: f64::NAN },
+            Refused::BadLogit {
+                index: 1,
+                theta: f64::NAN,
+            },
             Refused::BadScale { eta: f64::NAN },
             Refused::Empty,
             Refused::NoSamples,
-            Refused::Arity { logits: 1, objective: 2 },
-            Refused::TooLargeToEnumerate { spins: 30, limit: 20 },
+            Refused::Arity {
+                logits: 1,
+                objective: 2,
+            },
+            Refused::TooLargeToEnumerate {
+                spins: 30,
+                limit: 20,
+            },
         ] {
             assert!(e.to_string().len() > 40, "{e:?} does not explain itself");
         }
@@ -1463,7 +1640,10 @@ mod tests {
         let e = rebar_grad(&th, ControlVariate::none(), &f, 1, 12).unwrap();
         assert_eq!(e.samples, 1);
         assert!(e.grad.iter().all(|v| v.is_finite()));
-        assert!(e.stderr.iter().all(|&v| v == 0.0), "a lone sample reported a spread");
+        assert!(
+            e.stderr.iter().all(|&v| v == 0.0),
+            "a lone sample reported a spread"
+        );
         assert_eq!(e.total_variance(), 0.0);
         assert_eq!(e.value_stderr, 0.0);
     }

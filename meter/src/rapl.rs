@@ -47,7 +47,11 @@ pub(crate) struct Domain {
 
 impl Domain {
     fn read(&self) -> Option<u64> {
-        std::fs::read_to_string(self.path.join("energy_uj")).ok()?.trim().parse().ok()
+        std::fs::read_to_string(self.path.join("energy_uj"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
     }
 
     /// Joules between two counter readings, wraparound included.
@@ -56,32 +60,48 @@ impl Domain {
     /// negative delta once an hour, which would land as a single absurd sample in the middle of an
     /// otherwise sane run.
     pub(crate) fn delta_j(&self, prev: u64, now: u64) -> f64 {
-        let d = if now >= prev { now - prev } else { (self.max - prev).saturating_add(now) };
+        let d = if now >= prev {
+            now - prev
+        } else {
+            (self.max - prev).saturating_add(now)
+        };
         d as f64 / 1e6
     }
 }
 
 fn domains() -> Vec<Domain> {
     let root = Path::new("/sys/class/powercap");
-    let Ok(rd) = std::fs::read_dir(root) else { return Vec::new() };
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for e in rd.flatten() {
         let p = e.path();
-        let Ok(name) = std::fs::read_to_string(p.join("name")) else { continue };
+        let Ok(name) = std::fs::read_to_string(p.join("name")) else {
+            continue;
+        };
         // Only top-level domains. `intel-rapl:0:0` is the `core` SUBdomain of the package and
         // double-counts what its parent already reports.
         let base = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
         if base.matches(':').count() != 1 {
             continue;
         }
-        let Ok(max) = std::fs::read_to_string(p.join("max_energy_range_uj")) else { continue };
-        let Ok(max) = max.trim().parse::<u64>() else { continue };
+        let Ok(max) = std::fs::read_to_string(p.join("max_energy_range_uj")) else {
+            continue;
+        };
+        let Ok(max) = max.trim().parse::<u64>() else {
+            continue;
+        };
         // Readability is the gate, not existence: `intel-rapl-mmio:0` is present here and its
         // counter cannot be opened.
         if std::fs::read_to_string(p.join("energy_uj")).is_err() {
             continue;
         }
-        out.push(Domain { path: p, name: name.trim().to_string(), max });
+        out.push(Domain {
+            path: p,
+            name: name.trim().to_string(),
+            max,
+        });
     }
     out
 }
@@ -109,10 +129,11 @@ pub(crate) fn choose() -> Option<(Domain, &'static str)> {
         // purpose -- this runs at `detect` time and a long probe would delay every caller.
         let (p, k) = (watts_over(&all[i], 0.4), watts_over(&all[pkg], 0.4));
         if let (Some(p), Some(k)) = (p, k)
-            && p >= k {
-                let mut all = all;
-                return Some((all.swap_remove(i), "psys"));
-            }
+            && p >= k
+        {
+            let mut all = all;
+            return Some((all.swap_remove(i), "psys"));
+        }
     }
     let mut all = all;
     Some((all.swap_remove(pkg), "package"))
@@ -134,11 +155,25 @@ mod tests {
     fn a_wrap_is_not_a_machine_generating_energy() {
         // The counter wraps about once an hour at load. Untreated, the wrap lands as one absurd
         // negative sample in the middle of an otherwise sane run.
-        let d = Domain { path: PathBuf::from("/nonexistent"), name: "package-0".into(), max: 1_000 };
-        assert!((d.delta_j(100, 400) - 300e-6).abs() < 1e-12, "the ordinary case");
+        let d = Domain {
+            path: PathBuf::from("/nonexistent"),
+            name: "package-0".into(),
+            max: 1_000,
+        };
+        assert!(
+            (d.delta_j(100, 400) - 300e-6).abs() < 1e-12,
+            "the ordinary case"
+        );
         // 900 -> 100 is a wrap: 100 uJ to the top, then 100 more.
-        assert!((d.delta_j(900, 100) - 200e-6).abs() < 1e-12, "wrapped: {}", d.delta_j(900, 100));
-        assert!(d.delta_j(900, 100) > 0.0, "a wrap must never produce a negative energy");
+        assert!(
+            (d.delta_j(900, 100) - 200e-6).abs() < 1e-12,
+            "wrapped: {}",
+            d.delta_j(900, 100)
+        );
+        assert!(
+            d.delta_j(900, 100) > 0.0,
+            "a wrap must never produce a negative energy"
+        );
     }
 
     #[test]
@@ -154,9 +189,12 @@ mod tests {
     fn subdomains_are_not_offered_as_domains() {
         // `intel-rapl:0:0` is the `core` subdomain of `intel-rapl:0` and double-counts its parent.
         // Colon-count is the discriminator, so this checks the rule the enumerator applies.
-        for (base, top_level) in
-            [("intel-rapl:0", true), ("intel-rapl:0:0", false), ("intel-rapl:1", true), ("intel-rapl-mmio:0", true)]
-        {
+        for (base, top_level) in [
+            ("intel-rapl:0", true),
+            ("intel-rapl:0:0", false),
+            ("intel-rapl:1", true),
+            ("intel-rapl-mmio:0", true),
+        ] {
             assert_eq!(base.matches(':').count() == 1, top_level, "{base}");
         }
     }

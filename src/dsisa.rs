@@ -149,7 +149,10 @@ impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Error::OutOfRange { i, n } => {
-                write!(f, "component {i} is past the end of a {n}-component machine")
+                write!(
+                    f,
+                    "component {i} is past the end of a {n}-component machine"
+                )
             }
             Error::SelfCoupling { i } => write!(f, "component {i} cannot be coupled to itself"),
             Error::NoEvolution => write!(
@@ -183,7 +186,10 @@ impl Program {
     /// An empty program over `n` components.
     #[must_use]
     pub fn new(n: usize) -> Program {
-        Program { n, insns: Vec::new() }
+        Program {
+            n,
+            insns: Vec::new(),
+        }
     }
 
     /// Append an instruction.
@@ -281,12 +287,21 @@ impl Program {
                 b.set_bias(i, bias[i]);
             }
         }
-        Ok(Assembled { graph: b.build(), init, runtime, configuration_writes: writes })
+        Ok(Assembled {
+            graph: b.build(),
+            init,
+            runtime,
+            configuration_writes: writes,
+        })
     }
 }
 
 fn check(i: usize, n: usize) -> Result<(), Error> {
-    if i < n { Ok(()) } else { Err(Error::OutOfRange { i, n }) }
+    if i < n {
+        Ok(())
+    } else {
+        Err(Error::OutOfRange { i, n })
+    }
 }
 
 /// A program with its configuration resolved: a machine, an initial state, and what remains to run.
@@ -345,7 +360,12 @@ impl Assembled {
     /// so a program that reconnects its fabric between short evolutions spends almost everything
     /// here — which is the structural cost of an instruction set whose first phase is connectivity.
     #[must_use]
-    pub fn configuration_share(&self, prices: &Prices, substrate: Substrate, beta: f64) -> Option<f64> {
+    pub fn configuration_share(
+        &self,
+        prices: &Prices,
+        substrate: Substrate,
+        beta: f64,
+    ) -> Option<f64> {
         let trace = self.run(substrate, beta, 0);
         let total = trace.ledger.joules(prices)?;
         if total <= 0.0 {
@@ -375,14 +395,21 @@ impl Assembled {
         match substrate {
             Substrate::Spins => self.run_spins(beta, seed),
             Substrate::Phases => {
-                assert!(beta.is_finite(), "an infinite beta is a zero integration step");
+                assert!(
+                    beta.is_finite(),
+                    "an infinite beta is a zero integration step"
+                );
                 self.run_phases(1.0 / beta, seed)
             }
         }
     }
 
     fn run_spins(&self, beta: f64, seed: u64) -> Trace {
-        let mut ledger = Ledger { samples: 0, reads: 0, writes: self.configuration_writes };
+        let mut ledger = Ledger {
+            samples: 0,
+            reads: 0,
+            writes: self.configuration_writes,
+        };
         let mut smp = Sampler::new(&self.graph, beta, seed);
         for i in 0..self.graph.n {
             // The sign of the loaded value is the spin; a zero loads +1 rather than picking at
@@ -440,8 +467,13 @@ impl Assembled {
                 k[i * n + j] = self.graph.w[idx];
             }
         }
-        let sys = Kuramoto::gradient(k, n).expect("a Graph yields a symmetric zero-frequency system");
-        let mut ledger = Ledger { samples: 0, reads: 0, writes: self.configuration_writes };
+        let sys =
+            Kuramoto::gradient(k, n).expect("a Graph yields a symmetric zero-frequency system");
+        let mut ledger = Ledger {
+            samples: 0,
+            reads: 0,
+            writes: self.configuration_writes,
+        };
         let mut phi: Vec<f64> = self.init.clone();
         let mut locked: Vec<Option<f64>> = vec![None; n];
         let mut pending: Vec<(usize, Option<f64>)> = Vec::new();
@@ -506,7 +538,11 @@ mod tests {
     fn ring_program() -> Program {
         let mut p = Program::new(4);
         for i in 0..4 {
-            p.push(Insn::Connect { i, j: (i + 1) % 4, w: 1.0 });
+            p.push(Insn::Connect {
+                i,
+                j: (i + 1) % 4,
+                w: 1.0,
+            });
         }
         p.push(Insn::Load { i: 0, v: 1.0 });
         p.push(Insn::Lock { i: 0, v: 1.0 });
@@ -529,7 +565,11 @@ mod tests {
             b.couple(i, (i + 1) % 4, 1.0);
         }
         let g = b.build();
-        let mut led = Ledger { samples: 0, reads: 0, writes: asm.configuration_writes() + 1 };
+        let mut led = Ledger {
+            samples: 0,
+            reads: 0,
+            writes: asm.configuration_writes() + 1,
+        };
         let mut smp = Sampler::new(&g, 0.7, 4242);
         for i in 0..4 {
             smp.s[i] = 1;
@@ -541,8 +581,14 @@ mod tests {
             want.push(f64::from(smp.read_subset(&[i], Some(&mut led))[0]));
         }
 
-        assert_eq!(got.stored, want, "the lowered program must produce the same states");
-        assert_eq!(got.ledger, led, "and the same device account, operation for operation");
+        assert_eq!(
+            got.stored, want,
+            "the lowered program must produce the same states"
+        );
+        assert_eq!(
+            got.ledger, led,
+            "and the same device account, operation for operation"
+        );
     }
 
     #[test]
@@ -576,7 +622,11 @@ mod tests {
         // a ferromagnetic ring pinned at +1 relaxes to all +1 and stays there.
         let asm = ring_program().assemble().expect("well formed");
         let t = asm.run(Substrate::Spins, f64::INFINITY, 11);
-        assert_eq!(t.stored, vec![1.0; 4], "zero temperature should land in the ground state");
+        assert_eq!(
+            t.stored,
+            vec![1.0; 4],
+            "zero temperature should land in the ground state"
+        );
     }
 
     #[test]
@@ -585,7 +635,11 @@ mod tests {
         // most of its energy before any dynamics happen, because a write is ~21,700 updates.
         let mut short = Program::new(4);
         for i in 0..4 {
-            short.push(Insn::Connect { i, j: (i + 1) % 4, w: 1.0 });
+            short.push(Insn::Connect {
+                i,
+                j: (i + 1) % 4,
+                w: 1.0,
+            });
         }
         short.push(Insn::Evolve { steps: 1 });
         short.push(Insn::Store { i: 0 });
@@ -593,13 +647,20 @@ mod tests {
         let share = asm
             .configuration_share(&Z1_SPICE, Substrate::Spins, 1.0)
             .expect("Z1_SPICE states every price");
-        assert!(share > 0.99, "configuration should dominate a one-sweep program, got {share}");
+        assert!(
+            share > 0.99,
+            "configuration should dominate a one-sweep program, got {share}"
+        );
 
         // Evolve long enough and the balance inverts -- which is the vendor's own conclusion about
         // this hardware class, reached here from their instruction set rather than their table.
         let mut long = Program::new(4);
         for i in 0..4 {
-            long.push(Insn::Connect { i, j: (i + 1) % 4, w: 1.0 });
+            long.push(Insn::Connect {
+                i,
+                j: (i + 1) % 4,
+                w: 1.0,
+            });
         }
         long.push(Insn::Evolve { steps: 1_000_000 });
         long.push(Insn::Store { i: 0 });
@@ -611,7 +672,10 @@ mod tests {
         // 1.23 nJ, so a four-node fabric needs about 390,000 sweeps before configuration falls
         // under a tenth of the bill. That number IS the finding -- an instruction set whose first
         // phase is connectivity has to evolve for a very long time to earn it back.
-        assert!(share < 0.1, "a long evolution should amortise configuration, got {share}");
+        assert!(
+            share < 0.1,
+            "a long evolution should amortise configuration, got {share}"
+        );
     }
 
     #[test]
