@@ -280,7 +280,8 @@ with `--features gpu`. `--trials` must be at least 5.
 The lock is `/tmp/bmi-energy.lock`, held from the preflight through the last
 bracket. Settle is 60 consecutive 1 Hz samples with load1 at or under 2. The
 trial window uses the other-core rule. Pairs alternate ferrotherm then THRML
-and the reverse, with an idle bracket around each pair. The bracket-drift test
+and the reverse. Rules v3 puts one settled idle bracket between every trial,
+and each trial is graded on the two brackets adjacent to it. The bracket-drift test
 is the existing one. Two ferrotherm fabrics run: the GPU lever, and CPU
 `combined`. Each is paired with THRML A and with THRML B on JAX CUDA. NVML
 total energy, RAPL package and RAPL core are separate meters. A summary cell
@@ -293,6 +294,21 @@ cargo build --release -p ferrotherm-thrml-bench --features gpu
 ./target/release/ferrotherm-thrml-bench \
   --out results/grid-energy \
   --grid-energy --cpus CORES --device cuda --threads N \
+  --python /path/to/thrml-0.1.4-venv/bin/python \
+  --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
+```
+
+`--campaign` is the same lock hold for both halves. The quiet gate runs once.
+The fifteen-workload suite is then metered as CPU scalar ferrotherm against
+THRML, and that receipt's device is `cpu`. Grid-energy follows without
+releasing the lock: GPU and CPU `combined` against THRML A and B on JAX CUDA.
+Accuracy is not run. The report's `energy` object has `suite` and `grid`.
+
+```sh
+cargo build --release -p ferrotherm-thrml-bench --features gpu
+./target/release/ferrotherm-thrml-bench \
+  --out results/campaign \
+  --campaign --cpus CORES --device cuda --threads N \
   --python /path/to/thrml-0.1.4-venv/bin/python \
   --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
 ```

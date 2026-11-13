@@ -21,6 +21,16 @@ quiet large-grid energy run: GPU and CPU combined, each against THRML A and B
 on JAX CUDA, sides 64 to 4096, with NVML, RAPL package and RAPL core kept
 separate.
 
+Rules v3 keeps scoring outside the metered window on both harnesses. The
+window is warmup plus draws. Enumeration, the transfer-matrix precompute,
+ESS and accuracy run after it, and `window_audit` records the timers. Each
+meter has its own idle samples and its own 3σ test; a meter without them is
+`ungraded`. Trials run ABBA with one settled 1.0 s bracket between them, and
+each trial's baseline is its two adjacent brackets. The settle stays 60
+load1 samples at or under 2, before every bracket. `--campaign` runs the
+fifteen-workload suite and `--grid-energy` under one lock hold. Every
+receipt carries `rules_version` `v3`.
+
 ### The committed wasm was three weeks behind its own ABI, and two pages called the old one
 
 `ft_ebm_train` gained a `method` parameter on 2026-09-09 (`af6d066`): the C header and the Python,
