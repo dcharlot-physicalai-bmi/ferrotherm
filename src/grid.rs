@@ -1898,6 +1898,12 @@ mod tests {
         assert!(err.message.contains('5'), "{}", err.message);
     }
 
+    fn side8_gap(levers: Levers, seed: u64, warmup: usize, draws: usize) -> (f64, f64, f64) {
+        let a = side8_mean(levers, seed, warmup, draws);
+        let b = side8_mean(levers, seed + 1, warmup, draws);
+        (a, b, (a - b).abs() / 64.0)
+    }
+
     fn side8_mean(levers: Levers, seed: u64, warmup: usize, draws: usize) -> f64 {
         let mut g = OpenIsing::try_new(8, 1.0, 0.3, seed, levers, 1).unwrap();
         let e = g.energies(warmup, draws, 1);

@@ -205,6 +205,33 @@ at 1024 draws, 0.0217 at 2048, and 0.0133 at 4096. Side 8 therefore uses warmup
 is used for every lever. The pilot seeds are not the gate seeds. `parity_design`
 on the receipt records the rule and the pilot gaps.
 
+### Grid energy
+
+`--grid-energy` is the quiet energy run for sides 64, 128, 256, 512, 1024, 2048
+and 4096. It implies `--quiet-gate` and `--grid-scale`, and it does not run the
+accuracy phase. It requires `--device cuda`, `--python-b`, `--cpus`, and a build
+with `--features gpu`. `--trials` must be at least 5.
+
+The lock is `/tmp/bmi-energy.lock`, held from the preflight through the last
+bracket. Settle is 60 consecutive 1 Hz samples with load1 at or under 2. The
+trial window uses the other-core rule. Pairs alternate ferrotherm then THRML
+and the reverse, with an idle bracket around each pair. The bracket-drift test
+is the existing one. Two ferrotherm fabrics run: the GPU lever, and CPU
+`combined`. Each is paired with THRML A and with THRML B on JAX CUDA. NVML
+total energy, RAPL package and RAPL core are separate meters. A summary cell
+is one fabric, one baseline, one meter. `joules_per_ess` is present only when
+that meter is attributable. A THRML process that runs out of memory is
+`THRML_LIMIT` on that side and that meter's J/ESS is absent.
+
+```sh
+cargo build --release -p ferrotherm-thrml-bench --features gpu
+./target/release/ferrotherm-thrml-bench \
+  --out results/grid-energy \
+  --grid-energy --cpus CORES --device cuda --threads N \
+  --python /path/to/thrml-0.1.4-venv/bin/python \
+  --python-b /path/to/thrml-main-2d96f4b4-venv/bin/python
+```
+
 ### Receipt hashes
 
 `spec_sha256` is SHA-256 of `spec.txt`. `receipt_sha256` is SHA-256 of that

@@ -275,6 +275,9 @@ fn three_body(trials: usize, warmup: usize, draws: usize) -> Workload {
 /// Open Ising sides for the large-grid sweep. Not part of [`scaling`].
 pub const GRID_SIDES: [usize; 10] = [8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
 
+/// Sides for `--grid-energy`. Side 8 is the parity sample, not this energy sweep.
+pub const GRID_ENERGY_SIDES: [usize; 7] = [64, 128, 256, 512, 1024, 2048, 4096];
+
 /// Baseline C is not a thing. A is THRML 0.1.4. B is this commit of THRML main, in its own venv.
 pub const THRML_B_COMMIT: &str = "2d96f4b4b67bfa2625d89ed79f0a22c08af3b992";
 pub const THRML_B_SIDE: &str = "thrml-main-2d96f4b4";
