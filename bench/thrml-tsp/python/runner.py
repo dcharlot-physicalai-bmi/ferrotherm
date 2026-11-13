@@ -179,9 +179,11 @@ def bind_device(requested: str):
 def serve(workloads: list[dict], device, platform: str) -> int:
     """JIT once, then sample one seed per command. QUIT ends the process.
 
-    COST is sweeps with no state and no energy, for the joule window.
-    ESS is the energy trace, outside that window.
-    RUN is the accuracy trace: states, or energies when the workload is a GRID.
+    Rules v3: COST is the metered window and holds only warmup plus draws.
+    It returns no states and no energy. ESS, the energy observer, and RUN
+    (states, or energies on a GRID) are scoring and stay outside that window.
+    This runner does not enumerate an exact law and does not precompute a
+    transfer matrix; those steps are on the ferrotherm side, also outside.
     A workload that fails to build is an ERR for that id. The others still run.
     """
     ready = {}

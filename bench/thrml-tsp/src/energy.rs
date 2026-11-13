@@ -89,6 +89,16 @@ pub const NOISE_SIGMA_K: f64 = 3.0;
 /// gate is a separate check and is not this number.
 pub const DRIFT_SIGMA_K: f64 = 3.0;
 
+/// Rules v3. See `METHODOLOGY.md`. The 3σ test above is unchanged.
+pub const RULES_VERSION: &str = "v3";
+
+/// Attempt-037 RAPL bracket: four 0.25 s windows. Settled package steps all
+/// pass 3σ at this length. A longer bracket would shrink sigma below the max
+/// settled step.
+pub const BRACKET_S: f64 = 1.0;
+pub const BRACKET_SLICES: usize = 4;
+pub const BRACKET_SLICE_S: f64 = 0.25;
+
 /// `gross - idle * seconds`, and whether that delta is a positive clearance of the noise band.
 ///
 /// The incremental is always returned, including when it is negative. `attributable` is
@@ -2878,6 +2888,20 @@ pub fn idle_baseline(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_trials_run_ft_thrml_thrml_ft() {
+        let mut seq = Vec::new();
+        for pair in 0..2 {
+            seq.extend(pair_order(pair));
+        }
+        assert_eq!(
+            seq,
+            ["ferrotherm", "thrml", "thrml", "ferrotherm"]
+        );
+        assert!((BRACKET_SLICES as f64 * BRACKET_SLICE_S - BRACKET_S).abs() < 1e-12);
+        assert!((BRACKET_S - 1.0).abs() < 1e-12);
+    }
 
     #[test]
     fn incremental_is_gross_minus_idle_and_the_band_is_visible() {

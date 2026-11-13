@@ -47,13 +47,77 @@ pub fn run(w: &Workload, seed: u64) -> Result<Chain, String> {
 }
 
 pub fn run_with(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<Chain, String> {
+    let sampled = sample_only(w, seed, grid)?;
+    Ok(score_outside(w, sampled)?.0)
+}
+
+/// One timed step of a chain, named so a receipt can say where it ran.
+#[derive(Clone, Debug)]
+pub struct OutsideStep {
+    pub step: &'static str,
+    pub seconds: f64,
+}
+
+/// States and energies from warmup plus draws. No exact law, no ESS.
+#[derive(Clone, Debug)]
+pub struct Sampled {
+    pub seconds: f64,
+    pub energies: Vec<f64>,
+    pub states_spin: Vec<Vec<i8>>,
+    pub states_potts: Vec<Vec<u8>>,
+    pub updates: u64,
+    pub reads: u64,
+}
+
+/// Warmup plus draws only. Enumeration and `ESS` are [`score_outside`].
+pub fn sample_only(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<Sampled, String> {
     if w.open_grid().is_some() {
-        return run_open_grid(w, seed, grid);
+        return sample_open_grid(w, seed, grid);
     }
     match w.kind {
-        Kind::Ising => run_ising(w, seed),
-        Kind::Potts => run_potts(w, seed),
-        Kind::Hubo => run_hubo(w, seed),
+        Kind::Ising => sample_ising(w, seed),
+        Kind::Potts => sample_potts(w, seed),
+        Kind::Hubo => sample_hubo(w, seed),
+    }
+}
+
+/// Exact law and `ESS` for a sample that was already taken. Both timers are outside
+/// the metered window.
+pub fn score_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<OutsideStep>), String> {
+    if w.open_grid().is_some() {
+        let t0 = Instant::now();
+        let sc = score::score_mean_only(
+            &sampled.energies,
+            w.exact_energy.unwrap_or(f64::NAN),
+            sampled.seconds,
+        );
+        let ess_s = t0.elapsed().as_secs_f64();
+        return Ok((
+            chain_from(sampled, sc),
+            vec![
+                OutsideStep { step: "transfer_matrix_precompute", seconds: 0.0 },
+                OutsideStep { step: "ess_tau", seconds: ess_s },
+            ],
+        ));
+    }
+    match w.kind {
+        Kind::Ising => score_ising_outside(w, sampled),
+        Kind::Potts => score_potts_outside(w, sampled),
+        Kind::Hubo => score_hubo_outside(w, sampled),
+    }
+}
+
+fn chain_from(sampled: Sampled, sc: crate::score::Score) -> Chain {
+    Chain {
+        score: sc,
+        updates: sampled.updates,
+        reads: sampled.reads,
+        energies: sampled.energies,
+        states_spin: sampled.states_spin,
+        states_potts: sampled.states_potts,
+        jit_seconds: None,
+        submits: 0,
+        sweeps_per_submit: f64::NAN,
     }
 }
 
@@ -73,7 +137,7 @@ pub fn cost_sweeps(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<
     Ok(n as u64)
 }
 
-fn run_open_grid(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<Chain, String> {
+fn sample_open_grid(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<Sampled, String> {
     let (side, j) = w.open_grid().ok_or_else(|| format!("{} is not an open grid", w.id))?;
     let choice = grid.unwrap_or(GridChoice {
         levers: ferrotherm::grid::Levers::SCALAR,
@@ -84,22 +148,18 @@ fn run_open_grid(w: &Workload, seed: u64, grid: Option<GridChoice>) -> Result<Ch
     let t0 = Instant::now();
     let energies = g.energies(w.warmup, w.draws, w.thin);
     let seconds = t0.elapsed().as_secs_f64();
-    let sc = score::score_mean_only(&energies, w.exact_energy.unwrap_or(f64::NAN), seconds);
     let sweeps = (w.warmup + w.draws * w.thin.max(1)) as u64;
-    Ok(Chain {
-        score: sc,
-        updates: sweeps * w.n as u64,
-        reads: (w.draws * w.n) as u64,
+    Ok(Sampled {
+        seconds,
         energies,
         states_spin: Vec::new(),
         states_potts: Vec::new(),
-        jit_seconds: None,
-        submits: 0,
-        sweeps_per_submit: f64::NAN,
+        updates: sweeps * w.n as u64,
+        reads: (w.draws * w.n) as u64,
     })
 }
 
-fn run_ising(w: &Workload, seed: u64) -> Result<Chain, String> {
+fn sample_ising(w: &Workload, seed: u64) -> Result<Sampled, String> {
     let g = ising_graph(w);
     if g.classes.iter().map(Vec::len).sum::<usize>() != w.n {
         return Err(format!("{} colouring does not cover the graph", w.id));
@@ -119,21 +179,49 @@ fn run_ising(w: &Workload, seed: u64) -> Result<Chain, String> {
     let t0 = Instant::now();
     let set = smp.collect(&plan, Some(&mut led));
     let seconds = t0.elapsed().as_secs_f64();
-    let sc = score_ising(w, &g, set.states(), set.energies(), seconds)?;
-    Ok(Chain {
-        score: sc,
-        updates: led.samples,
-        reads: led.reads,
+    Ok(Sampled {
+        seconds,
         energies: set.energies().to_vec(),
         states_spin: set.states().to_vec(),
         states_potts: Vec::new(),
-        jit_seconds: None,
-        submits: 0,
-        sweeps_per_submit: f64::NAN,
+        updates: led.samples,
+        reads: led.reads,
     })
 }
 
-fn run_potts(w: &Workload, seed: u64) -> Result<Chain, String> {
+fn score_ising_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<OutsideStep>), String> {
+    let g = ising_graph(w);
+    if let Some(mean) = w.exact_energy {
+        let t0 = Instant::now();
+        let sc = score::score_mean_only(&sampled.energies, mean, sampled.seconds);
+        let ess_s = t0.elapsed().as_secs_f64();
+        return Ok((
+            chain_from(sampled, sc),
+            vec![
+                OutsideStep { step: "transfer_matrix_precompute", seconds: 0.0 },
+                OutsideStep { step: "ess_tau", seconds: ess_s },
+            ],
+        ));
+    }
+    let t0 = Instant::now();
+    let exact = exact_boltzmann(&g, w.beta);
+    let enum_s = t0.elapsed().as_secs_f64();
+    let t1 = Instant::now();
+    let hist = score::histogram_spins(&sampled.states_spin);
+    let (e_mean, mag) = exact_spin_observables(&g, &exact);
+    let mae = score::mae(&score::empirical_magnetization(&sampled.states_spin), &mag);
+    let sc = score::score_chain(&hist, &exact, &sampled.energies, e_mean, Some(mae), sampled.seconds);
+    let ess_s = t1.elapsed().as_secs_f64();
+    Ok((
+        chain_from(sampled, sc),
+        vec![
+            OutsideStep { step: "exact_enumeration", seconds: enum_s },
+            OutsideStep { step: "ess_tau", seconds: ess_s },
+        ],
+    ))
+}
+
+fn sample_potts(w: &Workload, seed: u64) -> Result<Sampled, String> {
     let m = potts_model(w);
     let zeros = vec![0u8; w.n];
     let mut smp = potts::Sampler::new(&m, w.beta, seed).from_state(&zeros).map_err(|e| format!("{e:?}"))?;
@@ -142,21 +230,52 @@ fn run_potts(w: &Workload, seed: u64) -> Result<Chain, String> {
     let t0 = Instant::now();
     let run = smp.collect(&plan, Local::HeatBath, Some(&mut led));
     let seconds = t0.elapsed().as_secs_f64();
-    let sc = score_potts(w, &m, run.states(), run.energies(), seconds)?;
-    Ok(Chain {
-        score: sc,
-        updates: led.samples,
-        reads: led.reads,
+    Ok(Sampled {
+        seconds,
         energies: run.energies().to_vec(),
         states_spin: Vec::new(),
         states_potts: run.states().to_vec(),
-        jit_seconds: None,
-        submits: 0,
-        sweeps_per_submit: f64::NAN,
+        updates: led.samples,
+        reads: led.reads,
     })
 }
 
-fn run_hubo(w: &Workload, seed: u64) -> Result<Chain, String> {
+fn score_potts_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<OutsideStep>), String> {
+    if let Some(mean) = w.exact_energy {
+        let t0 = Instant::now();
+        let sc = score::score_mean_only(&sampled.energies, mean, sampled.seconds);
+        return Ok((
+            chain_from(sampled, sc),
+            vec![
+                OutsideStep { step: "transfer_matrix_precompute", seconds: 0.0 },
+                OutsideStep { step: "ess_tau", seconds: t0.elapsed().as_secs_f64() },
+            ],
+        ));
+    }
+    let m = potts_model(w);
+    let t0 = Instant::now();
+    let exact = potts::enumerate(&m, w.beta).map_err(|e| format!("{e:?}"))?;
+    let enum_s = t0.elapsed().as_secs_f64();
+    let t1 = Instant::now();
+    let hist = score::histogram_potts(&sampled.states_potts, w.q);
+    let sc = score::score_chain(
+        &hist,
+        &exact.p,
+        &sampled.energies,
+        exact.mean_energy,
+        None,
+        sampled.seconds,
+    );
+    Ok((
+        chain_from(sampled, sc),
+        vec![
+            OutsideStep { step: "exact_enumeration", seconds: enum_s },
+            OutsideStep { step: "ess_tau", seconds: t1.elapsed().as_secs_f64() },
+        ],
+    ))
+}
+
+fn sample_hubo(w: &Workload, seed: u64) -> Result<Sampled, String> {
     let h = hubo_model(w)?;
     let thin = w.thin.max(1);
     let mut states = Vec::with_capacity(w.draws);
@@ -179,23 +298,41 @@ fn run_hubo(w: &Workload, seed: u64) -> Result<Chain, String> {
     }
     let seconds = t0.elapsed().as_secs_f64();
     let reads = (w.draws * w.n) as u64;
-    let exact_p = exact_hubo(&h, w.beta);
-    let hist = score::histogram_spins(&states);
-    let e_mean = exact_mean_hubo(&h, &exact_p);
-    let mag = score::exact_magnetization(&exact_p, w.n);
-    let mae = score::mae(&score::empirical_magnetization(&states), &mag);
-    let sc = score::score_chain(&hist, &exact_p, &energies, e_mean, Some(mae), seconds);
-    Ok(Chain {
-        score: sc,
-        updates,
-        reads,
+    Ok(Sampled {
+        seconds,
         energies,
         states_spin: states,
         states_potts: Vec::new(),
-        jit_seconds: None,
-        submits: 0,
-        sweeps_per_submit: f64::NAN,
+        updates,
+        reads,
     })
+}
+
+fn score_hubo_outside(w: &Workload, sampled: Sampled) -> Result<(Chain, Vec<OutsideStep>), String> {
+    let h = hubo_model(w)?;
+    let t0 = Instant::now();
+    let exact_p = exact_hubo(&h, w.beta);
+    let enum_s = t0.elapsed().as_secs_f64();
+    let t1 = Instant::now();
+    let hist = score::histogram_spins(&sampled.states_spin);
+    let e_mean = exact_mean_hubo(&h, &exact_p);
+    let mag = score::exact_magnetization(&exact_p, w.n);
+    let mae = score::mae(&score::empirical_magnetization(&sampled.states_spin), &mag);
+    let sc = score::score_chain(
+        &hist,
+        &exact_p,
+        &sampled.energies,
+        e_mean,
+        Some(mae),
+        sampled.seconds,
+    );
+    Ok((
+        chain_from(sampled, sc),
+        vec![
+            OutsideStep { step: "exact_enumeration", seconds: enum_s },
+            OutsideStep { step: "ess_tau", seconds: t1.elapsed().as_secs_f64() },
+        ],
+    ))
 }
 
 /// Score states some other runner produced, with this crate's energy and this crate's oracle.
