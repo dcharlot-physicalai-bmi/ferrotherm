@@ -60,8 +60,10 @@ fn cut_of(g: &Graph, s: &[i8]) -> f64 {
 
 fn main() {
     println!("exact max-cut on planar spin glasses, couplings uniform in {{-1,+1}}\n");
-    println!("  {:>9} {:>7} {:>6} {:>10} {:>12} {:>12} {:>8}",
-             "grid", "spins", "faces", "odd faces", "EXACT cut", "BLS cut", "BLS gap");
+    println!(
+        "  {:>9} {:>7} {:>6} {:>10} {:>12} {:>12} {:>8}",
+        "grid", "spins", "faces", "odd faces", "EXACT cut", "BLS cut", "BLS gap"
+    );
 
     let mut dirty: Option<String> = None;
     for (w, h) in [(10usize, 10usize), (20, 20), (40, 40), (60, 60), (100, 100)] {
@@ -77,7 +79,14 @@ fn main() {
         };
         // The control gets a budget scaled to the instance so it is not being starved.
         let iters = (w * h * 200).max(100_000);
-        let heur = bls::search(&g, &bls::Params { iterations: iters, ..Default::default() }, 5);
+        let heur = bls::search(
+            &g,
+            &bls::Params {
+                iterations: iters,
+                ..Default::default()
+            },
+            5,
+        );
         let hcut = cut_of(&g, &heur.state);
         // A heuristic can never beat an exact answer. If it does, the "exact" one is wrong -- so
         // this is a running check rather than a decoration.
@@ -86,17 +95,28 @@ fn main() {
             "{w}x{h}: breakout local search found {hcut}, above a claimed EXACT maximum of {}",
             out.cut
         );
-        println!("  {:>9} {:>7} {:>6} {:>10} {:>12.0} {:>12.0} {:>7.2}%",
-                 format!("{w}x{h}"), w * h, out.faces, out.odd_faces, out.cut, hcut,
-                 (out.cut - hcut) / out.cut * 100.0);
+        println!(
+            "  {:>9} {:>7} {:>6} {:>10} {:>12.0} {:>12.0} {:>7.2}%",
+            format!("{w}x{h}"),
+            w * h,
+            out.faces,
+            out.odd_faces,
+            out.cut,
+            hcut,
+            (out.cut - hcut) / out.cut * 100.0
+        );
     }
 
     if let Some(c) = &dirty {
         println!("\nNOTE: {c}");
-        println!("No timing is reported above for exactly that reason. The CUTS are unaffected: an");
+        println!(
+            "No timing is reported above for exactly that reason. The CUTS are unaffected: an"
+        );
         println!("exact optimum is the same number whoever else is on the CPU.");
     }
-    println!("\nREADING: the `EXACT cut` column is the maximum, not the best found. `odd faces` is");
+    println!(
+        "\nREADING: the `EXACT cut` column is the maximum, not the best found. `odd faces` is"
+    );
     println!("the size of the matching problem and the real cost driver -- it is what makes this");
     println!("O(n^3) rather than O(2^n), and it is why a 10,000-spin instance is a few minutes");
     println!("rather than the age of the universe.");

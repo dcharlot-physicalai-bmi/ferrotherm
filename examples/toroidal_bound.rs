@@ -52,8 +52,12 @@ fn main() {
         std::process::exit(0);
     };
     let w = emb.rotation(0).len();
-    println!("  recovered a toroidal embedding: {} faces, chi = {}, genus {:?}",
-             emb.faces().len(), emb.euler(), emb.genus());
+    println!(
+        "  recovered a toroidal embedding: {} faces, chi = {}, genus {:?}",
+        emb.faces().len(),
+        emb.euler(),
+        emb.genus()
+    );
     let _ = w;
 
     let (r, t) = Timing::around(|| {
@@ -72,26 +76,38 @@ fn main() {
     // program produced and can hand back is a lower bound in the only sense that matters.
     let ours = bls::search(
         &inst.graph,
-        &bls::Params { iterations: 2_000_000, ..bls::Params::default() },
+        &bls::Params {
+            iterations: 2_000_000,
+            ..bls::Params::default()
+        },
         11,
     );
     let ours_cut = inst.cut(&ours.state);
 
     println!();
-    println!("  upper bound   {:>12.0}   (this run, from the toroidal dual)", b.cut);
+    println!(
+        "  upper bound   {:>12.0}   (this run, from the toroidal dual)",
+        b.cut
+    );
     println!("  our cut       {ours_cut:>12.0}   (this run, breakout local search)");
     if let Some(bk) = best_known {
         println!("  best known    {bk:>12.0}   (published; a lower bound, somebody achieved it)");
         // A cut ABOVE a claimed upper bound would mean the bound is unsound. Worth failing over.
         if bk > b.cut + 1e-6 {
-            eprintln!("\n  ** the published cut {bk} EXCEEDS this upper bound {:.0}, so the bound \
-                       is UNSOUND **", b.cut);
+            eprintln!(
+                "\n  ** the published cut {bk} EXCEEDS this upper bound {:.0}, so the bound \
+                       is UNSOUND **",
+                b.cut
+            );
             std::process::exit(1);
         }
     }
     if ours_cut > b.cut + 1e-6 {
-        eprintln!("\n  ** our own cut {ours_cut} EXCEEDS our own upper bound {:.0}. One of the two \
-                   is wrong and neither is reported. **", b.cut);
+        eprintln!(
+            "\n  ** our own cut {ours_cut} EXCEEDS our own upper bound {:.0}. One of the two \
+                   is wrong and neither is reported. **",
+            b.cut
+        );
         std::process::exit(1);
     }
 
@@ -100,23 +116,38 @@ fn main() {
     println!();
     if (b.cut - ours_cut).abs() < 1e-9 {
         println!("  ** PROVED OPTIMAL, END TO END. This run found a cut of {ours_cut:.0} and this");
-        println!("  run proved nothing above {:.0} exists. No published number was needed.", b.cut);
+        println!(
+            "  run proved nothing above {:.0} exists. No published number was needed.",
+            b.cut
+        );
     } else if gap.abs() < 1e-9 {
         println!("  ** THE BRACKET IS CLOSED: the maximum cut is exactly {lower:.0}. **");
         println!("  The upper bound is this run's; the matching lower bound is the published one,");
         println!("  which is a cut somebody achieved. Our own search reached {ours_cut:.0}.");
     } else {
-        println!("  the maximum cut lies in [{lower:.0}, {:.0}] -- a gap of {gap:.0}, {:.2}% of the",
-                 b.cut, gap / b.cut * 100.0);
-        println!("  bound. Every published G-set figure is the LEFT end of a bracket like this one.");
+        println!(
+            "  the maximum cut lies in [{lower:.0}, {:.0}] -- a gap of {gap:.0}, {:.2}% of the",
+            b.cut,
+            gap / b.cut * 100.0
+        );
+        println!(
+            "  bound. Every published G-set figure is the LEFT end of a bracket like this one."
+        );
     }
 
     println!();
     if b.attained {
-        println!("  ATTAINED: the relaxation's optimum is itself a genuine cut, so the bound is the");
-        println!("  maximum by construction. Energy {:.0}.", b.energy.unwrap_or(f64::NAN));
+        println!(
+            "  ATTAINED: the relaxation's optimum is itself a genuine cut, so the bound is the"
+        );
+        println!(
+            "  maximum by construction. Energy {:.0}.",
+            b.energy.unwrap_or(f64::NAN)
+        );
     } else {
-        println!("  NOT ATTAINED: the relaxation's optimum is an even subgraph of the dual that is");
+        println!(
+            "  NOT ATTAINED: the relaxation's optimum is an even subgraph of the dual that is"
+        );
         println!("  not null-homologous, so it is not a cut and no state is reported. The bound");
         println!("  stands regardless -- every cut IS such a subgraph, so the maximum over the");
         println!("  larger set can only be larger.");

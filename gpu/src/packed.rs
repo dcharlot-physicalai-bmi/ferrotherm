@@ -273,12 +273,20 @@ impl Gpu {
         if total == 0 {
             return Ok((
                 Vec::new(),
-                PackedTiming { submits: 0, dispatches: 0, sweeps: 0, setup_ns: 0, submit_ns: 0 },
+                PackedTiming {
+                    submits: 0,
+                    dispatches: 0,
+                    sweeps: 0,
+                    setup_ns: 0,
+                    submit_ns: 0,
+                },
             ));
         }
         let setup = std::time::Instant::now();
         if side == 0 || !side.is_multiple_of(2) {
-            return Err(format!("packed checkerboard needs an even side, got {side}"));
+            return Err(format!(
+                "packed checkerboard needs an even side, got {side}"
+            ));
         }
         if spins.len() != side * side {
             return Err(format!(
@@ -288,7 +296,9 @@ impl Gpu {
             ));
         }
         if !j.is_finite() || !beta.is_finite() || beta < 0.0 {
-            return Err(format!("packed checkerboard J {j} beta {beta} is not usable"));
+            return Err(format!(
+                "packed checkerboard J {j} beta {beta} is not usable"
+            ));
         }
         let half = side / 2;
         let nw = half.div_ceil(32);
@@ -340,7 +350,10 @@ impl Gpu {
                 steps.push(Step::Energy { sweep, slot });
             }
         }
-        let stride = align_up(PARAMS_BYTES, dev.limits().min_uniform_buffer_offset_alignment as u64);
+        let stride = align_up(
+            PARAMS_BYTES,
+            dev.limits().min_uniform_buffer_offset_alignment as u64,
+        );
         let mut params = vec![0u8; steps.len() * stride as usize];
         let seed32 = packed_seed(seed);
         for (i, step) in steps.iter().enumerate() {
@@ -384,11 +397,14 @@ impl Gpu {
         let layout = dev.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("packed"),
             entries: &[
-                entry(0, wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(PARAMS_BYTES),
-                }),
+                entry(
+                    0,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(PARAMS_BYTES),
+                    },
+                ),
                 entry(1, sto(false)),
                 entry(2, sto(false)),
                 entry(3, sto(true)),
@@ -425,10 +441,22 @@ impl Gpu {
                             size: wgpu::BufferSize::new(PARAMS_BYTES),
                         }),
                     },
-                    wgpu::BindGroupEntry { binding: 1, resource: mine.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 2, resource: other.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 3, resource: b_thresh.as_entire_binding() },
-                    wgpu::BindGroupEntry { binding: 4, resource: b_bonds.as_entire_binding() },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: mine.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: other.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: b_thresh.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: b_bonds.as_entire_binding(),
+                    },
                 ],
             })
         };
@@ -499,7 +527,11 @@ impl Gpu {
                 spins[y * side + x] = if (word >> (k % 32)) & 1 == 1 { 1 } else { -1 };
             }
         }
-        let energies: Vec<f64> = bonds.iter().take(draws as usize).map(|&b| -j * f64::from(b)).collect();
+        let energies: Vec<f64> = bonds
+            .iter()
+            .take(draws as usize)
+            .map(|&b| -j * f64::from(b))
+            .collect();
         Ok((
             energies,
             PackedTiming {
@@ -585,7 +617,7 @@ fn map_u32(device: &wgpu::Device, buf: &wgpu::Buffer) -> Result<Vec<u32>, String
         .get_mapped_range()
         .map_err(|e| format!("mapping failed: {e:?}"))?;
     let mut out = Vec::with_capacity(data.len() / 4);
-    for chunk in data.chunks_exact(4) {
+    for chunk in data.as_chunks::<4>().0 {
         out.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
     }
     drop(data);

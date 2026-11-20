@@ -28,7 +28,9 @@ impl FrameBuf {
     #[must_use]
     /// An empty buffer.
     pub fn new() -> FrameBuf {
-        FrameBuf { frames: BTreeMap::new() }
+        FrameBuf {
+            frames: BTreeMap::new(),
+        }
     }
 
     /// Number of frames the buffer will emit.
@@ -44,7 +46,9 @@ impl FrameBuf {
 
     /// Ensure a frame exists (all zeros) and return it.
     pub fn frame_mut(&mut self, addr: u32) -> &mut Vec<u32> {
-        self.frames.entry(addr).or_insert_with(|| vec![0u32; WORDS_PER_FRAME])
+        self.frames
+            .entry(addr)
+            .or_insert_with(|| vec![0u32; WORDS_PER_FRAME])
     }
 
     /// Apply one resolved bit. Returns an error when the word index is outside the frame, which
@@ -77,9 +81,9 @@ impl FrameBuf {
     /// A message when a bit falls outside the block's frames or words.
     pub fn apply_feature(&mut self, block: &BitsBlock, bits: &[SegBit]) -> Result<(), String> {
         for sb in bits {
-            let a = block
-                .resolve(*sb)
-                .ok_or_else(|| format!("segbit {}_{} outside the tile's extent", sb.frame, sb.bit))?;
+            let a = block.resolve(*sb).ok_or_else(|| {
+                format!("segbit {}_{} outside the tile's extent", sb.frame, sb.bit)
+            })?;
             self.apply(a)?;
         }
         Ok(())
@@ -195,7 +199,12 @@ mod tests {
     use super::*;
 
     fn block() -> BitsBlock {
-        BitsBlock { baseaddr: 0x0042_0100, frames: 36, offset: 0, words: 2 }
+        BitsBlock {
+            baseaddr: 0x0042_0100,
+            frames: 36,
+            offset: 0,
+            words: 2,
+        }
     }
 
     /// Writing into a frame that does not exist yet must allocate it, not drop the bit.
@@ -203,7 +212,13 @@ mod tests {
     fn writing_an_absent_frame_allocates_it() {
         let mut fb = FrameBuf::new();
         assert!(fb.is_empty());
-        fb.apply(BitAddr { frame: 0x0042_0120, word: 0, bit: 15, set: true }).unwrap();
+        fb.apply(BitAddr {
+            frame: 0x0042_0120,
+            word: 0,
+            bit: 15,
+            set: true,
+        })
+        .unwrap();
         assert_eq!(fb.len(), 1);
         assert_eq!(fb.frames[&0x0042_0120][0], 1 << 15);
     }
@@ -212,15 +227,35 @@ mod tests {
     #[test]
     fn clear_bits_are_applied() {
         let mut fb = FrameBuf::new();
-        fb.apply(BitAddr { frame: 1, word: 0, bit: 3, set: true }).unwrap();
-        fb.apply(BitAddr { frame: 1, word: 0, bit: 3, set: false }).unwrap();
+        fb.apply(BitAddr {
+            frame: 1,
+            word: 0,
+            bit: 3,
+            set: true,
+        })
+        .unwrap();
+        fb.apply(BitAddr {
+            frame: 1,
+            word: 0,
+            bit: 3,
+            set: false,
+        })
+        .unwrap();
         assert_eq!(fb.frames[&1][0], 0);
     }
 
     #[test]
     fn word_out_of_frame_is_refused() {
         let mut fb = FrameBuf::new();
-        assert!(fb.apply(BitAddr { frame: 1, word: 101, bit: 0, set: true }).is_err());
+        assert!(
+            fb.apply(BitAddr {
+                frame: 1,
+                word: 101,
+                bit: 0,
+                set: true
+            })
+            .is_err()
+        );
     }
 
     /// A truth table round-trips through the physical bit positions.
@@ -228,13 +263,21 @@ mod tests {
     fn lut_init_round_trip() {
         // the real interleave: even INIT indices in frame 32, odd in 33, bit walking down
         let init_bits: Vec<SegBit> = (0..64)
-            .map(|i| SegBit { frame: 32 + (i % 2) as u16, bit: (15 - (i / 2).min(15)) as u16, set: true })
+            .map(|i| SegBit {
+                frame: 32 + (i % 2) as u16,
+                bit: (15 - (i / 2).min(15)) as u16,
+                set: true,
+            })
             .collect();
         let mut fb = FrameBuf::new();
         // NOTE: this synthetic map reuses coordinates beyond i=31, so use a table that only
         // exercises distinct positions: the low 32 indices map to distinct (frame, bit) pairs.
         let distinct: Vec<SegBit> = (0..64)
-            .map(|i| SegBit { frame: 32 + (i % 2) as u16, bit: (i / 2) as u16, set: true })
+            .map(|i| SegBit {
+                frame: 32 + (i % 2) as u16,
+                bit: (i / 2) as u16,
+                set: true,
+            })
             .collect();
         let table = 0xDEAD_BEEF_1234_5678u64;
         fb.write_lut_init(&block(), &distinct, table).unwrap();
@@ -263,9 +306,19 @@ mod tests {
     fn sealing_removes_every_odd_frame() {
         let mut fb = FrameBuf::new();
         for addr in 0..8u32 {
-            fb.apply(BitAddr { frame: addr, word: 3, bit: (addr % 32) as u16, set: true }).unwrap();
+            fb.apply(BitAddr {
+                frame: addr,
+                word: 3,
+                bit: (addr % 32) as u16,
+                set: true,
+            })
+            .unwrap();
         }
-        assert_eq!(fb.odd_frames(), 8, "the fixture must start with frames to seal");
+        assert_eq!(
+            fb.odd_frames(),
+            8,
+            "the fixture must start with frames to seal"
+        );
         let written = fb.set_x7_parity();
         assert_eq!(written, 8);
         assert_eq!(fb.odd_frames(), 0);
@@ -279,7 +332,13 @@ mod tests {
     #[test]
     fn sealing_is_idempotent() {
         let mut fb = FrameBuf::new();
-        fb.apply(BitAddr { frame: 7, word: 2, bit: 9, set: true }).unwrap();
+        fb.apply(BitAddr {
+            frame: 7,
+            word: 2,
+            bit: 9,
+            set: true,
+        })
+        .unwrap();
         fb.set_x7_parity();
         let once = fb.frames.clone();
         fb.set_x7_parity();

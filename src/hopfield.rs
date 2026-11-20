@@ -33,7 +33,13 @@ use crate::samples::Estimate;
 #[must_use]
 pub fn random_patterns(n: usize, p: usize, seed: u64) -> Vec<Vec<i8>> {
     let mut rng = Pcg::new(seed, 7);
-    (0..p).map(|_| (0..n).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect()).collect()
+    (0..p)
+        .map(|_| {
+            (0..n)
+                .map(|_| if rng.f64() < 0.5 { -1 } else { 1 })
+                .collect()
+        })
+        .collect()
 }
 
 /// The Hebbian couplings `J_ij = (1/N) Σ_μ ξ_i^μ ξ_j^μ` for `i ≠ j`, as a dense graph.
@@ -60,7 +66,12 @@ pub fn hebbian(patterns: &[Vec<i8>]) -> Graph {
 /// The overlap `(1/N) Σ_i ξ_i s_i` of a state with a pattern.
 #[must_use]
 pub fn overlap(pattern: &[i8], s: &[i8]) -> f64 {
-    pattern.iter().zip(s).map(|(&a, &b)| (a as i32 * b as i32) as f64).sum::<f64>() / pattern.len() as f64
+    pattern
+        .iter()
+        .zip(s)
+        .map(|(&a, &b)| (a as i32 * b as i32) as f64)
+        .sum::<f64>()
+        / pattern.len() as f64
 }
 
 /// Curie–Weiss: the positive solution of `m = tanh(βm)`, or `0` for `β ≤ 1`.
@@ -130,7 +141,11 @@ pub fn gauss_hermite(n: usize) -> (Vec<f64>, Vec<f64>) {
 pub fn gaussian_expectation(n: usize, f: impl Fn(f64) -> f64) -> f64 {
     let (x, w) = gauss_hermite(n);
     let s2 = core::f64::consts::SQRT_2;
-    x.iter().zip(&w).map(|(&t, &wt)| wt * f(s2 * t)).sum::<f64>() / core::f64::consts::PI.sqrt()
+    x.iter()
+        .zip(&w)
+        .map(|(&t, &wt)| wt * f(s2 * t))
+        .sum::<f64>()
+        / core::f64::consts::PI.sqrt()
 }
 
 /// A replica-symmetric solution of the AGS equations.
@@ -167,8 +182,16 @@ pub fn ags_rs(alpha: f64, beta: f64) -> RsSolution {
         let m_new = gaussian_expectation(64, |z| (beta * (m + s * z)).tanh());
         let q_new = gaussian_expectation(64, |z| (beta * (m + s * z)).tanh().powi(2));
         let denom = 1.0 - beta * (1.0 - q_new);
-        let r_new = if denom.abs() < 1e-9 { 1e18 } else { q_new / (denom * denom) };
-        let (dm, dq, dr) = ((m_new - m).abs(), (q_new - q).abs(), (r_new - r).abs().min(1.0));
+        let r_new = if denom.abs() < 1e-9 {
+            1e18
+        } else {
+            q_new / (denom * denom)
+        };
+        let (dm, dq, dr) = (
+            (m_new - m).abs(),
+            (q_new - q).abs(),
+            (r_new - r).abs().min(1.0),
+        );
         m = 0.5 * m + 0.5 * m_new;
         q = 0.5 * q + 0.5 * q_new;
         r = 0.5 * r + 0.5 * r_new;
@@ -176,7 +199,14 @@ pub fn ags_rs(alpha: f64, beta: f64) -> RsSolution {
             break;
         }
     }
-    RsSolution { alpha, beta, m, q, r, iterations: it }
+    RsSolution {
+        alpha,
+        beta,
+        m,
+        q,
+        r,
+        iterations: it,
+    }
 }
 
 /// The error function, by the series `erf(x) = (2x/√π) e^{−x²} Σ_n (2x²)ⁿ / (1·3···(2n+1))`.
@@ -201,11 +231,7 @@ pub fn erf(x: f64) -> f64 {
         sum += term;
     }
     let r = 2.0 * ax / core::f64::consts::PI.sqrt() * (-x2).exp() * sum;
-    if x < 0.0 {
-        -r
-    } else {
-        r
-    }
+    if x < 0.0 { -r } else { r }
 }
 
 /// The AGS equations at `T = 0`, in their closed form:
@@ -242,7 +268,14 @@ pub fn ags_zero_t(alpha: f64) -> Option<RsSolution> {
         }
     }
     // q = 1 at T = 0; the `C = β(1 − q)` limit is what `r` carries.
-    Some(RsSolution { alpha, beta: f64::INFINITY, m, q: 1.0, r, iterations: it })
+    Some(RsSolution {
+        alpha,
+        beta: f64::INFINITY,
+        m,
+        q: 1.0,
+        r,
+        iterations: it,
+    })
 }
 
 /// The `T = 0` capacity: the largest load with a retrieval solution, by bisection on
@@ -264,7 +297,14 @@ pub fn capacity_zero_t() -> f64 {
 /// Retrieval measured: a chain started at `pattern`, `burn_in` sweeps, then `draws` sweeps each
 /// recording the overlap, with an error bar from the trace's autocorrelation.
 #[must_use]
-pub fn retrieval_overlap(g: &Graph, pattern: &[i8], beta: f64, burn_in: usize, draws: usize, seed: u64) -> Estimate {
+pub fn retrieval_overlap(
+    g: &Graph,
+    pattern: &[i8],
+    beta: f64,
+    burn_in: usize,
+    draws: usize,
+    seed: u64,
+) -> Estimate {
     let mut sm = Sampler::new(g, beta, seed);
     sm.s.copy_from_slice(pattern);
     sm.sweeps(burn_in, None);
@@ -297,10 +337,18 @@ mod tests {
             (2.0, 0.995_322_265_018_952_7),
             (3.0, 0.999_977_909_503_001_4),
         ] {
-            assert!((erf(x) - want).abs() < 1e-12, "erf({x}) = {}, want {want}", erf(x));
+            assert!(
+                (erf(x) - want).abs() < 1e-12,
+                "erf({x}) = {}, want {want}",
+                erf(x)
+            );
             assert!((erf(-x) + want).abs() < 1e-12);
         }
-        assert_eq!(erf(0.0), 0.0, "exactly zero at zero, which the closed forms depend on");
+        assert_eq!(
+            erf(0.0),
+            0.0,
+            "exactly zero at zero, which the closed forms depend on"
+        );
         assert_eq!(erf(9.0), 1.0);
         assert_eq!(erf(-9.0), -1.0);
     }
@@ -326,7 +374,11 @@ mod tests {
             let got = retrieval_overlap(&g, &pats[0], beta, 200, 2000, 9);
             // finite size: O(1/N) shift plus the chain's own error bar
             let tol = 4.0 * got.stderr + 3.0 / n as f64 + 0.01;
-            assert!((got.value - want).abs() < tol, "beta {beta}: overlap {} vs Curie-Weiss {want} (tol {tol})", got.value);
+            assert!(
+                (got.value - want).abs() < tol,
+                "beta {beta}: overlap {} vs Curie-Weiss {want} (tol {tol})",
+                got.value
+            );
         }
     }
 
@@ -337,25 +389,45 @@ mod tests {
         let low = ags_rs(0.02, beta);
         let high = ags_rs(0.30, beta);
         assert!(low.m > 0.9, "AGS retrieval at alpha 0.02: m = {}", low.m);
-        assert!(high.m < 0.05, "AGS says no retrieval at alpha 0.30: m = {}", high.m);
+        assert!(
+            high.m < 0.05,
+            "AGS says no retrieval at alpha 0.30: m = {}",
+            high.m
+        );
         // and the famous number: at T = 0 the replica-symmetric capacity is 0.138, with the
         // retrieval overlap still about 0.97 just below it -- a first-order transition.
         let ac = capacity_zero_t();
-        assert!((0.135..0.141).contains(&ac), "alpha_c(T=0) = {ac}, expected about 0.138");
+        assert!(
+            (0.135..0.141).contains(&ac),
+            "alpha_c(T=0) = {ac}, expected about 0.138"
+        );
         let just_below = ags_zero_t(ac - 0.002).expect("retrieval just below capacity");
-        assert!(just_below.m > 0.95, "m just below alpha_c = {}", just_below.m);
+        assert!(
+            just_below.m > 0.95,
+            "m just below alpha_c = {}",
+            just_below.m
+        );
         assert!(ags_zero_t(0.16).is_none());
 
         let n = 400;
         let pats_low = random_patterns(n, 8, 2); // α = 0.02
         let g_low = hebbian(&pats_low);
         let got_low = retrieval_overlap(&g_low, &pats_low[0], beta, 100, 400, 3);
-        assert!((got_low.value - low.m).abs() < 4.0 * got_low.stderr + 0.06, "alpha 0.02: sampled {} vs AGS {}", got_low.value, low.m);
+        assert!(
+            (got_low.value - low.m).abs() < 4.0 * got_low.stderr + 0.06,
+            "alpha 0.02: sampled {} vs AGS {}",
+            got_low.value,
+            low.m
+        );
 
         let pats_high = random_patterns(n, 120, 4); // α = 0.30
         let g_high = hebbian(&pats_high);
         let got_high = retrieval_overlap(&g_high, &pats_high[0], beta, 100, 400, 5);
-        assert!(got_high.value < 0.6, "alpha 0.30: the pattern is not retrieved, overlap {}", got_high.value);
+        assert!(
+            got_high.value < 0.6,
+            "alpha 0.30: the pattern is not retrieved, overlap {}",
+            got_high.value
+        );
         assert!(got_low.value > 0.85);
     }
 }

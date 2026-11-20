@@ -63,7 +63,7 @@
 //! only thing `tau_int` can be computed from. Order is kept; [`SampleSet::distinct`] aggregates on
 //! demand.
 
-use crate::certify::{tau_estimate, Certificate};
+use crate::certify::{Certificate, tau_estimate};
 use crate::graph::Graph;
 use crate::ledger::Ledger;
 use std::collections::BTreeMap;
@@ -209,7 +209,10 @@ impl Estimate {
     /// A 95% interval, `value +- 1.96 * stderr`.
     #[must_use]
     pub fn ci95(&self) -> (f64, f64) {
-        (self.value - 1.96 * self.stderr, self.value + 1.96 * self.stderr)
+        (
+            self.value - 1.96 * self.stderr,
+            self.value + 1.96 * self.stderr,
+        )
     }
 
     /// Whether `truth` lies inside [`Self::ci95`]. For calibration checks.
@@ -222,7 +225,11 @@ impl Estimate {
 
 impl core::fmt::Display for Estimate {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:.5} +- {:.5} (ess {:.0}", self.value, self.stderr, self.ess)?;
+        write!(
+            f,
+            "{:.5} +- {:.5} (ess {:.0}",
+            self.value, self.stderr, self.ess
+        )?;
         if self.tau_int.is_finite() {
             write!(f, ", tau {:.1}", self.tau_int)?;
         }
@@ -256,7 +263,11 @@ impl Plan {
     /// the argument with no sensible default there. All three are integers, so a hand-ported
     /// positional call between the two would swap silently — the keyword form does not.
     pub fn new(burn_in: usize, draws: usize, thin: usize) -> Plan {
-        Plan { burn_in, draws, thin: thin.max(1) }
+        Plan {
+            burn_in,
+            draws,
+            thin: thin.max(1),
+        }
     }
 
     /// Total sweeps this plan runs, burn-in included. What the ledger will be charged for
@@ -296,7 +307,16 @@ impl SampleSet {
         burn_in: usize,
         thin: usize,
     ) -> SampleSet {
-        SampleSet::build(states, energies, None, Provenance::Chain { beta, burn_in, thin })
+        SampleSet::build(
+            states,
+            energies,
+            None,
+            Provenance::Chain {
+                beta,
+                burn_in,
+                thin,
+            },
+        )
     }
 
     /// A sequential Monte Carlo population at `beta`, with its family statistic.
@@ -365,7 +385,14 @@ impl SampleSet {
             }
             _ => f64::NAN,
         };
-        SampleSet { states, energies, weights, prov, n, chain_tau }
+        SampleSet {
+            states,
+            energies,
+            weights,
+            prov,
+            n,
+            chain_tau,
+        }
     }
 
     /// The slowest integrated autocorrelation time seen on this chain, over energy and
@@ -470,9 +497,15 @@ impl SampleSet {
             let slot = seen.entry(s.as_slice()).or_insert((e, 0));
             slot.1 += 1;
         }
-        let mut out: Vec<(Vec<i8>, f64, usize)> =
-            seen.into_iter().map(|(s, (e, c))| (s.to_vec(), e, c)).collect();
-        out.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(core::cmp::Ordering::Equal).then_with(|| a.0.cmp(&b.0)));
+        let mut out: Vec<(Vec<i8>, f64, usize)> = seen
+            .into_iter()
+            .map(|(s, (e, c))| (s.to_vec(), e, c))
+            .collect();
+        out.sort_by(|a, b| {
+            a.1.partial_cmp(&b.1)
+                .unwrap_or(core::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
         out
     }
 
@@ -483,7 +516,9 @@ impl SampleSet {
     /// such claim. Only [`Provenance::Enumerated`] can, because only enumeration looked everywhere.
     #[must_use]
     pub fn ground_states(&self, tol: f64) -> Vec<Vec<i8>> {
-        let Some((_, e0)) = self.best() else { return Vec::new() };
+        let Some((_, e0)) = self.best() else {
+            return Vec::new();
+        };
         self.distinct()
             .into_iter()
             .filter(|(_, e, _)| *e <= e0 + tol)
@@ -568,7 +603,12 @@ impl SampleSet {
         // quantity that has none.
         if let Some(w) = &self.weights {
             let value = vals.iter().zip(w.iter()).map(|(v, wk)| v * wk).sum::<f64>();
-            return Ok(Estimate { value, stderr: 0.0, ess: f64::INFINITY, tau_int: f64::NAN });
+            return Ok(Estimate {
+                value,
+                stderr: 0.0,
+                ess: f64::INFINITY,
+                tau_int: f64::NAN,
+            });
         }
 
         let value = vals.iter().sum::<f64>() / n as f64;
@@ -594,19 +634,36 @@ impl SampleSet {
                 // with no error at all. The infinite tau is left in the estimate rather than
                 // sanitised precisely so that reading `tau_int.is_finite()` catches it, and so
                 // does the certificate's `Undermixed` finding.
-                let e = if t.is_finite() && t > 0.0 { n as f64 / (2.0 * t) } else { 1.0 };
+                let e = if t.is_finite() && t > 0.0 {
+                    n as f64 / (2.0 * t)
+                } else {
+                    1.0
+                };
                 (t, e)
             }
             Provenance::Population { rho, .. } => {
-                let r = if rho.is_finite() && rho >= 1.0 { rho } else { 1.0 };
+                let r = if rho.is_finite() && rho >= 1.0 {
+                    rho
+                } else {
+                    1.0
+                };
                 (f64::NAN, (n as f64 / r).max(1.0))
             }
             Provenance::Enumerated { .. } => (f64::NAN, f64::INFINITY),
             Provenance::Search { .. } => unreachable!("refused above"),
         };
 
-        let stderr = if ess.is_finite() && ess > 0.0 { (var / ess).sqrt() } else { 0.0 };
-        Ok(Estimate { value, stderr, ess, tau_int: tau })
+        let stderr = if ess.is_finite() && ess > 0.0 {
+            (var / ess).sqrt()
+        } else {
+            0.0
+        };
+        Ok(Estimate {
+            value,
+            stderr,
+            ess,
+            tau_int: tau,
+        })
     }
 
     /// Certify this set against the model it claims to come from.
@@ -623,11 +680,16 @@ impl SampleSet {
     /// whose provenance is not a chain -- only a chain has an autocorrelation time to certify.
     pub fn certificate(&self, g: &Graph) -> Result<Certificate, Refused> {
         match self.prov {
-            Provenance::Chain { beta, .. } => {
-                Ok(crate::certify::certify(g, beta, &self.states, &self.energies))
-            }
+            Provenance::Chain { beta, .. } => Ok(crate::certify::certify(
+                g,
+                beta,
+                &self.states,
+                &self.energies,
+            )),
             Provenance::Search { method } => Err(Refused::NotDistributional { method }),
-            other => Err(Refused::NotAChain { provenance: other.label() }),
+            other => Err(Refused::NotAChain {
+                provenance: other.label(),
+            }),
         }
     }
 }
@@ -650,7 +712,10 @@ pub const ENUMERATION_LIMIT: usize = 20;
 /// [`Refused::TooLargeToEnumerate`] past the exact limit, since enumeration visits `2^n` states.
 pub fn enumerate(g: &Graph, beta: f64) -> Result<SampleSet, Refused> {
     if g.n > ENUMERATION_LIMIT {
-        return Err(Refused::TooLargeToEnumerate { spins: g.n, limit: ENUMERATION_LIMIT });
+        return Err(Refused::TooLargeToEnumerate {
+            spins: g.n,
+            limit: ENUMERATION_LIMIT,
+        });
     }
     let m = 1usize << g.n;
     let mut states = Vec::with_capacity(m);
@@ -658,7 +723,9 @@ pub fn enumerate(g: &Graph, beta: f64) -> Result<SampleSet, Refused> {
     let mut logw = Vec::with_capacity(m);
     let mut mx = f64::NEG_INFINITY;
     for mask in 0..m {
-        let s: Vec<i8> = (0..g.n).map(|b| if mask >> b & 1 == 1 { 1 } else { -1 }).collect();
+        let s: Vec<i8> = (0..g.n)
+            .map(|b| if mask >> b & 1 == 1 { 1 } else { -1 })
+            .collect();
         let e = g.energy(&s);
         let l = -beta * e;
         if l > mx {
@@ -678,7 +745,12 @@ pub fn enumerate(g: &Graph, beta: f64) -> Result<SampleSet, Refused> {
     for v in &mut logw {
         *v /= z;
     }
-    Ok(SampleSet::build(states, energies, Some(logw), Provenance::Enumerated { beta }))
+    Ok(SampleSet::build(
+        states,
+        energies,
+        Some(logw),
+        Provenance::Enumerated { beta },
+    ))
 }
 
 impl<'g> crate::gibbs::Sampler<'g> {
@@ -789,7 +861,10 @@ mod tests {
                 e.value,
                 truth[i]
             );
-            assert_eq!(e.stderr, 0.0, "nothing was sampled, so there is no sampling error");
+            assert_eq!(
+                e.stderr, 0.0,
+                "nothing was sampled, so there is no sampling error"
+            );
             assert!(e.ess.is_infinite());
         }
     }
@@ -803,7 +878,10 @@ mod tests {
     /// own promise is that a seed produces the same states on every platform tested.
     #[test]
     fn the_corrected_interval_covers_the_exact_marginal_and_the_naive_one_does_not() {
-        let cases: [(Graph, f64); 2] = [(crate::ising::ring(12, 1.0, 0.0), 0.8), (glass(14, 3, 2), 0.5)];
+        let cases: [(Graph, f64); 2] = [
+            (crate::ising::ring(12, 1.0, 0.0), 0.8),
+            (glass(14, 3, 2), 0.5),
+        ];
         let (mut hit, mut naive_hit, mut total) = (0usize, 0usize, 0usize);
         for (g, beta) in &cases {
             let truth = exact_means(g, *beta);
@@ -833,7 +911,10 @@ mod tests {
         // one-sided and loose: the correction is conservative by construction (it takes the
         // SLOWEST observed autocorrelation, see `chain_tau`), so over-coverage is the expected
         // direction and is not a failure.
-        assert!(cov >= 0.90, "corrected interval covered {cov:.3} of {total}, claiming 0.95");
+        assert!(
+            cov >= 0.90,
+            "corrected interval covered {cov:.3} of {total}, claiming 0.95"
+        );
         assert!(
             naive <= 0.75,
             "the naive sqrt(var/N) interval covered {naive:.3}, which would mean the \
@@ -848,7 +929,10 @@ mod tests {
         let beta = 1.0;
         let mut smp = Sampler::new(&g, beta, 99);
         let set = smp.collect(&Plan::new(2_000, 4_000, 1), None);
-        assert!(set.chain_tau() > 1.0, "this beta is meant to be in the slow regime");
+        assert!(
+            set.chain_tau() > 1.0,
+            "this beta is meant to be in the slow regime"
+        );
         let mut lifted = 0;
         for i in 0..g.n {
             let e = set.mean_spin(i).unwrap();
@@ -858,7 +942,8 @@ mod tests {
                 e.tau_int,
                 set.chain_tau()
             );
-            let own = tau_estimate(&[&set.states().iter().map(|s| s[i] as f64).collect::<Vec<_>>()]).tau;
+            let own =
+                tau_estimate(&[&set.states().iter().map(|s| s[i] as f64).collect::<Vec<_>>()]).tau;
             if own < set.chain_tau() - 1e-9 {
                 lifted += 1;
             }
@@ -887,7 +972,10 @@ mod tests {
         assert_eq!(set.correlation(0, 1), Err(refused));
         assert_eq!(set.magnetization(), Err(refused));
         assert_eq!(set.mean_energy(), Err(refused));
-        assert!(format!("{refused}").contains("tabu"), "the refusal must name what refused");
+        assert!(
+            format!("{refused}").contains("tabu"),
+            "the refusal must name what refused"
+        );
     }
 
     /// A certificate is a statement about draw order. Two of the four provenances have none.
@@ -898,14 +986,30 @@ mod tests {
         let energies = vec![g.energy(&states[0]); 40];
 
         let pop = SampleSet::from_population(states.clone(), energies.clone(), 0.5, 1.2);
-        assert_eq!(pop.certificate(&g).unwrap_err(), Refused::NotAChain { provenance: "population" });
+        assert_eq!(
+            pop.certificate(&g).unwrap_err(),
+            Refused::NotAChain {
+                provenance: "population"
+            }
+        );
         let enu = enumerate(&g, 0.5).unwrap();
-        assert_eq!(enu.certificate(&g).unwrap_err(), Refused::NotAChain { provenance: "enumerated" });
+        assert_eq!(
+            enu.certificate(&g).unwrap_err(),
+            Refused::NotAChain {
+                provenance: "enumerated"
+            }
+        );
         let srch = SampleSet::from_search(states.clone(), energies.clone(), "hfs");
-        assert_eq!(srch.certificate(&g).unwrap_err(), Refused::NotDistributional { method: "hfs" });
+        assert_eq!(
+            srch.certificate(&g).unwrap_err(),
+            Refused::NotDistributional { method: "hfs" }
+        );
 
         let chain = SampleSet::from_chain(states, energies, 0.5, 0, 1);
-        assert!(chain.certificate(&g).is_ok(), "a chain is exactly what certify takes");
+        assert!(
+            chain.certificate(&g).is_ok(),
+            "a chain is exactly what certify takes"
+        );
     }
 
     /// The defect this module was written around: collecting states used to be free.
@@ -918,15 +1022,28 @@ mod tests {
         let set = smp.collect(&plan, Some(&mut led));
 
         assert_eq!(set.len(), 30);
-        assert_eq!(led.samples, plan.sweeps() as u64 * g.n as u64, "one Gibbs cycle per free node per sweep");
-        assert_eq!(led.reads, 30 * g.n as u64, "one read per node per kept state");
+        assert_eq!(
+            led.samples,
+            plan.sweeps() as u64 * g.n as u64,
+            "one Gibbs cycle per free node per sweep"
+        );
+        assert_eq!(
+            led.reads,
+            30 * g.n as u64,
+            "one read per node per kept state"
+        );
 
         // And what that omission was worth. A read is 1.692 pJ against 7.09 fJ for a cycle, so a
         // plan at this thinning spends most of its energy on readback -- the exact quantity the
         // hand-written clone loops reported as zero.
         let with = led.joules(&crate::ledger::Z1_SPICE).unwrap();
-        let sweeps_only =
-            Ledger { samples: led.samples, reads: 0, writes: 0 }.joules(&crate::ledger::Z1_SPICE).unwrap();
+        let sweeps_only = Ledger {
+            samples: led.samples,
+            reads: 0,
+            writes: 0,
+        }
+        .joules(&crate::ledger::Z1_SPICE)
+        .unwrap();
         assert!(
             with > 3.0 * sweeps_only,
             "reads were {with:.3e} J total against {sweeps_only:.3e} J of sampling; if that ratio \
@@ -943,7 +1060,10 @@ mod tests {
         let a = Sampler::new(&g, 0.5, 12).collect(&plan, Some(&mut la));
         let b = Sampler::new(&g, 0.5, 12).collect_par(&plan, 4, Some(&mut lb));
         assert_eq!(la.samples, lb.samples, "same sweeps");
-        assert_eq!(la.reads, lb.reads, "and the same reads: the parallel path is not cheaper");
+        assert_eq!(
+            la.reads, lb.reads,
+            "and the same reads: the parallel path is not cheaper"
+        );
         assert_eq!(la.reads, 60 * g.n as u64);
         assert_eq!(a.len(), b.len());
         // The states themselves differ -- the parallel path derives its randomness per (sweep,
@@ -976,7 +1096,11 @@ mod tests {
 
         let enu = enumerate(&g, 2.0).unwrap();
         assert_eq!(enu.best().unwrap().1, -1.0);
-        assert_eq!(enu.ground_states(1e-9).len(), 6, "the frustrated triangle's ground manifold");
+        assert_eq!(
+            enu.ground_states(1e-9).len(),
+            6,
+            "the frustrated triangle's ground manifold"
+        );
 
         let mut smp = Sampler::new(&g, 2.0, 3);
         let chain = smp.collect(&Plan::new(200, 400, 1), None);
@@ -1000,14 +1124,20 @@ mod tests {
 
         let e = set.mean_spin(0).unwrap();
         assert_eq!(e.value, 1.0);
-        assert_eq!(e.stderr, 0.0, "a constant observable has zero sample variance");
+        assert_eq!(
+            e.stderr, 0.0,
+            "a constant observable has zero sample variance"
+        );
         assert!(
             !e.tau_int.is_finite(),
             "the zero-width interval is arithmetically right and reads as certainty; the infinite \
              tau is the only thing standing between a caller and that reading"
         );
         assert_eq!(e.ess, 1.0);
-        assert!(!set.certificate(&g).unwrap().passed(), "and the certificate says so too");
+        assert!(
+            !set.certificate(&g).unwrap().passed(),
+            "and the certificate says so too"
+        );
     }
 
     /// The two moments contrastive divergence matches, against the oracle.
@@ -1027,7 +1157,10 @@ mod tests {
             );
         }
         let m = set.magnetization().unwrap();
-        assert!(m.covers(enu.magnetization().unwrap().value), "magnetization: {m}");
+        assert!(
+            m.covers(enu.magnetization().unwrap().value),
+            "magnetization: {m}"
+        );
     }
 
     #[test]
@@ -1036,15 +1169,24 @@ mod tests {
         let err = enumerate(&g, 0.5).unwrap_err();
         assert_eq!(
             err,
-            Refused::TooLargeToEnumerate { spins: ENUMERATION_LIMIT + 1, limit: ENUMERATION_LIMIT }
+            Refused::TooLargeToEnumerate {
+                spins: ENUMERATION_LIMIT + 1,
+                limit: ENUMERATION_LIMIT
+            }
         );
-        assert!(format!("{err}").contains("exact::marginals"), "a refusal should say what to do instead");
+        assert!(
+            format!("{err}").contains("exact::marginals"),
+            "a refusal should say what to do instead"
+        );
     }
 
     #[test]
     fn a_plan_cannot_thin_by_zero() {
         let p = Plan::new(10, 5, 0);
-        assert_eq!(p.thin, 1, "thinning by zero would return the same state five times");
+        assert_eq!(
+            p.thin, 1,
+            "thinning by zero would return the same state five times"
+        );
         assert_eq!(p.sweeps(), 15);
     }
 
@@ -1053,6 +1195,9 @@ mod tests {
         let r = std::panic::catch_unwind(|| {
             SampleSet::from_search(vec![vec![1i8, 1], vec![1i8]], vec![0.0, 0.0], "x")
         });
-        assert!(r.is_err(), "a set whose states have different widths cannot answer mean_spin(i)");
+        assert!(
+            r.is_err(),
+            "a set whose states have different widths cannot answer mean_spin(i)"
+        );
     }
 }

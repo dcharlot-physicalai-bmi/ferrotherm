@@ -123,7 +123,10 @@ pub(crate) fn advance(reps: &mut [Sampler], swap_every: usize, ledger: Option<&m
                         })
                     })
                     .collect();
-                handles.into_iter().map(|h| h.join().expect("a replica sweep")).collect()
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("a replica sweep"))
+                    .collect()
             });
             if let Some(l) = ledger {
                 l.samples += counted.iter().sum::<u64>();
@@ -138,7 +141,6 @@ pub(crate) fn advance(reps: &mut [Sampler], swap_every: usize, ledger: Option<&m
         }
     }
 }
-
 
 /// Parallel tempering over a beta ladder. Every `swap_every` sweeps, adjacent replicas attempt a
 /// state exchange with probability min(1, `exp(delta_beta` * `delta_E`)) — the standard replica-
@@ -158,7 +160,9 @@ pub fn parallel_tempering(
 ) -> TemperingResult {
     let r = betas.len();
     assert!(r >= 2);
-    let mut reps: Vec<Sampler> = (0..r).map(|i| Sampler::new(g, betas[i], seed ^ (i as u64 * 0x9E37)) ).collect();
+    let mut reps: Vec<Sampler> = (0..r)
+        .map(|i| Sampler::new(g, betas[i], seed ^ (i as u64 * 0x9E37)))
+        .collect();
     let mut swap_rng = Pcg::new(seed ^ 0x5A5A, 3);
     let mut attempts = vec![0u64; r - 1];
     let mut accepts = vec![0u64; r - 1];
@@ -191,7 +195,9 @@ pub fn parallel_tempering(
     TemperingResult {
         best,
         best_e,
-        swap_rates: (0..r - 1).map(|i| accepts[i] as f64 / attempts[i].max(1) as f64).collect(),
+        swap_rates: (0..r - 1)
+            .map(|i| accepts[i] as f64 / attempts[i].max(1) as f64)
+            .collect(),
     }
 }
 
@@ -240,7 +246,11 @@ impl LadderTraces {
     /// The traces as `(β, energies)` pairs, the shape the free-energy estimators take.
     #[must_use]
     pub fn as_pairs(&self) -> Vec<(f64, Vec<f64>)> {
-        self.betas.iter().copied().zip(self.energies.iter().cloned()).collect()
+        self.betas
+            .iter()
+            .copied()
+            .zip(self.energies.iter().cloned())
+            .collect()
     }
 
     /// The free-energy curve — `ln Z`, entropy and heat capacity at every rung — from these
@@ -280,7 +290,9 @@ impl LadderTraces {
         self.betas
             .windows(2)
             .enumerate()
-            .map(|(i, w)| crate::free_energy::bar_pair(w[0], &self.energies[i], w[1], &self.energies[i + 1]))
+            .map(|(i, w)| {
+                crate::free_energy::bar_pair(w[0], &self.energies[i], w[1], &self.energies[i + 1])
+            })
             .collect()
     }
 
@@ -323,7 +335,9 @@ impl LadderTraces {
     /// data it does not have.
     pub fn log_z_total(&self, blocks: usize) -> Result<(f64, f64), String> {
         if blocks < 4 {
-            return Err(format!("{blocks} blocks is too few for a jackknife variance; use at least 4"));
+            return Err(format!(
+                "{blocks} blocks is too few for a jackknife variance; use at least 4"
+            ));
         }
         let len = self.energies.first().map_or(0, std::vec::Vec::len);
         if self.energies.iter().any(|e| e.len() != len) {
@@ -332,7 +346,11 @@ impl LadderTraces {
         if len < blocks * 4 {
             return Err(format!("{len} samples is too few for {blocks} blocks"));
         }
-        let full = self.log_z_differences().iter().map(|s| s.delta).sum::<f64>();
+        let full = self
+            .log_z_differences()
+            .iter()
+            .map(|s| s.delta)
+            .sum::<f64>();
         let edges: Vec<usize> = (0..=blocks).map(|b| b * len / blocks).collect();
         let mut reps = Vec::with_capacity(blocks);
         for b in 0..blocks {
@@ -346,12 +364,15 @@ impl LadderTraces {
                 .betas
                 .windows(2)
                 .enumerate()
-                .map(|(i, w)| crate::free_energy::bar_pair(w[0], &kept[i], w[1], &kept[i + 1]).delta)
+                .map(|(i, w)| {
+                    crate::free_energy::bar_pair(w[0], &kept[i], w[1], &kept[i + 1]).delta
+                })
                 .sum();
             reps.push(total);
         }
         let mean = reps.iter().sum::<f64>() / blocks as f64;
-        let var = (blocks - 1) as f64 / blocks as f64 * reps.iter().map(|r| (r - mean) * (r - mean)).sum::<f64>();
+        let var = (blocks - 1) as f64 / blocks as f64
+            * reps.iter().map(|r| (r - mean) * (r - mean)).sum::<f64>();
         Ok((full, var.max(0.0).sqrt()))
     }
 }
@@ -377,8 +398,13 @@ pub fn parallel_tempering_observed(
 ) -> (TemperingResult, LadderTraces) {
     let r = betas.len();
     assert!(r >= 2);
-    assert!(rounds > burn_in, "every round is burn-in, so there is nothing to record");
-    let mut reps: Vec<Sampler> = (0..r).map(|i| Sampler::new(g, betas[i], seed ^ (i as u64 * 0x9E37))).collect();
+    assert!(
+        rounds > burn_in,
+        "every round is burn-in, so there is nothing to record"
+    );
+    let mut reps: Vec<Sampler> = (0..r)
+        .map(|i| Sampler::new(g, betas[i], seed ^ (i as u64 * 0x9E37)))
+        .collect();
     let mut swap_rng = Pcg::new(seed ^ 0x5A5A, 3);
     let mut attempts = vec![0u64; r - 1];
     let mut accepts = vec![0u64; r - 1];
@@ -430,9 +456,16 @@ pub fn parallel_tempering_observed(
         TemperingResult {
             best,
             best_e,
-            swap_rates: (0..r - 1).map(|i| accepts[i] as f64 / attempts[i].max(1) as f64).collect(),
+            swap_rates: (0..r - 1)
+                .map(|i| accepts[i] as f64 / attempts[i].max(1) as f64)
+                .collect(),
         },
-        LadderTraces { betas: betas.to_vec(), energies, round_trips, round_trip_time },
+        LadderTraces {
+            betas: betas.to_vec(),
+            energies,
+            round_trips,
+            round_trip_time,
+        },
     )
 }
 
@@ -451,18 +484,32 @@ mod observed_tests {
         let g = ising::ring(n, j, h);
         let betas: Vec<f64> = (0..24).map(|k| 2.0 * k as f64 / 23.0).collect();
         let (res, traces) = parallel_tempering_observed(&g, &betas, 3000, 2, 300, 5, None);
-        assert!(res.best_e <= -10.0, "the optimiser still optimises: {}", res.best_e);
+        assert!(
+            res.best_e <= -10.0,
+            "the optimiser still optimises: {}",
+            res.best_e
+        );
         assert_eq!(traces.energies.len(), betas.len());
         assert!(traces.energies.iter().all(|e| e.len() == 2700));
 
         let th = traces.thermodynamics(n, 3.0).unwrap();
         for r in &th.rungs[1..] {
             let truth = ring_log_z(n, j, h, r.beta);
-            assert!((r.log_z - truth).abs() < 0.2 + 4.0 * r.stderr, "beta {}: {} +- {} vs {truth}", r.beta, r.log_z, r.stderr);
+            assert!(
+                (r.log_z - truth).abs() < 0.2 + 4.0 * r.stderr,
+                "beta {}: {} +- {} vs {truth}",
+                r.beta,
+                r.log_z,
+                r.stderr
+            );
         }
         // the anchor is exact and the entropy falls toward ln 2 (two ground states)
         assert!((th.rungs[0].log_z - n as f64 * core::f64::consts::LN_2).abs() < 1e-12);
-        assert!((th.top().entropy - core::f64::consts::LN_2).abs() < 0.4, "S = {}", th.top().entropy);
+        assert!(
+            (th.top().entropy - core::f64::consts::LN_2).abs() < 0.4,
+            "S = {}",
+            th.top().entropy
+        );
     }
 
     /// OBSERVING IS NOT PARTICIPATING: the recorded run must give bit-identical answers.
@@ -479,8 +526,15 @@ mod observed_tests {
             let plain = parallel_tempering(&g, &betas, 400, 3, seed, None);
             let (obs, _) = parallel_tempering_observed(&g, &betas, 400, 3, 50, seed, None);
             assert_eq!(plain.best, obs.best, "seed {seed}: different state");
-            assert_eq!(plain.best_e.to_bits(), obs.best_e.to_bits(), "seed {seed}: different energy");
-            assert_eq!(plain.swap_rates, obs.swap_rates, "seed {seed}: different swap rates");
+            assert_eq!(
+                plain.best_e.to_bits(),
+                obs.best_e.to_bits(),
+                "seed {seed}: different energy"
+            );
+            assert_eq!(
+                plain.swap_rates, obs.swap_rates,
+                "seed {seed}: different swap rates"
+            );
         }
     }
 
@@ -503,9 +557,16 @@ mod observed_tests {
             let (_, tr) = parallel_tempering_observed(&g, &betas, 4000, 2, 1000, seed, None);
             let steps = tr.log_z_differences();
             let total: f64 = steps.iter().map(|s| s.delta).sum();
-            let quad: f64 = steps.iter().map(|s| s.stderr * s.stderr).sum::<f64>().sqrt();
+            let quad: f64 = steps
+                .iter()
+                .map(|s| s.stderr * s.stderr)
+                .sum::<f64>()
+                .sqrt();
             let (tot_j, se_j) = tr.log_z_total(8).unwrap();
-            assert!((tot_j - total).abs() < 1e-12, "the jackknife must not move the ESTIMATE");
+            assert!(
+                (tot_j - total).abs() < 1e-12,
+                "the jackknife must not move the ESTIMATE"
+            );
             zq.push((total - truth) / quad);
             zj.push((total - truth) / se_j);
         }
@@ -518,9 +579,15 @@ mod observed_tests {
         // wide. A tighter threshold than the measurement is theatre -- and is exactly how this
         // module once reported 0.81 for a quantity that is 1.05.
         let tol = |v: f64| 2.0 * v / (2.0 * 24.0f64).sqrt();
-        assert!(sq > 1.15 - tol(sq), "the quadrature bar should be visibly optimistic: sd(z) = {sq}");
+        assert!(
+            sq > 1.15 - tol(sq),
+            "the quadrature bar should be visibly optimistic: sd(z) = {sq}"
+        );
         assert!(sj < sq, "the jackknife must improve on it: {sj} vs {sq}");
-        assert!(sj < 1.3 + tol(sj), "and must not be badly optimistic itself: sd(z) = {sj}");
+        assert!(
+            sj < 1.3 + tol(sj),
+            "and must not be badly optimistic itself: sd(z) = {sj}"
+        );
     }
 
     /// The jackknife refuses what it cannot do rather than returning a number.
@@ -546,8 +613,12 @@ mod observed_tests {
         let steps = traces.log_z_differences();
         assert_eq!(steps.len(), betas.len() - 1);
         let total: f64 = steps.iter().map(|s| s.delta).sum();
-        let truth = ring_log_z(10, 1.0, 0.1, *betas.last().unwrap()) - ring_log_z(10, 1.0, 0.1, betas[0]);
-        assert!((total - truth).abs() < 0.15, "telescoped {total} vs exact {truth}");
+        let truth =
+            ring_log_z(10, 1.0, 0.1, *betas.last().unwrap()) - ring_log_z(10, 1.0, 0.1, betas[0]);
+        assert!(
+            (total - truth).abs() < 0.15,
+            "telescoped {total} vs exact {truth}"
+        );
     }
 }
 
@@ -582,7 +653,10 @@ mod tests {
         for swap_every in [1usize, 8] {
             let a = parallel_tempering(&g, &betas, 30, swap_every, 11, None);
             let b = parallel_tempering(&g, &betas, 30, swap_every, 11, None);
-            assert_eq!(a.best, b.best, "same seed must reproduce at swap_every {swap_every}");
+            assert_eq!(
+                a.best, b.best,
+                "same seed must reproduce at swap_every {swap_every}"
+            );
             assert!((a.best_e - b.best_e).abs() < 1e-12);
         }
     }
@@ -603,8 +677,9 @@ mod tests {
 
             // The serial reference, written out.
             let r = betas.len();
-            let mut reps: Vec<Sampler> =
-                (0..r).map(|i| Sampler::new(&g, betas[i], seed ^ (i as u64 * 0x9E37))).collect();
+            let mut reps: Vec<Sampler> = (0..r)
+                .map(|i| Sampler::new(&g, betas[i], seed ^ (i as u64 * 0x9E37)))
+                .collect();
             let mut swap_rng = Pcg::new(seed ^ 0x5A5A, 3);
             let mut best = reps[r - 1].s.clone();
             let mut best_e = g.energy(&best);
@@ -632,8 +707,14 @@ mod tests {
                 }
             }
 
-            assert_eq!(got.best_e, best_e, "seed {seed:#x}: energy must be bit-identical");
-            assert_eq!(got.best, best, "seed {seed:#x}: state must be bit-identical");
+            assert_eq!(
+                got.best_e, best_e,
+                "seed {seed:#x}: energy must be bit-identical"
+            );
+            assert_eq!(
+                got.best, best,
+                "seed {seed:#x}: state must be bit-identical"
+            );
         }
     }
 
@@ -686,11 +767,23 @@ mod tests {
         }
         let betas = geometric_ladder(0.1, 3.0, 8);
         let res = parallel_tempering(&g, &betas, 200, 5, 0xF00D, None);
-        assert!((res.best_e - e0).abs() < 1e-9, "PT found {} but exact ground state is {}", res.best_e, e0);
+        assert!(
+            (res.best_e - e0).abs() < 1e-9,
+            "PT found {} but exact ground state is {}",
+            res.best_e,
+            e0
+        );
         // ladder health: no dead pair
-        assert!(res.swap_rates.iter().all(|&x| x > 0.05), "dead ladder pair: {:?}", res.swap_rates);
+        assert!(
+            res.swap_rates.iter().all(|&x| x > 0.05),
+            "dead ladder pair: {:?}",
+            res.swap_rates
+        );
         // annealing sanity on the same instance
-        let sched: Vec<(f64, usize)> = geometric_ladder(0.1, 3.0, 30).into_iter().map(|b| (b, 40)).collect();
+        let sched: Vec<(f64, usize)> = geometric_ladder(0.1, 3.0, 30)
+            .into_iter()
+            .map(|b| (b, 40))
+            .collect();
         let (_, e_sa) = anneal(&g, &sched, 0xA11, None);
         assert!((e_sa - e0).abs() < 1e-9, "SA found {e_sa} vs exact {e0}");
     }
@@ -757,7 +850,12 @@ mod schedule_contract {
         let (_s, e) = anneal_scheduled(&g, &schedule, 7, None);
         let after = graph_builds();
 
-        assert_eq!(after, before, "a 4,000-stage anneal rebuilt the program {} time(s)", after - before);
+        assert_eq!(
+            after,
+            before,
+            "a 4,000-stage anneal rebuilt the program {} time(s)",
+            after - before
+        );
         assert!(e.is_finite());
     }
 
@@ -775,7 +873,10 @@ mod schedule_contract {
         let fresh = anneal_scheduled(&g2, &schedule, 11, None);
 
         assert_eq!(reused.1, second.1, "reusing a graph changed the result");
-        assert_eq!(reused.0, fresh.0, "a reused graph disagreed with a freshly built one");
+        assert_eq!(
+            reused.0, fresh.0,
+            "a reused graph disagreed with a freshly built one"
+        );
         assert_eq!(reused.1, fresh.1);
     }
 
@@ -790,7 +891,10 @@ mod schedule_contract {
         let _ = anneal_scheduled(&g, &cold, 3, None);
         let hot_again = anneal_scheduled(&g, &hot, 3, None).1;
 
-        assert_eq!(hot_first, hot_again, "a cold run contaminated a later hot run");
+        assert_eq!(
+            hot_first, hot_again,
+            "a cold run contaminated a later hot run"
+        );
     }
 
     #[test]

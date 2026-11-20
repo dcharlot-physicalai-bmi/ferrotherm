@@ -20,7 +20,10 @@
 //
 // run: cargo run --release --example synchronous_exact
 
-use ferrotherm::autocorr::{apply_distribution, boltzmann, kemeny_constant, peretto, stationary_solved, total_variation, Kernel};
+use ferrotherm::autocorr::{
+    Kernel, apply_distribution, boltzmann, kemeny_constant, peretto, stationary_solved,
+    total_variation,
+};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -87,10 +90,22 @@ fn nearest_beta(g: &Graph, law: &[f64], lo: f64, hi: f64) -> (f64, f64) {
 }
 
 fn run(name: &str, g: &Graph) {
-    println!("  {name}: {} spins, {} colour classes\n", g.n, g.classes.len());
+    println!(
+        "  {name}: {} spins, {} colour classes\n",
+        g.n,
+        g.classes.len()
+    );
     println!(
         "  {:>5}   {:>10} {:>9} {:>10}   {:>10}   {:>12} {:>12} {:>7}   {:>8}",
-        "beta", "TV(sync,B)", "beta_eff", "TV at eff", "TV(fab,B)", "K sync", "K chromatic", "ratio", "drift"
+        "beta",
+        "TV(sync,B)",
+        "beta_eff",
+        "TV at eff",
+        "TV(fab,B)",
+        "K sync",
+        "K chromatic",
+        "ratio",
+        "drift"
     );
     for &beta in &[0.5f64, 1.0, 1.5, 2.0, 3.0] {
         let pi = peretto(g, beta).expect("small");
@@ -98,7 +113,10 @@ fn run(name: &str, g: &Graph) {
         let b = boltzmann(g, beta).expect("small");
         let tv = total_variation(&pi, &b);
         let (b_eff, tv_eff) = nearest_beta(g, &pi, 0.25 * beta, 2.0 * beta);
-        let fab = total_variation(&stationary_solved(g, beta, Kernel::FixedFabric).expect("small"), &b);
+        let fab = total_variation(
+            &stationary_solved(g, beta, Kernel::FixedFabric).expect("small"),
+            &b,
+        );
         let k_sync = kemeny_constant(g, beta, Kernel::Synchronous).expect("small");
         let k_chrom = kemeny_constant(g, beta, Kernel::ChromaticGibbs).expect("small");
         println!(
@@ -111,15 +129,35 @@ fn run(name: &str, g: &Graph) {
 
 fn main() {
     println!("THE SYNCHRONOUS UPDATE AGAINST THE CHROMATIC SWEEP, EXACTLY, ON ALL 2^12 STATES\n");
-    println!("  kernels  Synchronous = Little's dynamics (every site from the previous state); ChromaticGibbs = the sweep the fabric runs");
-    println!("  oracle   Peretto's closed form for the synchronous law (checked by 'drift'), direct solves, Kemeny's constant\n");
-    run("4x3 open grid, +-1 couplings, fields in [-0.2, 0.2] (bipartite)", &grid_glass(4, 3, 7));
-    run("12-ring with chords (0,4) (2,7) (5,10), +-1 couplings, fields in [-0.2, 0.2] (odd cycles)", &chorded_ring(3));
+    println!(
+        "  kernels  Synchronous = Little's dynamics (every site from the previous state); ChromaticGibbs = the sweep the fabric runs"
+    );
+    println!(
+        "  oracle   Peretto's closed form for the synchronous law (checked by 'drift'), direct solves, Kemeny's constant\n"
+    );
+    run(
+        "4x3 open grid, +-1 couplings, fields in [-0.2, 0.2] (bipartite)",
+        &grid_glass(4, 3, 7),
+    );
+    run(
+        "12-ring with chords (0,4) (2,7) (5,10), +-1 couplings, fields in [-0.2, 0.2] (odd cycles)",
+        &chorded_ring(3),
+    );
     println!("  WHAT THE TABLES SAY.\n");
-    println!("  TV(sync,B) is the equilibrium error of updating every site at once: the part of the synchronous");
-    println!("  sampler's output that no number of sweeps removes, beside the shipped fabric's arithmetic error");
-    println!("  TV(fab,B) at the same temperature. beta_eff and TV at eff say how much of it is a temperature shift.");
-    println!("  K is Kemeny's constant per step; a synchronous step and a chromatic sweep both update every site");
-    println!("  once, so the ratio is relaxation per unit of work. 'drift' is the closed form's invariance under");
+    println!(
+        "  TV(sync,B) is the equilibrium error of updating every site at once: the part of the synchronous"
+    );
+    println!(
+        "  sampler's output that no number of sweeps removes, beside the shipped fabric's arithmetic error"
+    );
+    println!(
+        "  TV(fab,B) at the same temperature. beta_eff and TV at eff say how much of it is a temperature shift."
+    );
+    println!(
+        "  K is Kemeny's constant per step; a synchronous step and a chromatic sweep both update every site"
+    );
+    println!(
+        "  once, so the ratio is relaxation per unit of work. 'drift' is the closed form's invariance under"
+    );
     println!("  the kernel and should sit at floating point.");
 }

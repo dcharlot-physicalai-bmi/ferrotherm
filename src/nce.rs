@@ -55,7 +55,11 @@ use crate::rng::Pcg;
 /// `ln(1 + e^x)`, stable at both ends.
 #[inline]
 fn softplus(x: f64) -> f64 {
-    if x > 0.0 { x + (-x).exp().ln_1p() } else { x.exp().ln_1p() }
+    if x > 0.0 {
+        x + (-x).exp().ln_1p()
+    } else {
+        x.exp().ln_1p()
+    }
 }
 
 /// `ln σ(x)`, never forming `σ(x)` and so never rounding a saturated class posterior to 0 or 1.
@@ -154,10 +158,18 @@ impl NoiseModel {
     /// If `s` is not one spin per site.
     #[must_use]
     pub fn log_density(&self, s: &[i8]) -> f64 {
-        assert_eq!(s.len(), self.up.len(), "state width must match the noise model");
+        assert_eq!(
+            s.len(),
+            self.up.len(),
+            "state width must match the noise model"
+        );
         let mut acc = 0.0;
         for (i, &v) in s.iter().enumerate() {
-            acc += if v == 1 { self.ln_up[i] } else { self.ln_down[i] };
+            acc += if v == 1 {
+                self.ln_up[i]
+            } else {
+                self.ln_down[i]
+            };
         }
         acc
     }
@@ -168,7 +180,11 @@ impl NoiseModel {
     ///
     /// If `out` is not one spin per site.
     pub fn draw(&self, rng: &mut Pcg, out: &mut [i8]) {
-        assert_eq!(out.len(), self.up.len(), "state width must match the noise model");
+        assert_eq!(
+            out.len(),
+            self.up.len(),
+            "state width must match the noise model"
+        );
         for (i, v) in out.iter_mut().enumerate() {
             *v = rng.spin(self.up[i]);
         }
@@ -252,7 +268,10 @@ impl Nce {
     #[must_use]
     pub fn normaliser_error(&self, max_width: usize) -> Option<f64> {
         let e = crate::exact::Elimination { max_width };
-        e.log_partition(&self.graph, 1.0).ok()?.log_z.map(|z| self.log_normaliser - z)
+        e.log_partition(&self.graph, 1.0)
+            .ok()?
+            .log_z
+            .map(|z| self.log_normaliser - z)
     }
 
     /// Drop the normaliser and hand back the [`Trained`] the rest of [`crate::ebm`] compares.
@@ -317,18 +336,32 @@ fn check(g: &Graph, data: &Dataset) -> Result<(), Error> {
         return Err(Error::NoData);
     }
     if g.n < data.visible {
-        return Err(Error::TooSmall { spins: g.n, visible: data.visible });
+        return Err(Error::TooSmall {
+            spins: g.n,
+            visible: data.visible,
+        });
     }
     for (r, row) in data.rows.iter().enumerate() {
         if row.len() != data.visible {
-            return Err(Error::RowWidth { row: r, len: row.len(), want: data.visible });
+            return Err(Error::RowWidth {
+                row: r,
+                len: row.len(),
+                want: data.visible,
+            });
         }
         if let Some(at) = row.iter().position(|&v| v != 1 && v != -1) {
-            return Err(Error::NotASpin { row: r, at, value: row[at] });
+            return Err(Error::NotASpin {
+                row: r,
+                at,
+                value: row[at],
+            });
         }
     }
     if g.n != data.visible {
-        return Err(Error::HasLatent { spins: g.n, visible: data.visible });
+        return Err(Error::HasLatent {
+            spins: g.n,
+            visible: data.visible,
+        });
     }
     Ok(())
 }
@@ -482,10 +515,24 @@ pub fn train_nce(
 
 /// What both population routines require of their arguments, in one place.
 fn guard(model: &Graph, data_probability: &[f64], noise: &NoiseModel, ratio: f64) {
-    assert!(model.n <= MAX_ENUMERATED, "population NCE enumerates every state");
-    assert_eq!(data_probability.len(), 1usize << model.n, "one probability per state");
-    assert_eq!(noise.n(), model.n, "noise model must be as wide as the model");
-    assert!(ratio > 0.0 && ratio.is_finite(), "the noise ratio must be positive and finite");
+    assert!(
+        model.n <= MAX_ENUMERATED,
+        "population NCE enumerates every state"
+    );
+    assert_eq!(
+        data_probability.len(),
+        1usize << model.n,
+        "one probability per state"
+    );
+    assert_eq!(
+        noise.n(),
+        model.n,
+        "noise model must be as wide as the model"
+    );
+    assert!(
+        ratio > 0.0 && ratio.is_finite(),
+        "the noise ratio must be positive and finite"
+    );
 }
 
 /// The NCE objective in the INFINITE-DATA limit: both expectations enumerated, no sampling at all.
@@ -615,13 +662,21 @@ mod tests {
         for _ in 0..count {
             let u = rng.f64() * run;
             let mask = cdf.partition_point(|&c| c < u).min(p.len() - 1);
-            rows.push((0..g.n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect());
+            rows.push(
+                (0..g.n)
+                    .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect(),
+            );
         }
         rows
     }
 
     fn log_z(g: &Graph) -> f64 {
-        Elimination::default().log_partition(g, 1.0).unwrap().log_z.unwrap()
+        Elimination::default()
+            .log_partition(g, 1.0)
+            .unwrap()
+            .log_z
+            .unwrap()
     }
 
     /// A model rebuilt with one scalar parameter nudged, for differencing.
@@ -633,7 +688,14 @@ mod tests {
         }
         for i in 0..g.n {
             let b = g.h[i];
-            gb.bias(i, if which == edges.len() + i { b + delta } else { b });
+            gb.bias(
+                i,
+                if which == edges.len() + i {
+                    b + delta
+                } else {
+                    b
+                },
+            );
         }
         gb.build()
     }
@@ -655,7 +717,12 @@ mod tests {
             }
             acc += (-g.energy(&s)).exp();
         }
-        assert!((log_z(&g) - acc.ln()).abs() < 1e-10, "{} vs {}", log_z(&g), acc.ln());
+        assert!(
+            (log_z(&g) - acc.ln()).abs() < 1e-10,
+            "{} vs {}",
+            log_z(&g),
+            acc.ln()
+        );
     }
 
     /// THE GRADIENT IS DIFFERENCED, not watched.
@@ -668,7 +735,10 @@ mod tests {
     fn the_gradient_matches_a_central_difference() {
         let n = 5;
         let g = truth(n);
-        let data = Dataset { visible: n, rows: draws(&g, 60, 11) };
+        let data = Dataset {
+            visible: n,
+            rows: draws(&g, 60, 11),
+        };
         let nm = NoiseModel::fit(Noise::DataMarginals, n, &data);
         let drawn = noise_rows(&nm, 180, 5);
         let c = 0.7;
@@ -683,7 +753,11 @@ mod tests {
             let fd = (nce_objective(&up, c, &data, &nm, &drawn).unwrap()
                 - nce_objective(&dn, c, &data, &nm, &drawn).unwrap())
                 / (2.0 * eps);
-            let analytic = if k < edges.len() { dw[k] } else { dh[k - edges.len()] };
+            let analytic = if k < edges.len() {
+                dw[k]
+            } else {
+                dh[k - edges.len()]
+            };
             assert!(
                 (fd - analytic).abs() < 1e-7,
                 "coordinate {k}: finite difference {fd}, analytic {analytic}"
@@ -693,7 +767,10 @@ mod tests {
         let fd_c = (nce_objective(&g, c + eps, &data, &nm, &drawn).unwrap()
             - nce_objective(&g, c - eps, &data, &nm, &drawn).unwrap())
             / (2.0 * eps);
-        assert!((fd_c - dc).abs() < 1e-7, "normaliser: finite difference {fd_c}, analytic {dc}");
+        assert!(
+            (fd_c - dc).abs() < 1e-7,
+            "normaliser: finite difference {fd_c}, analytic {dc}"
+        );
     }
 
     /// The population gradient differenced the same way, since it is the one the identity below
@@ -721,8 +798,15 @@ mod tests {
             let fd = (nce_population(&perturb(&g, k, eps), c, &pd, &nm, ratio)
                 - nce_population(&perturb(&g, k, -eps), c, &pd, &nm, ratio))
                 / (2.0 * eps);
-            let analytic = if k < edges.len() { dw[k] } else { dh[k - edges.len()] };
-            assert!((fd - analytic).abs() < 1e-8, "coordinate {k}: {fd} vs {analytic}");
+            let analytic = if k < edges.len() {
+                dw[k]
+            } else {
+                dh[k - edges.len()]
+            };
+            assert!(
+                (fd - analytic).abs() < 1e-8,
+                "coordinate {k}: {fd} vs {analytic}"
+            );
         }
         let fd_c = (nce_population(&g, c + eps, &pd, &nm, ratio)
             - nce_population(&g, c - eps, &pd, &nm, ratio))
@@ -757,7 +841,14 @@ mod tests {
                 // factorised distribution rather than the uniform one under another name.
                 let m = Elimination::default().marginals(&g, 1.0).unwrap();
                 let nm = match kind {
-                    Noise::Uniform => NoiseModel::fit(kind, n, &Dataset { visible: n, rows: vec![vec![1i8; n]] }),
+                    Noise::Uniform => NoiseModel::fit(
+                        kind,
+                        n,
+                        &Dataset {
+                            visible: n,
+                            rows: vec![vec![1i8; n]],
+                        },
+                    ),
                     Noise::DataMarginals => NoiseModel::new(m),
                 };
                 let (dw, dh, dc) = nce_population_gradient(&g, z, &pd, &nm, ratio, &edges);
@@ -766,11 +857,17 @@ mod tests {
                     .chain(&dh)
                     .chain(core::iter::once(&dc))
                     .fold(0.0f64, |a, x| a.max(x.abs()));
-                assert!(worst < 1e-12, "n={n} ratio={ratio}: gradient {worst} is not zero");
+                assert!(
+                    worst < 1e-12,
+                    "n={n} ratio={ratio}: gradient {worst} is not zero"
+                );
 
                 // Move the normaliser alone and the gradient must wake up.
                 let (_, _, off) = nce_population_gradient(&g, z + 0.5, &pd, &nm, ratio, &edges);
-                assert!(off.abs() > 1e-3, "n={n} ratio={ratio}: c is not being fitted");
+                assert!(
+                    off.abs() > 1e-3,
+                    "n={n} ratio={ratio}: c is not being fitted"
+                );
             }
         }
     }
@@ -817,21 +914,38 @@ mod tests {
         let n = 5;
         let g = truth(n);
         let z = log_z(&g);
-        let p = FitParams { epochs: 400, lr: 0.2, l2: 0.0 };
+        let p = FitParams {
+            epochs: 400,
+            lr: 0.2,
+            l2: 0.0,
+        };
         let mut gaps = Vec::new();
         for rows in [125usize, 500, 2000] {
             let mut acc = 0.0;
             for seed in 0..16u64 {
-                let data = Dataset { visible: n, rows: draws(&g, rows, 900 + seed) };
-                let fit =
-                    train_nce(&structure(n), &data, &p, Noise::DataMarginals, 5, 40 + seed).unwrap();
+                let data = Dataset {
+                    visible: n,
+                    rows: draws(&g, rows, 900 + seed),
+                };
+                let fit = train_nce(&structure(n), &data, &p, Noise::DataMarginals, 5, 40 + seed)
+                    .unwrap();
                 acc += (fit.log_normaliser - z).abs();
             }
             gaps.push(acc / 16.0);
         }
-        assert!(gaps[2] < gaps[1] && gaps[1] < gaps[0], "normaliser gaps do not shrink: {gaps:?}");
-        assert!(gaps[2] < 0.45 * gaps[0], "normaliser gap barely moved: {gaps:?}");
-        assert!(gaps[2] < 0.05, "normaliser still {} from ln Z at 2000 rows", gaps[2]);
+        assert!(
+            gaps[2] < gaps[1] && gaps[1] < gaps[0],
+            "normaliser gaps do not shrink: {gaps:?}"
+        );
+        assert!(
+            gaps[2] < 0.45 * gaps[0],
+            "normaliser gap barely moved: {gaps:?}"
+        );
+        assert!(
+            gaps[2] < 0.05,
+            "normaliser still {} from ln Z at 2000 rows",
+            gaps[2]
+        );
     }
 
     /// The learned normaliser also matches the FITTED model's own `ln Z`, which is the sharper
@@ -840,11 +954,21 @@ mod tests {
     fn the_learned_normaliser_matches_the_fitted_models_own_log_partition() {
         let n = 5;
         let g = truth(n);
-        let data = Dataset { visible: n, rows: draws(&g, 6000, 77) };
-        let p = FitParams { epochs: 600, lr: 0.2, l2: 0.0 };
+        let data = Dataset {
+            visible: n,
+            rows: draws(&g, 6000, 77),
+        };
+        let p = FitParams {
+            epochs: 600,
+            lr: 0.2,
+            l2: 0.0,
+        };
         let fit = train_nce(&structure(n), &data, &p, Noise::DataMarginals, 5, 3).unwrap();
         let err = fit.normaliser_error(24).unwrap();
-        assert!(err.abs() < 0.02, "learned c is {err} from the fitted graph's own ln Z");
+        assert!(
+            err.abs() < 0.02,
+            "learned c is {err} from the fitted graph's own ln Z"
+        );
     }
 
     /// CONSISTENCY: parameter error shrinks as data grows, on exact draws from a known model.
@@ -856,12 +980,19 @@ mod tests {
         let n = 5;
         let g = truth(n);
         let want = edges(&g);
-        let p = FitParams { epochs: 400, lr: 0.2, l2: 0.0 };
+        let p = FitParams {
+            epochs: 400,
+            lr: 0.2,
+            l2: 0.0,
+        };
         let mut errs = Vec::new();
         for rows in [125usize, 500, 2000] {
             let mut acc = 0.0;
             for seed in 0..16u64 {
-                let data = Dataset { visible: n, rows: draws(&g, rows, 300 + seed) };
+                let data = Dataset {
+                    visible: n,
+                    rows: draws(&g, rows, 300 + seed),
+                };
                 let fit =
                     train_nce(&structure(n), &data, &p, Noise::DataMarginals, 5, 7 + seed).unwrap();
                 let got = edges(&fit.graph);
@@ -876,8 +1007,14 @@ mod tests {
             }
             errs.push(acc / 16.0);
         }
-        assert!(errs[2] < errs[1] && errs[1] < errs[0], "parameter error does not shrink: {errs:?}");
-        assert!(errs[2] < 0.45 * errs[0], "parameter error barely moved: {errs:?}");
+        assert!(
+            errs[2] < errs[1] && errs[1] < errs[0],
+            "parameter error does not shrink: {errs:?}"
+        );
+        assert!(
+            errs[2] < 0.45 * errs[0],
+            "parameter error barely moved: {errs:?}"
+        );
     }
 
     /// SCORED AGAINST THE CEILING, not against the other estimators.
@@ -897,17 +1034,32 @@ mod tests {
     fn nce_reaches_most_of_the_exact_maximum_likelihood_ceiling() {
         let n = 5;
         let g = truth(n);
-        let data = Dataset { visible: n, rows: draws(&g, 4000, 21) };
+        let data = Dataset {
+            visible: n,
+            rows: draws(&g, 4000, 21),
+        };
         let floor = exact_log_likelihood(&structure(n), &data).unwrap();
 
-        let ceiling = train_exact(&structure(n), &data, &FitParams { epochs: 3000, lr: 0.2, l2: 0.0 })
-            .unwrap()
-            .log_likelihood
-            .unwrap();
+        let ceiling = train_exact(
+            &structure(n),
+            &data,
+            &FitParams {
+                epochs: 3000,
+                lr: 0.2,
+                l2: 0.0,
+            },
+        )
+        .unwrap()
+        .log_likelihood
+        .unwrap();
         let got = train_nce(
             &structure(n),
             &data,
-            &FitParams { epochs: 800, lr: 0.2, l2: 0.0 },
+            &FitParams {
+                epochs: 800,
+                lr: 0.2,
+                l2: 0.0,
+            },
             Noise::DataMarginals,
             5,
             9,
@@ -918,8 +1070,14 @@ mod tests {
 
         assert!(ceiling > floor, "the ceiling must beat an untrained model");
         let frac = (got - floor) / (ceiling - floor);
-        assert!(frac > 0.98, "NCE reached {frac} of the exact-ML range ({got} in [{floor}, {ceiling}])");
-        assert!(got <= ceiling + 1e-9, "NCE beat the exact maximum likelihood, which is impossible");
+        assert!(
+            frac > 0.98,
+            "NCE reached {frac} of the exact-ML range ({got} in [{floor}, {ceiling}])"
+        );
+        assert!(
+            got <= ceiling + 1e-9,
+            "NCE beat the exact maximum likelihood, which is impossible"
+        );
     }
 
     /// Uniform noise is the harder contrast and it still works here, which is worth pinning: it is
@@ -929,8 +1087,15 @@ mod tests {
         let n = 5;
         let g = truth(n);
         let z = log_z(&g);
-        let data = Dataset { visible: n, rows: draws(&g, 5000, 55) };
-        let p = FitParams { epochs: 1500, lr: 0.2, l2: 0.0 };
+        let data = Dataset {
+            visible: n,
+            rows: draws(&g, 5000, 55),
+        };
+        let p = FitParams {
+            epochs: 1500,
+            lr: 0.2,
+            l2: 0.0,
+        };
         let fit = train_nce(&structure(n), &data, &p, Noise::Uniform, 5, 12).unwrap();
         assert!(
             (fit.log_normaliser - z).abs() < 0.1,
@@ -944,17 +1109,36 @@ mod tests {
     fn the_refusals_name_what_is_wrong() {
         let p = FitParams::default();
         let s = structure(4);
-        let data = Dataset { visible: 3, rows: vec![vec![1, -1, 1]] };
+        let data = Dataset {
+            visible: 3,
+            rows: vec![vec![1, -1, 1]],
+        };
         assert_eq!(
             train_nce(&s, &data, &p, Noise::Uniform, 1, 0).unwrap_err(),
-            Error::HasLatent { spins: 4, visible: 3 }
+            Error::HasLatent {
+                spins: 4,
+                visible: 3
+            }
         );
-        let empty = Dataset { visible: 4, rows: Vec::new() };
-        assert_eq!(train_nce(&s, &empty, &p, Noise::Uniform, 1, 0).unwrap_err(), Error::NoData);
-        let bad = Dataset { visible: 4, rows: vec![vec![1, -1, 0, 1]] };
+        let empty = Dataset {
+            visible: 4,
+            rows: Vec::new(),
+        };
+        assert_eq!(
+            train_nce(&s, &empty, &p, Noise::Uniform, 1, 0).unwrap_err(),
+            Error::NoData
+        );
+        let bad = Dataset {
+            visible: 4,
+            rows: vec![vec![1, -1, 0, 1]],
+        };
         assert_eq!(
             train_nce(&s, &bad, &p, Noise::Uniform, 1, 0).unwrap_err(),
-            Error::NotASpin { row: 0, at: 2, value: 0 }
+            Error::NotASpin {
+                row: 0,
+                at: 2,
+                value: 0
+            }
         );
     }
 
@@ -975,7 +1159,14 @@ mod tests {
         assert!((acc - 1.0).abs() < 1e-12, "noise density sums to {acc}");
 
         // Uniform is the flat member of the same family.
-        let u = NoiseModel::fit(Noise::Uniform, n, &Dataset { visible: n, rows: vec![vec![1i8; n]] });
+        let u = NoiseModel::fit(
+            Noise::Uniform,
+            n,
+            &Dataset {
+                visible: n,
+                rows: vec![vec![1i8; n]],
+            },
+        );
         assert!((u.log_density(&s) + (n as f64) * 2.0f64.ln()).abs() < 1e-12);
     }
 
@@ -989,12 +1180,18 @@ mod tests {
         let n = 5;
         let g = truth(n);
         let pd = exact_boltzmann(&g, 1.0);
-        let data = Dataset { visible: n, rows: draws(&g, 40000, 4) };
+        let data = Dataset {
+            visible: n,
+            rows: draws(&g, 40000, 4),
+        };
         let nm = NoiseModel::fit(Noise::Uniform, n, &data);
         let drawn = noise_rows(&nm, 120_000, 6);
         let c = log_z(&g);
         let sample = nce_objective(&g, c, &data, &nm, &drawn).unwrap();
         let population = nce_population(&g, c, &pd, &nm, 3.0);
-        assert!((sample - population).abs() < 0.01, "{sample} vs {population}");
+        assert!(
+            (sample - population).abs() < 0.01,
+            "{sample} vs {population}"
+        );
     }
 }

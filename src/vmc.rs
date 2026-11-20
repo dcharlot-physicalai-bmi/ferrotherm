@@ -173,7 +173,10 @@ impl core::fmt::Display for VmcError {
                  visible unit per spin is the whole correspondence"
             ),
             VmcError::NoSamples => {
-                write!(f, "zero samples per step: an average over nothing is not an energy")
+                write!(
+                    f,
+                    "zero samples per step: an average over nothing is not an energy"
+                )
             }
             VmcError::Empty => write!(f, "the ansatz has no visible units"),
             VmcError::NotPositiveDefinite { index } => write!(
@@ -182,7 +185,10 @@ impl core::fmt::Display for VmcError {
                  shift that means a non-finite entry reached it"
             ),
             VmcError::Diverged { step } => {
-                write!(f, "a parameter or an energy stopped being finite at step {step}")
+                write!(
+                    f,
+                    "a parameter or an energy stopped being finite at step {step}"
+                )
             }
         }
     }
@@ -249,7 +255,11 @@ impl Rbm {
     /// between the two optima is what the hidden units bought.
     #[must_use]
     pub fn product(visible: usize) -> Self {
-        Rbm { visible, hidden: 0, p: vec![0.0; visible] }
+        Rbm {
+            visible,
+            hidden: 0,
+            p: vec![0.0; visible],
+        }
     }
 
     /// Visible units, one per spin.
@@ -309,7 +319,10 @@ impl Rbm {
     }
 
     fn theta_into(&self, s: &[i8], out: &mut [f64]) {
-        assert!(s.len() >= self.visible, "an ansatz applied to a state of the wrong size");
+        assert!(
+            s.len() >= self.visible,
+            "an ansatz applied to a state of the wrong size"
+        );
         for j in 0..self.hidden {
             let row = &self.w()[j * self.visible..(j + 1) * self.visible];
             let mut t = self.b()[j];
@@ -497,10 +510,16 @@ impl<'g> Tfim<'g> {
     pub fn variational_energy_exact(&self, psi: &Rbm) -> Result<f64, VmcError> {
         let n = self.g.n;
         if n > MAX_EXACT_SPINS {
-            return Err(VmcError::TooLarge { n, max: MAX_EXACT_SPINS });
+            return Err(VmcError::TooLarge {
+                n,
+                max: MAX_EXACT_SPINS,
+            });
         }
         if psi.visible != n {
-            return Err(VmcError::SizeMismatch { visible: psi.visible, spins: n });
+            return Err(VmcError::SizeMismatch {
+                visible: psi.visible,
+                spins: n,
+            });
         }
         let dim = 1usize << n;
         let mut s = vec![0i8; n];
@@ -545,7 +564,10 @@ impl<'g> Tfim<'g> {
             return Err(VmcError::Empty);
         }
         if n > MAX_EXACT_SPINS {
-            return Err(VmcError::TooLarge { n, max: MAX_EXACT_SPINS });
+            return Err(VmcError::TooLarge {
+                n,
+                max: MAX_EXACT_SPINS,
+            });
         }
         let dim = 1usize << n;
         let mut s = vec![0i8; n];
@@ -570,7 +592,11 @@ impl<'g> Tfim<'g> {
 /// `num_hi / den_lo` unconditionally would return a number BELOW the exact ratio whenever the
 /// numerator is negative, which is the wrong side for an upper bound.
 fn ratio_up(num_hi: f64, den_lo: f64, den_hi: f64) -> f64 {
-    if num_hi >= 0.0 { num_hi / den_lo.max(f64::MIN_POSITIVE) } else { num_hi / den_hi }
+    if num_hi >= 0.0 {
+        num_hi / den_lo.max(f64::MIN_POSITIVE)
+    } else {
+        num_hi / den_hi
+    }
 }
 
 /// `H v` for `H = diag - gamma * (sum of single-spin flips)`, in place of a stored matrix.
@@ -654,8 +680,16 @@ fn lanczos(diag: &[f64], gamma: f64, n: usize, max_steps: usize) -> Ground {
     }
     // The standard Lanczos residual: the norm of H y - theta y is the last beta times the last
     // component of the Ritz vector in the Krylov basis, with no need to form y itself.
-    let tail = if beta.len() >= m { beta[m - 1].abs() } else { 0.0 };
-    Ground { energy: t[best * m + best], residual: tail * vecs[(m - 1) * m + best].abs(), steps: m }
+    let tail = if beta.len() >= m {
+        beta[m - 1].abs()
+    } else {
+        0.0
+    };
+    Ground {
+        energy: t[best * m + best],
+        residual: tail * vecs[(m - 1) * m + best].abs(),
+        steps: m,
+    }
 }
 
 /// A Monte Carlo average and how well it is known.
@@ -694,7 +728,11 @@ fn estimate(e: &[f64]) -> Estimate {
         // One sample says nothing about its own spread, and zero would be a lie about that.
         f64::INFINITY
     };
-    Estimate { mean, stderr, samples: n }
+    Estimate {
+        mean,
+        stderr,
+        samples: n,
+    }
 }
 
 impl Estimate {
@@ -836,7 +874,11 @@ fn sweep(psi: &Rbm, s: &mut [i8], theta: &mut [f64], rng: &mut Pcg) -> u64 {
 /// local energy.
 #[must_use]
 pub fn gradient(o_bar: &[f64], oe: &[f64], e_bar: f64) -> Vec<f64> {
-    o_bar.iter().zip(oe).map(|(ok, oek)| 2.0 * (oek - ok * e_bar)).collect()
+    o_bar
+        .iter()
+        .zip(oe)
+        .map(|(ok, oek)| 2.0 * (oek - ok * e_bar))
+        .collect()
 }
 
 /// In-place Cholesky solve of a symmetric positive-definite system.
@@ -894,7 +936,10 @@ pub fn optimize(h: &Tfim, psi: &mut Rbm, p: &Params, seed: u64) -> Result<Run, V
         return Err(VmcError::Empty);
     }
     if nv != h.g.n {
-        return Err(VmcError::SizeMismatch { visible: nv, spins: h.g.n });
+        return Err(VmcError::SizeMismatch {
+            visible: nv,
+            spins: h.g.n,
+        });
     }
     if p.samples == 0 {
         return Err(VmcError::NoSamples);
@@ -911,7 +956,11 @@ pub fn optimize(h: &Tfim, psi: &mut Rbm, p: &Params, seed: u64) -> Result<Run, V
     let mut o = vec![0.0f64; np];
     let mut o_bar = vec![0.0f64; np];
     let mut oe = vec![0.0f64; np];
-    let mut moment = if sr { vec![0.0f64; np * np] } else { Vec::new() };
+    let mut moment = if sr {
+        vec![0.0f64; np * np]
+    } else {
+        Vec::new()
+    };
     let mut e_vals = Vec::with_capacity(p.samples);
     let (mut proposed, mut accepted) = (0u64, 0u64);
 
@@ -986,8 +1035,16 @@ pub fn optimize(h: &Tfim, psi: &mut Rbm, p: &Params, seed: u64) -> Result<Run, V
         psi.theta_into(&s, &mut theta);
     }
 
-    let acceptance = if proposed == 0 { 0.0 } else { accepted as f64 / proposed as f64 };
-    Ok(Run { history, exact, acceptance })
+    let acceptance = if proposed == 0 {
+        0.0
+    } else {
+        accepted as f64 / proposed as f64
+    };
+    Ok(Run {
+        history,
+        exact,
+        acceptance,
+    })
 }
 
 #[cfg(test)]
@@ -1021,9 +1078,14 @@ mod tests {
     /// wrong signs still produce a plausible number, and this is not.
     fn frustrated4() -> Graph {
         let mut gb = GraphBuilder::new(4);
-        for (a, b, j) in
-            [(0, 1, 1.0), (0, 2, -0.6), (0, 3, 0.35), (1, 2, 0.8), (1, 3, -0.45), (2, 3, 0.7)]
-        {
+        for (a, b, j) in [
+            (0, 1, 1.0),
+            (0, 2, -0.6),
+            (0, 3, 0.35),
+            (1, 2, 0.8),
+            (1, 3, -0.45),
+            (2, 3, 0.7),
+        ] {
             gb.couple(a, b, j);
         }
         for (i, hi) in [0.25, -0.4, 0.1, 0.55].into_iter().enumerate() {
@@ -1044,12 +1106,16 @@ mod tests {
     /// `up/down = G / (sqrt(h^2 + G^2) - h)`, and the product ansatz produces `exp(2 a_i)` for that
     /// ratio, so `a_i` is half its logarithm.
     fn product_optimum(h: &[f64], gamma: f64) -> Vec<f64> {
-        h.iter().map(|&hi| 0.5 * (gamma / (hi.hypot(gamma) - hi)).ln()).collect()
+        h.iter()
+            .map(|&hi| 0.5 * (gamma / (hi.hypot(gamma) - hi)).ln())
+            .collect()
     }
 
     /// Spins of the configuration `x` writes in binary, bit set meaning `+1`.
     fn state(x: usize, n: usize) -> Vec<i8> {
-        (0..n).map(|i| if x >> i & 1 == 1 { 1 } else { -1 }).collect()
+        (0..n)
+            .map(|i| if x >> i & 1 == 1 { 1 } else { -1 })
+            .collect()
     }
 
     /// ORACLE: the closed-form spectrum of the transverse-field Ising model, on the systems where it
@@ -1070,7 +1136,12 @@ mod tests {
         let one = field_only(&[0.7]);
         let e = Tfim::new(&one, 1.3).ground_energy().unwrap();
         let want = 0.7f64.hypot(1.3);
-        assert!((e.energy + want).abs() < 1e-12, "one spin: {} vs {}", e.energy, -want);
+        assert!(
+            (e.energy + want).abs() < 1e-12,
+            "one spin: {} vs {}",
+            e.energy,
+            -want
+        );
 
         let mut gb = GraphBuilder::new(2);
         gb.couple(0, 1, 0.9);
@@ -1083,8 +1154,16 @@ mod tests {
         let g = field_only(&hs);
         let e = Tfim::new(&g, 0.8).ground_energy().unwrap();
         let want = non_interacting_energy(&hs, 0.8);
-        assert!((e.energy - want).abs() < 1e-12, "five uncoupled: {} vs {want}", e.energy);
-        assert!(e.residual < 1e-10, "an exhausted Krylov space must leave no residual: {}", e.residual);
+        assert!(
+            (e.energy - want).abs() < 1e-12,
+            "five uncoupled: {} vs {want}",
+            e.energy
+        );
+        assert!(
+            e.residual < 1e-10,
+            "an exhausted Krylov space must leave no residual: {}",
+            e.residual
+        );
     }
 
     /// ORACLE: [`crate::exact::Elimination`], an existing module with its own.
@@ -1099,8 +1178,16 @@ mod tests {
     fn exact_diagonalisation_matches_the_elimination_oracle_with_the_field_off() {
         let g = frustrated4();
         let ed = Tfim::new(&g, 0.0).ground_energy().unwrap();
-        let classical = Elimination::default().ground_state(&g).unwrap().ground_energy.unwrap();
-        assert!((ed.energy - classical).abs() < 1e-12, "{} vs {classical}", ed.energy);
+        let classical = Elimination::default()
+            .ground_state(&g)
+            .unwrap()
+            .ground_energy
+            .unwrap();
+        assert!(
+            (ed.energy - classical).abs() < 1e-12,
+            "{} vs {classical}",
+            ed.energy
+        );
     }
 
     /// ORACLE: the closed-form single-spin ground state, through the ZERO-VARIANCE PROPERTY.
@@ -1123,18 +1210,25 @@ mod tests {
         let want = non_interacting_energy(&hs, gamma);
 
         let mut psi = Rbm::product(hs.len());
-        psi.params_mut().copy_from_slice(&product_optimum(&hs, gamma));
+        psi.params_mut()
+            .copy_from_slice(&product_optimum(&hs, gamma));
 
         let mut worst = 0.0f64;
         for x in 0..(1usize << hs.len()) {
             let s = state(x, hs.len());
             worst = worst.max((h.local_energy(&psi, &s) - want).abs());
         }
-        assert!(worst < 1e-13, "local energy is not flat: worst deviation {worst:e}");
+        assert!(
+            worst < 1e-13,
+            "local energy is not flat: worst deviation {worst:e}"
+        );
 
         // And therefore the variational energy is the exact one, with no sampling involved.
         let var = h.variational_energy_exact(&psi).unwrap();
-        assert!((var - want).abs() < 1e-13, "variational {var} vs exact {want}");
+        assert!(
+            (var - want).abs() < 1e-13,
+            "variational {var} vs exact {want}"
+        );
     }
 
     /// ORACLE: central finite differences of [`Rbm::log_psi`], which shares no line with the
@@ -1157,7 +1251,11 @@ mod tests {
             let down = psi.log_psi(&s);
             psi.params_mut()[k] = keep;
             let fd = (up - down) / (2.0 * eps);
-            assert!((got[k] - fd).abs() < 1e-9, "parameter {k}: analytic {} against {fd}", got[k]);
+            assert!(
+                (got[k] - fd).abs() < 1e-9,
+                "parameter {k}: analytic {} against {fd}",
+                got[k]
+            );
         }
     }
 
@@ -1172,7 +1270,9 @@ mod tests {
         let n = 6;
         let psi = Rbm::new(n, 4, 0.6, 3);
         let dim = 1usize << n;
-        let mut want: Vec<f64> = (0..dim).map(|x| (2.0 * psi.log_psi(&state(x, n))).exp()).collect();
+        let mut want: Vec<f64> = (0..dim)
+            .map(|x| (2.0 * psi.log_psi(&state(x, n))).exp())
+            .collect();
         let z: f64 = want.iter().sum();
         for v in &mut want {
             *v /= z;
@@ -1197,7 +1297,10 @@ mod tests {
         let d = tv(&got, &want);
         // The statistical floor for 64 bins at this count is about 0.005; sampling |psi| instead of
         // |psi|^2 with these weights is 0.19, thirty times the threshold.
-        assert!(d < 0.01, "total variation from the enumerated |psi|^2 is {d}");
+        assert!(
+            d < 0.01,
+            "total variation from the enumerated |psi|^2 is {d}"
+        );
     }
 
     /// ORACLE: [`Tfim::variational_energy_exact`], the same quantity enumerated rather than sampled.
@@ -1223,7 +1326,11 @@ mod tests {
         let run = optimize(&h, &mut psi, &p, 31).unwrap();
         let est = run.history[0];
         let truth = run.exact[0];
-        assert!(est.stderr < 0.05, "the error bar must be tight enough to test with: {}", est.stderr);
+        assert!(
+            est.stderr < 0.05,
+            "the error bar must be tight enough to test with: {}",
+            est.stderr
+        );
         assert!(
             (est.mean - truth).abs() <= 4.0 * est.stderr,
             "sampled {} +- {}, enumerated {truth}",
@@ -1268,7 +1375,11 @@ mod tests {
         }
         let last = h.variational_energy_exact(&psi).unwrap();
         let rel = (last - ed.energy).abs() / ed.energy.abs();
-        assert!(rel < 1e-3, "converged to {last} against {} ({rel:e} relative)", ed.energy);
+        assert!(
+            rel < 1e-3,
+            "converged to {last} against {} ({rel:e} relative)",
+            ed.energy
+        );
     }
 
     /// ORACLE: `-sum_i sqrt(h_i^2 + Gamma^2)` and [`product_optimum`], both closed forms.
@@ -1308,7 +1419,10 @@ mod tests {
             );
         }
         let lowest = run.exact.iter().copied().fold(f64::INFINITY, f64::min);
-        assert!(lowest >= want - 1e-12, "a step reached {lowest}, below the exact {want}");
+        assert!(
+            lowest >= want - 1e-12,
+            "a step reached {lowest}, below the exact {want}"
+        );
     }
 
     /// ORACLE: exact diagonalisation, as the target both optimisers are timed against.
@@ -1345,23 +1459,42 @@ mod tests {
         let mut best_sgd = usize::MAX;
         for lr in [0.02, 0.05, 0.1, 0.2] {
             let mut psi = Rbm::new(6, 6, 0.1, 4);
-            let p = Params { learning_rate: lr, ..base };
+            let p = Params {
+                learning_rate: lr,
+                ..base
+            };
             let run = optimize(&h, &mut psi, &p, 9).unwrap();
             if let Some(k) = run.first_within(ed.energy, tol) {
                 best_sgd = best_sgd.min(k);
             }
         }
-        assert!(best_sgd < usize::MAX, "no gradient-descent rate converged, so nothing is compared");
+        assert!(
+            best_sgd < usize::MAX,
+            "no gradient-descent rate converged, so nothing is compared"
+        );
 
         let mut psi = Rbm::new(6, 6, 0.1, 4);
-        let p = Params { steps: 60, optimizer: Optimizer::Sr { diag_shift: 0.01 }, ..base };
+        let p = Params {
+            steps: 60,
+            optimizer: Optimizer::Sr { diag_shift: 0.01 },
+            ..base
+        };
         let run = optimize(&h, &mut psi, &p, 9).unwrap();
-        let sr = run.first_within(ed.energy, tol).expect("reconfiguration did not converge");
-        assert!(sr < best_sgd, "reconfiguration took {sr} steps, the best gradient descent {best_sgd}");
+        let sr = run
+            .first_within(ed.energy, tol)
+            .expect("reconfiguration did not converge");
+        assert!(
+            sr < best_sgd,
+            "reconfiguration took {sr} steps, the best gradient descent {best_sgd}"
+        );
 
         let got = h.variational_energy_exact(&psi).unwrap();
         let rel = (got - ed.energy).abs() / ed.energy.abs();
-        assert!(rel < 1e-4, "reconfiguration settled at {got} against {} ({rel:e})", ed.energy);
+        assert!(
+            rel < 1e-4,
+            "reconfiguration settled at {got} against {} ({rel:e})",
+            ed.energy
+        );
     }
 
     /// ORACLE: exact diagonalisation, and the product ansatz as the control.
@@ -1397,11 +1530,25 @@ mod tests {
         optimize(&h, &mut net, &p, 21).unwrap();
         let e_nn = h.variational_energy_exact(&net).unwrap();
 
-        assert!(e_mf >= ed.energy, "the product optimum {e_mf} is below the exact {}", ed.energy);
-        assert!(e_nn >= ed.energy, "the network optimum {e_nn} is below the exact {}", ed.energy);
-        assert!(e_nn < e_mf - 0.3, "network {e_nn} did not beat mean field {e_mf}");
+        assert!(
+            e_mf >= ed.energy,
+            "the product optimum {e_mf} is below the exact {}",
+            ed.energy
+        );
+        assert!(
+            e_nn >= ed.energy,
+            "the network optimum {e_nn} is below the exact {}",
+            ed.energy
+        );
+        assert!(
+            e_nn < e_mf - 0.3,
+            "network {e_nn} did not beat mean field {e_mf}"
+        );
         let closed = (e_mf - e_nn) / (e_mf - ed.energy);
-        assert!(closed > 0.99, "the hidden units closed only {closed} of the mean-field gap");
+        assert!(
+            closed > 0.99,
+            "the hidden units closed only {closed} of the mean-field gap"
+        );
     }
 
     /// Two runs from one seed are the same run, parameter for parameter.
@@ -1412,7 +1559,11 @@ mod tests {
     fn a_run_is_reproducible_from_its_seed() {
         let g = chain(5, 0.8);
         let h = Tfim::new(&g, 0.9);
-        let p = Params { steps: 20, samples: 200, ..Params::default() };
+        let p = Params {
+            steps: 20,
+            samples: 200,
+            ..Params::default()
+        };
         let mut a = Rbm::new(5, 3, 0.2, 8);
         let mut b = Rbm::new(5, 3, 0.2, 8);
         let ra = optimize(&h, &mut a, &p, 55).unwrap();
@@ -1432,16 +1583,25 @@ mod tests {
         let mut wrong = Rbm::new(5, 2, 0.1, 1);
         assert_eq!(
             optimize(&h, &mut wrong, &p, 1).unwrap_err(),
-            VmcError::SizeMismatch { visible: 5, spins: 4 }
+            VmcError::SizeMismatch {
+                visible: 5,
+                spins: 4
+            }
         );
-        assert_eq!(h.variational_energy_exact(&wrong), Err(VmcError::SizeMismatch {
-            visible: 5,
-            spins: 4
-        }));
+        assert_eq!(
+            h.variational_energy_exact(&wrong),
+            Err(VmcError::SizeMismatch {
+                visible: 5,
+                spins: 4
+            })
+        );
 
         let mut psi = Rbm::new(4, 2, 0.1, 1);
         let none = Params { samples: 0, ..p };
-        assert_eq!(optimize(&h, &mut psi, &none, 1).unwrap_err(), VmcError::NoSamples);
+        assert_eq!(
+            optimize(&h, &mut psi, &none, 1).unwrap_err(),
+            VmcError::NoSamples
+        );
 
         let empty = GraphBuilder::new(0).build();
         assert_eq!(Tfim::new(&empty, 0.5).ground_energy(), Err(VmcError::Empty));
@@ -1449,7 +1609,10 @@ mod tests {
         let big = chain(MAX_EXACT_SPINS + 1, 1.0);
         assert_eq!(
             Tfim::new(&big, 0.5).ground_energy(),
-            Err(VmcError::TooLarge { n: MAX_EXACT_SPINS + 1, max: MAX_EXACT_SPINS })
+            Err(VmcError::TooLarge {
+                n: MAX_EXACT_SPINS + 1,
+                max: MAX_EXACT_SPINS
+            })
         );
         assert!(
             VmcError::NoSamples.to_string().contains("not an energy"),

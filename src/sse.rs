@@ -165,7 +165,10 @@ impl core::fmt::Display for Invalid {
                  field is the same spectrum under sx -> -sx, so this is a lost sign upstream"
             ),
             Invalid::NonFinite { site } => {
-                write!(f, "site {site} carries a non-finite coupling or bias, so it has no weight")
+                write!(
+                    f,
+                    "site {site} carries a non-finite coupling or bias, so it has no weight"
+                )
             }
             Invalid::TooFewSweeps { measure, min } => write!(
                 f,
@@ -197,7 +200,13 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { beta: 1.0, gamma: 1.0, equilibrate: 2_000, measure: 10_000, cutoff: 32 }
+        Params {
+            beta: 1.0,
+            gamma: 1.0,
+            equilibrate: 2_000,
+            measure: 10_000,
+            cutoff: 32,
+        }
     }
 }
 
@@ -339,9 +348,22 @@ fn estimate(trace: &[f64]) -> Estimate {
     let tau = crate::certify::tau_estimate(&[trace]).tau;
     // An infinite tau is a frozen trace, and it is left in the estimate rather than sanitised so
     // that reading `tau_int.is_finite()` still catches one -- the choice `samples` documents.
-    let ess = if tau.is_finite() && tau > 0.0 { n as f64 / (2.0 * tau) } else { 1.0 };
-    let stderr = if ess.is_finite() && ess > 0.0 { (var / ess).sqrt() } else { 0.0 };
-    Estimate { value, stderr, ess, tau_int: tau }
+    let ess = if tau.is_finite() && tau > 0.0 {
+        n as f64 / (2.0 * tau)
+    } else {
+        1.0
+    };
+    let stderr = if ess.is_finite() && ess > 0.0 {
+        (var / ess).sqrt()
+    } else {
+        0.0
+    };
+    Estimate {
+        value,
+        stderr,
+        ess,
+        tau_int: tau,
+    }
 }
 
 /// An affine image of an estimate, `add + mul * e`, carrying the interval exactly.
@@ -377,7 +399,10 @@ impl<'g> Sse<'g> {
             return Err(Invalid::Gamma { gamma: p.gamma });
         }
         if p.measure < MIN_MEASURE {
-            return Err(Invalid::TooFewSweeps { measure: p.measure, min: MIN_MEASURE });
+            return Err(Invalid::TooFewSweeps {
+                measure: p.measure,
+                min: MIN_MEASURE,
+            });
         }
         for i in 0..g.n {
             if !g.h[i].is_finite() {
@@ -399,14 +424,22 @@ impl<'g> Sse<'g> {
             for k in g.offset[i]..g.offset[i + 1] {
                 let j = g.nbr[k] as usize;
                 if j > i {
-                    bonds.push(Bond { i: i as u32, j: j as u32, w: g.w[k] });
+                    bonds.push(Bond {
+                        i: i as u32,
+                        j: j as u32,
+                        w: g.w[k],
+                    });
                 }
             }
         }
         if let Some(gi) = ghost {
             for i in 0..g.n {
                 if g.h[i] != 0.0 {
-                    bonds.push(Bond { i: i as u32, j: gi as u32, w: g.h[i] });
+                    bonds.push(Bond {
+                        i: i as u32,
+                        j: gi as u32,
+                        w: g.h[i],
+                    });
                 }
             }
         }
@@ -548,7 +581,10 @@ impl<'g> Sse<'g> {
             match self.op[p] {
                 Op::Id => {
                     let u = self.rng.f64() * self.w_max;
-                    let k = self.cum.partition_point(|&c| c <= u).min(self.cand.len() - 1);
+                    let k = self
+                        .cum
+                        .partition_point(|&c| c <= u)
+                        .min(self.cand.len() - 1);
                     let (op, live) = match self.cand[k] {
                         Cand::Bond(b) => {
                             let bond = self.bonds[b as usize];
@@ -618,7 +654,12 @@ impl<'g> Sse<'g> {
                         self.seg_spin[below]
                     };
                     self.seg_spin.push(sp);
-                    self.cuts.push(Cut { p, site: i, below, above });
+                    self.cuts.push(Cut {
+                        p,
+                        site: i,
+                        below,
+                        above,
+                    });
                     self.cur[site] = above;
                 }
             }
@@ -763,7 +804,12 @@ pub fn run_metered(
     } else {
         // Not estimated, and deliberately given no interval: `sx` is purely off-diagonal, so its
         // expectation under a diagonal Hamiltonian is zero identically rather than on average.
-        Estimate { value: 0.0, stderr: 0.0, ess: f64::INFINITY, tau_int: f64::NAN }
+        Estimate {
+            value: 0.0,
+            stderr: 0.0,
+            ess: f64::INFINITY,
+            tau_int: f64::NAN,
+        }
     };
     Ok(Outcome {
         energy,
@@ -872,8 +918,14 @@ mod tests {
             for &(beta, gamma) in &[(0.5f64, 1.0f64), (2.0, 0.3), (1.0, 2.0)] {
                 let (e, mz, mx, lo) = ed(&g, gamma, beta);
                 let want = -gamma * n as f64 * (beta * gamma).tanh();
-                assert!((e - want).abs() < 1e-10, "n={n} beta={beta} gamma={gamma}: {e} vs {want}");
-                assert!(mz.abs() < 1e-10, "no field, no longitudinal magnetisation: {mz}");
+                assert!(
+                    (e - want).abs() < 1e-10,
+                    "n={n} beta={beta} gamma={gamma}: {e} vs {want}"
+                );
+                assert!(
+                    mz.abs() < 1e-10,
+                    "no field, no longitudinal magnetisation: {mz}"
+                );
                 assert!((mx - (beta * gamma).tanh()).abs() < 1e-10, "mx {mx}");
                 assert!((lo + gamma * n as f64).abs() < 1e-10, "ground energy {lo}");
             }
@@ -890,14 +942,43 @@ mod tests {
         let mut gb = GraphBuilder::new(2);
         gb.couple(0, 1, 1.0);
         let g = gb.build();
-        for &(beta, gamma) in &[(0.5f64, 0.5f64), (1.0, 1.0), (2.0, 0.4), (1.5, 2.0), (3.0, 1.0)] {
-            let p = Params { beta, gamma, equilibrate: 2_000, measure: 150_000, cutoff: 16 };
+        for &(beta, gamma) in &[
+            (0.5f64, 0.5f64),
+            (1.0, 1.0),
+            (2.0, 0.4),
+            (1.5, 2.0),
+            (3.0, 1.0),
+        ] {
+            let p = Params {
+                beta,
+                gamma,
+                equilibrate: 2_000,
+                measure: 150_000,
+                cutoff: 16,
+            };
             let out = run(&g, &p, 7).unwrap();
             let (e, _, mx, lo) = ed(&g, gamma, beta);
-            assert_eq!(out.saturated, 0, "beta={beta} gamma={gamma}: the string truncated");
-            agrees(&out.energy, e, 0.014, &format!("E at beta={beta} gamma={gamma}"));
-            agrees(&out.mx, mx, 0.007, &format!("mx at beta={beta} gamma={gamma}"));
-            assert!(out.energy_floor <= lo, "floor {} above lambda_min {lo}", out.energy_floor);
+            assert_eq!(
+                out.saturated, 0,
+                "beta={beta} gamma={gamma}: the string truncated"
+            );
+            agrees(
+                &out.energy,
+                e,
+                0.014,
+                &format!("E at beta={beta} gamma={gamma}"),
+            );
+            agrees(
+                &out.mx,
+                mx,
+                0.007,
+                &format!("mx at beta={beta} gamma={gamma}"),
+            );
+            assert!(
+                out.energy_floor <= lo,
+                "floor {} above lambda_min {lo}",
+                out.energy_floor
+            );
         }
     }
 
@@ -918,7 +999,13 @@ mod tests {
         for &(j, h) in &[(1.0f64, 0.0f64), (1.0, 0.45), (-1.0, 0.3)] {
             let g = ising::ring(4, j, h);
             for &(beta, gamma) in &[(0.8f64, 1.0f64), (2.0, 0.5), (1.2, 1.8), (3.0, 0.2)] {
-                let p = Params { beta, gamma, equilibrate: 2_000, measure: 150_000, cutoff: 16 };
+                let p = Params {
+                    beta,
+                    gamma,
+                    equilibrate: 2_000,
+                    measure: 150_000,
+                    cutoff: 16,
+                };
                 let out = run(&g, &p, 19).unwrap();
                 let (e, mz, mx, lo) = ed(&g, gamma, beta);
                 let tag = format!("J={j} h={h} beta={beta} gamma={gamma}");
@@ -926,7 +1013,11 @@ mod tests {
                 agrees(&out.energy, e, 0.020, &format!("E at {tag}"));
                 agrees(&out.mx, mx, 0.004, &format!("mx at {tag}"));
                 agrees(&out.mz, mz, 0.004, &format!("mz at {tag}"));
-                assert!(out.energy_floor <= lo, "{tag}: floor {} above {lo}", out.energy_floor);
+                assert!(
+                    out.energy_floor <= lo,
+                    "{tag}: floor {} above {lo}",
+                    out.energy_floor
+                );
             }
         }
     }
@@ -940,11 +1031,27 @@ mod tests {
     fn decoupled_sites_match_minus_gamma_n_tanh_beta_gamma() {
         let g = GraphBuilder::new(6).build();
         for &(beta, gamma) in &[(0.4f64, 1.0f64), (1.0, 1.0), (2.5, 0.7), (1.0, 3.0)] {
-            let p = Params { beta, gamma, equilibrate: 1_000, measure: 150_000, cutoff: 16 };
+            let p = Params {
+                beta,
+                gamma,
+                equilibrate: 1_000,
+                measure: 150_000,
+                cutoff: 16,
+            };
             let out = run(&g, &p, 23).unwrap();
             let want = -gamma * 6.0 * (beta * gamma).tanh();
-            agrees(&out.energy, want, 0.035, &format!("E at beta={beta} gamma={gamma}"));
-            agrees(&out.mx, (beta * gamma).tanh(), 0.004, &format!("mx at beta={beta}"));
+            agrees(
+                &out.energy,
+                want,
+                0.035,
+                &format!("E at beta={beta} gamma={gamma}"),
+            );
+            agrees(
+                &out.mx,
+                (beta * gamma).tanh(),
+                0.004,
+                &format!("mx at beta={beta}"),
+            );
             assert!(out.mz.value.abs() < 6.0 * out.mz.stderr, "mz {:?}", out.mz);
         }
     }
@@ -961,7 +1068,13 @@ mod tests {
         let g = ising::ring(4, 1.0, 0.35);
         let beta = 0.8;
         let draws = 200_000usize;
-        let p = Params { beta, gamma: 0.0, equilibrate: 2_000, measure: draws, cutoff: 16 };
+        let p = Params {
+            beta,
+            gamma: 0.0,
+            equilibrate: 2_000,
+            measure: draws,
+            cutoff: 16,
+        };
         let mut sse = Sse::new(&g, &p, 5).unwrap();
         for _ in 0..p.equilibrate {
             sse.sweep();
@@ -970,9 +1083,15 @@ mod tests {
         let mut hist = vec![0u64; 1 << g.n];
         for _ in 0..draws {
             sse.sweep();
-            assert_eq!(sse.field_counts(), (0, 0), "Gamma = 0 admits no field operator");
+            assert_eq!(
+                sse.field_counts(),
+                (0, 0),
+                "Gamma = 0 admits no field operator"
+            );
             let s = sse.state();
-            let mask = (0..g.n).filter(|&i| s[i] == 1).fold(0usize, |m, i| m | (1 << i));
+            let mask = (0..g.n)
+                .filter(|&i| s[i] == 1)
+                .fold(0usize, |m, i| m | (1 << i));
             hist[mask] += 1;
         }
         let got: Vec<f64> = hist.iter().map(|&c| c as f64 / draws as f64).collect();
@@ -985,7 +1104,10 @@ mod tests {
             "the tolerance is only meaningful while a wrong distribution is far outside it: \
              sampled {tv:.5}, uniform {control:.5}"
         );
-        assert!(tv < 0.01, "total variation from the exact Boltzmann law is {tv:.5}");
+        assert!(
+            tv < 0.01,
+            "total variation from the exact Boltzmann law is {tv:.5}"
+        );
 
         // And the energy estimator reduces with it: C - <n>/beta against the enumerated mean.
         let out = run(&g, &p, 5).unwrap();
@@ -998,7 +1120,10 @@ mod tests {
             exact += wk * g.energy(&s);
         }
         agrees(&out.energy, exact, 0.015, "E at Gamma = 0");
-        assert_eq!(out.mx.value, 0.0, "a diagonal Hamiltonian has <sx> = 0 identically");
+        assert_eq!(
+            out.mx.value, 0.0,
+            "a diagonal Hamiltonian has <sx> = 0 identically"
+        );
         assert_eq!(out.mx.stderr, 0.0, "and that zero is not an estimate");
     }
 
@@ -1013,10 +1138,21 @@ mod tests {
         for &(j, h) in &[(0.0f64, 0.0f64), (1.0, 0.4), (-0.7, 0.0)] {
             for &(beta, gamma) in &[(0.7f64, 1.3f64), (2.0, 0.6)] {
                 let g = ising::ring(5, j, h);
-                let p = Params { beta, gamma, equilibrate: 1_000, measure: 150_000, cutoff: 16 };
+                let p = Params {
+                    beta,
+                    gamma,
+                    equilibrate: 1_000,
+                    measure: 150_000,
+                    cutoff: 16,
+                };
                 let out = run(&g, &p, 31).unwrap();
                 let want = beta * gamma * g.n as f64;
-                agrees(&out.identity_ops, want, 0.003 * want, &format!("<n_1> at J={j} h={h}"));
+                agrees(
+                    &out.identity_ops,
+                    want,
+                    0.003 * want,
+                    &format!("<n_1> at J={j} h={h}"),
+                );
             }
         }
     }
@@ -1030,12 +1166,19 @@ mod tests {
     /// [`crate::round::sum_up`] is there to guarantee.
     #[test]
     fn the_energy_floor_is_a_sound_lower_bound_and_is_attained_at_zero_field() {
-        let p = Params { measure: MIN_MEASURE, ..Params::default() };
+        let p = Params {
+            measure: MIN_MEASURE,
+            ..Params::default()
+        };
         for l in [2usize, 3, 4] {
             let g = ising::ring(l.max(3), 1.0, 0.0);
             let sse = Sse::new(&g, &Params { gamma: 0.0, ..p }, 1).unwrap();
             let (_, _, _, lo) = ed(&g, 0.0, 1.0);
-            assert!(sse.energy_floor() <= lo, "floor {} above {lo}", sse.energy_floor());
+            assert!(
+                sse.energy_floor() <= lo,
+                "floor {} above {lo}",
+                sse.energy_floor()
+            );
             assert!(
                 lo - sse.energy_floor() < 1e-9,
                 "a ferromagnet at Gamma = 0 attains the floor: {} against {lo}",
@@ -1064,7 +1207,11 @@ mod tests {
     #[test]
     fn the_operator_string_stays_a_closed_trace() {
         let g = ising::ring(6, 1.0, 0.3);
-        let p = Params { beta: 2.0, gamma: 1.1, ..Params::default() };
+        let p = Params {
+            beta: 2.0,
+            gamma: 1.1,
+            ..Params::default()
+        };
         let mut sse = Sse::new(&g, &p, 77).unwrap();
         for sweep in 0..500 {
             sse.sweep();
@@ -1083,16 +1230,29 @@ mod tests {
                     _ => count += 1,
                 }
             }
-            assert_eq!(count, sse.n, "sweep {sweep}: the order counter drifted from the string");
-            assert_eq!(s, sse.s, "sweep {sweep}: the string does not close on itself");
+            assert_eq!(
+                count, sse.n,
+                "sweep {sweep}: the order counter drifted from the string"
+            );
+            assert_eq!(
+                s, sse.s,
+                "sweep {sweep}: the string does not close on itself"
+            );
             for (i, f) in flips.iter().enumerate() {
-                assert_eq!(f % 2, 0, "sweep {sweep}: site {i} is flipped {f} times, an odd number");
+                assert_eq!(
+                    f % 2,
+                    0,
+                    "sweep {sweep}: site {i} is flipped {f} times, an odd number"
+                );
             }
             if let Some(gi) = sse.ghost {
                 assert_eq!(flips[gi], 0, "the ghost spin carries no transverse field");
             }
         }
-        assert!(sse.n > 0, "500 sweeps at beta = 2 and Gamma = 1.1 produced an empty string");
+        assert!(
+            sse.n > 0,
+            "500 sweeps at beta = 2 and Gamma = 1.1 produced an empty string"
+        );
     }
 
     /// A refusal is a named variant, and each of them is reachable.
@@ -1100,13 +1260,24 @@ mod tests {
     fn bad_parameters_are_refused_by_variant() {
         let g = ising::ring(4, 1.0, 0.0);
         let ok = Params::default();
-        assert_eq!(Sse::new(&GraphBuilder::new(0).build(), &ok, 1).err(), Some(Invalid::Empty));
+        assert_eq!(
+            Sse::new(&GraphBuilder::new(0).build(), &ok, 1).err(),
+            Some(Invalid::Empty)
+        );
         assert_eq!(
             Sse::new(&g, &Params { beta: 0.0, ..ok }, 1).err(),
             Some(Invalid::Beta { beta: 0.0 })
         );
         assert!(matches!(
-            Sse::new(&g, &Params { beta: f64::NAN, ..ok }, 1).err(),
+            Sse::new(
+                &g,
+                &Params {
+                    beta: f64::NAN,
+                    ..ok
+                },
+                1
+            )
+            .err(),
             Some(Invalid::Beta { .. })
         ));
         assert_eq!(
@@ -1115,7 +1286,10 @@ mod tests {
         );
         assert_eq!(
             Sse::new(&g, &Params { measure: 4, ..ok }, 1).err(),
-            Some(Invalid::TooFewSweeps { measure: 4, min: MIN_MEASURE })
+            Some(Invalid::TooFewSweeps {
+                measure: 4,
+                min: MIN_MEASURE
+            })
         );
         let mut gb = GraphBuilder::new(3);
         gb.couple(0, 1, f64::INFINITY);
@@ -1130,7 +1304,10 @@ mod tests {
             Invalid::Beta { beta: 0.0 },
             Invalid::Gamma { gamma: -1.0 },
             Invalid::NonFinite { site: 2 },
-            Invalid::TooFewSweeps { measure: 4, min: MIN_MEASURE },
+            Invalid::TooFewSweeps {
+                measure: 4,
+                min: MIN_MEASURE,
+            },
         ] {
             assert!(e.to_string().len() > 30, "{e:?} explains nothing");
         }
@@ -1140,12 +1317,25 @@ mod tests {
     #[test]
     fn the_ledger_charges_every_slot_of_every_sweep() {
         let g = ising::ring(4, 1.0, 0.0);
-        let p = Params { beta: 1.0, gamma: 1.0, equilibrate: 50, measure: 200, cutoff: 16 };
+        let p = Params {
+            beta: 1.0,
+            gamma: 1.0,
+            equilibrate: 50,
+            measure: 200,
+            cutoff: 16,
+        };
         let mut led = Ledger::default();
         let out = run_metered(&g, &p, 9, Some(&mut led)).unwrap();
-        assert_eq!(led.reads, (p.measure * g.n) as u64, "one read per spin per measured sweep");
+        assert_eq!(
+            led.reads,
+            (p.measure * g.n) as u64,
+            "one read per spin per measured sweep"
+        );
         let sweeps = (p.equilibrate + p.measure) as u64;
-        assert!(led.samples >= sweeps * 16, "a sweep visits at least the initial cutoff of slots");
+        assert!(
+            led.samples >= sweeps * 16,
+            "a sweep visits at least the initial cutoff of slots"
+        );
         assert!(
             led.samples <= sweeps * out.cutoff as u64,
             "and never more than the final string length"
@@ -1162,11 +1352,23 @@ mod tests {
     #[test]
     fn a_model_with_no_terms_has_zero_energy_and_still_shuffles_the_spins() {
         let g = GraphBuilder::new(4).build();
-        let p = Params { beta: 1.0, gamma: 0.0, equilibrate: 10, measure: 20_000, cutoff: 16 };
+        let p = Params {
+            beta: 1.0,
+            gamma: 0.0,
+            equilibrate: 10,
+            measure: 20_000,
+            cutoff: 16,
+        };
         let out = run(&g, &p, 4).unwrap();
-        assert_eq!(out.energy.value, 0.0, "H = 0 has E = 0 exactly, at every temperature");
+        assert_eq!(
+            out.energy.value, 0.0,
+            "H = 0 has E = 0 exactly, at every temperature"
+        );
         assert_eq!(out.order.value, 0.0, "and an empty operator string");
-        assert_eq!(out.energy_floor, 0.0, "with nothing for the spectrum to reach below");
+        assert_eq!(
+            out.energy_floor, 0.0,
+            "with nothing for the spectrum to reach below"
+        );
         assert!(
             (out.mz_abs.value - 0.375).abs() < 0.012,
             "four fair coins average |m| = 0.375, and this chain gave {:.4}",
@@ -1178,12 +1380,21 @@ mod tests {
     #[test]
     fn a_run_is_reproducible_from_its_seed() {
         let g = ising::ring(5, 1.0, 0.2);
-        let p = Params { beta: 1.4, gamma: 0.8, equilibrate: 200, measure: 500, cutoff: 16 };
+        let p = Params {
+            beta: 1.4,
+            gamma: 0.8,
+            equilibrate: 200,
+            measure: 500,
+            cutoff: 16,
+        };
         let a = run(&g, &p, 2024).unwrap();
         let b = run(&g, &p, 2024).unwrap();
         let c = run(&g, &p, 2025).unwrap();
         assert_eq!(a.energy.value, b.energy.value, "same seed, same chain");
         assert_eq!(a.state, b.state);
-        assert!(a.energy.value != c.energy.value, "a different seed must be a different chain");
+        assert!(
+            a.energy.value != c.energy.value,
+            "a different seed must be a different chain"
+        );
     }
 }

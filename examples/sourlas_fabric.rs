@@ -11,7 +11,7 @@
 
 use ferrotherm::autocorr::Kernel;
 use ferrotherm::sourlas::{
-    bit_error, bsc, kernel_marginals, mpm_decode, nishimori_beta, posterior, Code,
+    Code, bit_error, bsc, kernel_marginals, mpm_decode, nishimori_beta, posterior,
 };
 
 fn main() {
@@ -70,6 +70,10 @@ fn main() {
         );
     }
     println!();
-    println!("BER fabric averages the patterns the fabric's chain could decode (its law has one closed class);");
-    println!("frozen counts the patterns where the direct solve found more than one, and no decoder at all.");
+    println!(
+        "BER fabric averages the patterns the fabric's chain could decode (its law has one closed class);"
+    );
+    println!(
+        "frozen counts the patterns where the direct solve found more than one, and no decoder at all."
+    );
 }

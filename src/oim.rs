@@ -198,8 +198,8 @@ impl<'g> Oim<'g> {
             return Err(Error::Step(dt));
         }
         for i in 0..g.n {
-            let bad = !g.h[i].is_finite()
-                || (g.offset[i]..g.offset[i + 1]).any(|e| !g.w[e].is_finite());
+            let bad =
+                !g.h[i].is_finite() || (g.offset[i]..g.offset[i + 1]).any(|e| !g.w[e].is_finite());
             if bad {
                 return Err(Error::NonFiniteModel(i));
             }
@@ -214,7 +214,14 @@ impl<'g> Oim<'g> {
                 return Err(Error::StepTooLarge { dt, max, lipschitz });
             }
         }
-        Ok(Oim { g, k, k_s, dt, lipschitz, drift: vec![0.0; g.n] })
+        Ok(Oim {
+            g,
+            k,
+            k_s,
+            dt,
+            lipschitz,
+            drift: vec![0.0; g.n],
+        })
     }
 
     /// A machine whose step is the largest the descent lemma certifies, `1 / L`.
@@ -367,7 +374,9 @@ impl<'g> Oim<'g> {
 /// phases and not of the platform.
 #[must_use]
 pub fn readout(phi: &[f64]) -> Vec<i8> {
-    phi.iter().map(|&p| if p.cos() > 0.0 { 1 } else { -1 }).collect()
+    phi.iter()
+        .map(|&p| if p.cos() > 0.0 { 1 } else { -1 })
+        .collect()
 }
 
 /// How far the worst phase is from the nearest of `{0, pi}`, in radians, so in `0 ..= pi/2`.
@@ -423,7 +432,13 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { k: 1.0, k_s: 1.0, dt: None, steps: 4000, shil_ramp: true }
+        Params {
+            k: 1.0,
+            k_s: 1.0,
+            dt: None,
+            steps: 4000,
+            shil_ramp: true,
+        }
     }
 }
 
@@ -457,7 +472,9 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Result<Outcome, Error> {
         None => Oim::with_safe_step(g, p.k, p.k_s)?,
     };
     let mut rng = Pcg::new(seed, 0x0000_01B4);
-    let mut phi: Vec<f64> = (0..g.n).map(|_| rng.f64() * std::f64::consts::TAU).collect();
+    let mut phi: Vec<f64> = (0..g.n)
+        .map(|_| rng.f64() * std::f64::consts::TAU)
+        .collect();
     let steps = p.steps.max(1);
     for step in 0..steps {
         // `frac` first, so the last step is `k_s * 1.0` and not `(k_s * x) / x`, which need not be
@@ -477,7 +494,14 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Result<Outcome, Error> {
     for v in &mut phi {
         *v = v.rem_euclid(std::f64::consts::TAU);
     }
-    Ok(Outcome { phases: phi, state, energy, lyapunov, defect, steps })
+    Ok(Outcome {
+        phases: phi,
+        state,
+        energy,
+        lyapunov,
+        defect,
+        steps,
+    })
 }
 
 /// `restarts` seeded runs, the lowest **Ising** energy kept.
@@ -617,7 +641,11 @@ mod tests {
             }
             errs.push((phi[0].tan() - want).abs());
         }
-        assert!(errs[0] < 2e-3, "dt = 1e-3 was off by {:e}, want {want}", errs[0]);
+        assert!(
+            errs[0] < 2e-3,
+            "dt = 1e-3 was off by {:e}, want {want}",
+            errs[0]
+        );
         // First order: halving dt halves the error. 10% either side of exactly 2 is loose enough
         // for the higher-order remainder at these steps and far too tight for a wrong equation.
         let ratio = errs[0] / errs[1];
@@ -655,7 +683,10 @@ mod tests {
             m.step(&mut phi, 0.0);
         }
         let got = ((phi[0] - phi[1]) / 2.0).tan();
-        assert!((got - want).abs() < 2e-3, "difference: got {got}, closed form {want}");
+        assert!(
+            (got - want).abs() < 2e-3,
+            "difference: got {got}, closed form {want}"
+        );
         assert!(
             ((phi[0] + phi[1]) - (a0 + b0)).abs() < 1e-12,
             "the mean phase is conserved: {} vs {}",
@@ -689,7 +720,10 @@ mod tests {
                     "seed {seed}: phase energy {got} vs K * ising - K_s n / 2 = {want}"
                 );
                 let (lo, hi) = m.energy_bracket(&phi, k_s);
-                assert!(lo <= want && want <= hi, "bracket [{lo}, {hi}] misses {want}");
+                assert!(
+                    lo <= want && want <= hi,
+                    "bracket [{lo}, {hi}] misses {want}"
+                );
             }
         }
     }
@@ -710,8 +744,9 @@ mod tests {
             let k_s = 0.6;
             let mut m = Oim::with_safe_step(&g, 1.0, k_s).unwrap();
             let mut rng = Pcg::new(seed, 0xDE5C);
-            let mut phi: Vec<f64> =
-                (0..g.n).map(|_| rng.f64() * std::f64::consts::TAU).collect();
+            let mut phi: Vec<f64> = (0..g.n)
+                .map(|_| rng.f64() * std::f64::consts::TAU)
+                .collect();
 
             let first = m.energy(&phi, k_s);
             let mut prev_hi = m.energy_bracket(&phi, k_s).1;
@@ -727,7 +762,10 @@ mod tests {
             // And the run must actually have gone somewhere, or "never rose" is a statement about
             // a constant.
             let last = m.energy(&phi, k_s);
-            assert!(last < first - 1.0, "seed {seed}: E went {first} -> {last}, which is no descent");
+            assert!(
+                last < first - 1.0,
+                "seed {seed}: E went {first} -> {last}, which is no descent"
+            );
         }
     }
 
@@ -753,13 +791,19 @@ mod tests {
     #[test]
     fn oim_distinguishes_itself_from_the_xy_model_on_the_frustrated_triangle() {
         let g = triangle(-1.0);
-        let long = Params { steps: 20_000, ..Params::default() };
+        let long = Params {
+            steps: 20_000,
+            ..Params::default()
+        };
 
         // XY: pump off.
         let xy = run(&g, &Params { k_s: 0.0, ..long }, 3).unwrap();
         for (a, b) in [(0, 1), (1, 2), (0, 2)] {
             let c = (xy.phases[a] - xy.phases[b]).cos();
-            assert!((c + 0.5).abs() < 1e-12, "pair ({a},{b}) has cos {c}, want the 120-degree -0.5");
+            assert!(
+                (c + 0.5).abs() < 1e-12,
+                "pair ({a},{b}) has cos {c}, want the 120-degree -0.5"
+            );
         }
         assert!(
             (xy.lyapunov + 1.5).abs() < 1e-12,
@@ -775,7 +819,10 @@ mod tests {
         );
         // The readout of a non-binary state is a rounding, and the energies say so: the XY optimum
         // is strictly below anything a spin vector can reach on this instance.
-        assert!(xy.lyapunov < g.energy(&xy.state) - 0.4, "XY must beat every Ising state here");
+        assert!(
+            xy.lyapunov < g.energy(&xy.state) - 0.4,
+            "XY must beat every Ising state here"
+        );
 
         // Below the hand-computed threshold K/2: still not binary.
         let weak = run(&g, &Params { k_s: 0.45, ..long }, 3).unwrap();
@@ -787,8 +834,15 @@ mod tests {
 
         // Above it: binarised, and on a ground state.
         let oim = run(&g, &Params { k_s: 0.6, ..long }, 3).unwrap();
-        assert!(oim.defect < 1e-9, "SHIL must binarise above K/2, and the defect was {}", oim.defect);
-        assert!((oim.energy + 1.0).abs() < 1e-12, "every ground state here has energy -1");
+        assert!(
+            oim.defect < 1e-9,
+            "SHIL must binarise above K/2, and the defect was {}",
+            oim.defect
+        );
+        assert!(
+            (oim.energy + 1.0).abs() < 1e-12,
+            "every ground state here has energy -1"
+        );
     }
 
     /// WITH THE PUMP ON, WHAT SETTLES IS A BINARY STATE NO SINGLE FLIP IMPROVES — AND THE THREE
@@ -828,10 +882,19 @@ mod tests {
         for &n in &[12usize, 14, 16] {
             for seed in 0..200u64 {
                 let g = pm1_dense(n, seed);
-                let p = Params { k, k_s, steps: 12_000, ..Params::default() };
+                let p = Params {
+                    k,
+                    k_s,
+                    steps: 12_000,
+                    ..Params::default()
+                };
                 let out = run(&g, &p, seed ^ 0x77).unwrap();
                 runs += 1;
-                assert!(out.defect < 1e-9, "n={n} seed {seed}: defect {} is not in a well", out.defect);
+                assert!(
+                    out.defect < 1e-9,
+                    "n={n} seed {seed}: defect {} is not in a well",
+                    out.defect
+                );
                 let worst = worst_flip_gain(&g, &out.state);
                 if worst > 0.0 {
                     minima += 1;
@@ -852,8 +915,11 @@ mod tests {
         }
         assert_eq!(runs, 600);
         assert!(minima >= 580, "local minima {minima}/600");
-        assert!(control_minima <= 5, "random states were local minima {control_minima}/600, so \
-                                      {minima}/600 is not evidence of anything");
+        assert!(
+            control_minima <= 5,
+            "random states were local minima {control_minima}/600, so \
+                                      {minima}/600 is not evidence of anything"
+        );
     }
 
     /// Against exhaustive enumeration over all `2^14` states: the annealed machine finds the exact
@@ -869,7 +935,12 @@ mod tests {
         for seed in 0..24u64 {
             let g = dense_random(14, 0xE0 ^ seed);
             let e0 = exact_ground(&g);
-            let p = Params { k: 1.0, k_s: 3.0, steps: 4000, ..Params::default() };
+            let p = Params {
+                k: 1.0,
+                k_s: 3.0,
+                steps: 4000,
+                ..Params::default()
+            };
             let out = run_restarts(&g, &p, 0x9C ^ seed, 12).unwrap();
             assert!(
                 out.energy > e0 - 1e-9,
@@ -888,11 +959,17 @@ mod tests {
     #[test]
     fn the_shil_ramp_starts_at_zero_and_ends_exactly_at_the_configured_gain() {
         let g = pair(1.0);
-        let p = Params { k_s: 0.4, steps: 5, shil_ramp: true, ..Params::default() };
+        let p = Params {
+            k_s: 0.4,
+            steps: 5,
+            shil_ramp: true,
+            ..Params::default()
+        };
         // Reconstructed here because it is the schedule `run` computes, and a ramp that overshot by
         // one ulp would panic inside `Oim::step` rather than return a wrong answer.
-        let gains: Vec<f64> =
-            (0..p.steps).map(|s| p.k_s * (s as f64 / (p.steps - 1) as f64)).collect();
+        let gains: Vec<f64> = (0..p.steps)
+            .map(|s| p.k_s * (s as f64 / (p.steps - 1) as f64))
+            .collect();
         assert_eq!(gains[0], 0.0);
         assert_eq!(gains[p.steps - 1], p.k_s);
         assert!(run(&g, &p, 1).is_ok());
@@ -904,14 +981,29 @@ mod tests {
     fn uncertified_steps_and_impossible_gains_are_refused() {
         let g = pair(1.0);
         let empty = GraphBuilder::new(0).build();
-        assert_eq!(Oim::new(&empty, 1.0, 1.0, 0.1).err(), Some(Error::EmptyGraph));
-        assert_eq!(Oim::new(&g, 0.0, 1.0, 0.1).err(), Some(Error::CouplingGain(0.0)));
+        assert_eq!(
+            Oim::new(&empty, 1.0, 1.0, 0.1).err(),
+            Some(Error::EmptyGraph)
+        );
+        assert_eq!(
+            Oim::new(&g, 0.0, 1.0, 0.1).err(),
+            Some(Error::CouplingGain(0.0))
+        );
         // NaN is compared with `matches!` and not `assert_eq!`: NaN is not equal to itself, so the
         // equality form would pass on the wrong variant and fail on the right one.
-        assert!(matches!(Oim::new(&g, f64::NAN, 1.0, 0.1), Err(Error::CouplingGain(_))));
-        assert!(matches!(Oim::new(&g, 1.0, -1.0, 0.1), Err(Error::ShilGain(_))));
+        assert!(matches!(
+            Oim::new(&g, f64::NAN, 1.0, 0.1),
+            Err(Error::CouplingGain(_))
+        ));
+        assert!(matches!(
+            Oim::new(&g, 1.0, -1.0, 0.1),
+            Err(Error::ShilGain(_))
+        ));
         assert!(matches!(Oim::new(&g, 1.0, 1.0, 0.0), Err(Error::Step(_))));
-        assert!(matches!(Oim::new(&g, 1.0, 1.0, f64::INFINITY), Err(Error::Step(_))));
+        assert!(matches!(
+            Oim::new(&g, 1.0, 1.0, f64::INFINITY),
+            Err(Error::Step(_))
+        ));
 
         // L = 2 * K_s + K * max_i (2 sum_j |J_ij| + |h_i|) = 2 + 2 = 4 here.
         let m = Oim::with_safe_step(&g, 1.0, 1.0).unwrap();
@@ -924,7 +1016,10 @@ mod tests {
 
         let mut bad = GraphBuilder::new(2);
         bad.couple(0, 1, f64::NAN);
-        assert!(matches!(Oim::new(&bad.build(), 1.0, 1.0, 0.01), Err(Error::NonFiniteModel(_))));
+        assert!(matches!(
+            Oim::new(&bad.build(), 1.0, 1.0, 0.01),
+            Err(Error::NonFiniteModel(_))
+        ));
 
         // Every variant prints something that names the quantity.
         for e in [
@@ -932,7 +1027,11 @@ mod tests {
             Error::CouplingGain(0.0),
             Error::ShilGain(-1.0),
             Error::Step(0.0),
-            Error::StepTooLarge { dt: 1.0, max: 0.25, lipschitz: 4.0 },
+            Error::StepTooLarge {
+                dt: 1.0,
+                max: 0.25,
+                lipschitz: 4.0,
+            },
             Error::NonFiniteModel(3),
         ] {
             assert!(!e.to_string().is_empty());
@@ -950,7 +1049,10 @@ mod tests {
         assert_eq!(a.state, b.state);
         assert_eq!(a.phases, b.phases);
         let c = run(&g, &p, 100).unwrap();
-        assert!(c.phases != a.phases, "a different seed must move the trajectory");
+        assert!(
+            c.phases != a.phases,
+            "a different seed must move the trajectory"
+        );
     }
 
     /// The bracket contains the value it brackets, and is not so wide as to contain everything.
@@ -959,11 +1061,16 @@ mod tests {
         let g = dense_random(30, 12);
         let m = Oim::with_safe_step(&g, 1.0, 0.8).unwrap();
         let mut rng = Pcg::new(4, 0x0C);
-        let phi: Vec<f64> = (0..g.n).map(|_| rng.f64() * std::f64::consts::TAU).collect();
+        let phi: Vec<f64> = (0..g.n)
+            .map(|_| rng.f64() * std::f64::consts::TAU)
+            .collect();
         let e = m.energy(&phi, 0.8);
         let (lo, hi) = m.energy_bracket(&phi, 0.8);
         assert!(lo <= e && e <= hi, "[{lo}, {hi}] does not contain {e}");
-        assert!(hi - lo < 1e-11, "the bracket is {} wide, which bounds nothing useful", hi - lo);
+        assert!(
+            hi - lo < 1e-11,
+            "the bracket is {} wide, which bounds nothing useful",
+            hi - lo
+        );
     }
 }
-

@@ -38,7 +38,6 @@
 //!   `(A A^T)^q A`, which sharpens a slow spectrum. Checked against the full SVD on a matrix
 //!   with a decaying spectrum: the top singular values to `1e-6` with one power iteration.
 
-
 /// A singular value decomposition `A = U diag(s) V^T`.
 #[derive(Clone, Debug)]
 pub struct Svd {
@@ -585,7 +584,9 @@ mod tests {
     fn orthonormal_columns(u: &[f64], rows: usize, stride: usize, count: usize, tol: f64) -> bool {
         (0..count).all(|s| {
             (0..count).all(|t| {
-                let dot: f64 = (0..rows).map(|r| u[r * stride + s] * u[r * stride + t]).sum();
+                let dot: f64 = (0..rows)
+                    .map(|r| u[r * stride + s] * u[r * stride + t])
+                    .sum();
                 (dot - if s == t { 1.0 } else { 0.0 }).abs() < tol
             })
         })
@@ -606,7 +607,13 @@ mod tests {
             }
             let back = dec.truncate(k);
             assert!(frobenius_distance(&back, &a) < 1e-10);
-            assert!(orthonormal_columns(&dec.u[..], rows, k, dec.rank.min(k), 1e-9));
+            assert!(orthonormal_columns(
+                &dec.u[..],
+                rows,
+                k,
+                dec.rank.min(k),
+                1e-9
+            ));
             let mut vt = dec.vt.clone();
             assert_eq!(orthonormalise_rows(&mut vt, dec.rank, cols), dec.rank);
             assert!(frobenius_distance(&vt[..dec.rank * cols], &dec.vt[..dec.rank * cols]) < 1e-9);

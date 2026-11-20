@@ -63,10 +63,22 @@ impl Params {
     /// Linear, not geometric, and that is forced: a geometric ladder cannot contain zero, and
     /// without `β = 0` the free energy is only known up to an unmeasured constant.
     #[must_use]
-    pub fn linear_from_zero(population: usize, sweeps: usize, beta_max: f64, stages: usize) -> Params {
+    pub fn linear_from_zero(
+        population: usize,
+        sweeps: usize,
+        beta_max: f64,
+        stages: usize,
+    ) -> Params {
         let stages = stages.max(1);
-        let betas = (0..=stages).map(|i| beta_max * i as f64 / stages as f64).collect();
-        Params { population, sweeps, betas, keep_population: false }
+        let betas = (0..=stages)
+            .map(|i| beta_max * i as f64 / stages as f64)
+            .collect();
+        Params {
+            population,
+            sweeps,
+            betas,
+            keep_population: false,
+        }
     }
 
     /// Keep the final population. See [`Outcome::population`] for what it is worth.
@@ -187,7 +199,11 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
     // `Z(0) = 2^n` exactly: at infinite temperature every one of the 2^n states has weight 1. This
     // is the whole reason the ladder starts at zero.
     let absolute = p.betas[0] == 0.0;
-    let mut ln_z = if absolute { n as f64 * core::f64::consts::LN_2 } else { 0.0 };
+    let mut ln_z = if absolute {
+        n as f64 * core::f64::consts::LN_2
+    } else {
+        0.0
+    };
     // One leave-one-family-out replicate of `ln_z` per initial ancestor, accumulated in step.
     let mut jack = vec![ln_z; r_target];
     let mut jack_alive = vec![true; r_target];
@@ -351,7 +367,12 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
     let energy = g.energy(&best_state);
     // Only families that still had descendants can carry a replicate; the rest were deleted from a
     // stage they no longer occupied and say nothing about the estimate's spread.
-    let live: Vec<f64> = jack.iter().zip(&jack_alive).filter(|(v, a)| **a && v.is_finite()).map(|(v, _)| *v).collect();
+    let live: Vec<f64> = jack
+        .iter()
+        .zip(&jack_alive)
+        .filter(|(v, a)| **a && v.is_finite())
+        .map(|(v, _)| *v)
+        .collect();
     let ln_z_stderr = if live.len() >= 8 {
         let k = live.len() as f64;
         let mean = live.iter().sum::<f64>() / k;
@@ -362,7 +383,17 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
         None
     };
 
-    Outcome { state: best_state, energy, ln_z, ln_z_is_absolute: absolute, ln_z_stderr, rho, rho_max, sizes, population }
+    Outcome {
+        state: best_state,
+        energy,
+        ln_z,
+        ln_z_is_absolute: absolute,
+        ln_z_stderr,
+        rho,
+        rho_max,
+        sizes,
+        population,
+    }
 }
 
 #[cfg(test)]
@@ -396,13 +427,20 @@ mod tests {
                     other => panic!("wrong provenance: {other:?}"),
                 }
                 for i in 0..n {
-                    if set.mean_spin(i).unwrap().covers(enu.mean_spin(i).unwrap().value) {
+                    if set
+                        .mean_spin(i)
+                        .unwrap()
+                        .covers(enu.mean_spin(i).unwrap().value)
+                    {
                         covered += 1;
                     }
                 }
             }
             let frac = covered as f64 / (4 * n) as f64;
-            assert!(frac >= 0.9, "population marginals covered {frac:.3} at beta {beta}");
+            assert!(
+                frac >= 0.9,
+                "population marginals covered {frac:.3} at beta {beta}"
+            );
         }
     }
 
@@ -421,15 +459,34 @@ mod tests {
         for (r, stages) in [(128usize, 48usize), (256, 16)] {
             let c = calibrate(truth, 24, |seed| {
                 let o = run(&g, &Params::linear_from_zero(r, 2, beta, stages), seed);
-                (o.ln_z, o.ln_z_stderr.expect("a population this size yields a bar"))
+                (
+                    o.ln_z,
+                    o.ln_z_stderr.expect("a population this size yields a bar"),
+                )
             });
             // 24 runs measures an sd to about 14%; assert two of those wide, and let
             // sd_z_uncertainty say so rather than picking a number by feel.
             let tol = 2.0 * crate::calibration::sd_z_uncertainty(&c);
-            assert!(c.bar_is_honest(1.25 + tol), "R={r} stages={stages}: bar too small, sd(z) = {}", c.sd_z);
-            assert!(c.sd_z > 0.6 - tol, "R={r} stages={stages}: absurdly conservative, sd(z) = {}", c.sd_z);
-            assert!(c.looks_unbiased(4.0), "R={r} stages={stages}: mean z = {}", c.mean_z);
-            assert!(c.coverage_95 >= 0.85, "R={r} stages={stages}: coverage {}", c.coverage_95);
+            assert!(
+                c.bar_is_honest(1.25 + tol),
+                "R={r} stages={stages}: bar too small, sd(z) = {}",
+                c.sd_z
+            );
+            assert!(
+                c.sd_z > 0.6 - tol,
+                "R={r} stages={stages}: absurdly conservative, sd(z) = {}",
+                c.sd_z
+            );
+            assert!(
+                c.looks_unbiased(4.0),
+                "R={r} stages={stages}: mean z = {}",
+                c.mean_z
+            );
+            assert!(
+                c.coverage_95 >= 0.85,
+                "R={r} stages={stages}: coverage {}",
+                c.coverage_95
+            );
         }
     }
 
@@ -441,7 +498,9 @@ mod tests {
         let set = run(&g, &p, 7).population.unwrap();
         assert_eq!(
             set.certificate(&g).unwrap_err(),
-            crate::samples::Refused::NotAChain { provenance: "population" }
+            crate::samples::Refused::NotAChain {
+                provenance: "population"
+            }
         );
     }
 
@@ -450,8 +509,15 @@ mod tests {
         let g = random_graph(10, 0.4, 2, false);
         let p = Params::linear_from_zero(64, 2, 1.0, 8);
         assert!(!p.keep_population);
-        assert!(run(&g, &p, 1).population.is_none(), "R * n bytes nobody asked for");
-        assert!(run(&g, &p.clone().keeping_population(), 1).population.is_some());
+        assert!(
+            run(&g, &p, 1).population.is_none(),
+            "R * n bytes nobody asked for"
+        );
+        assert!(
+            run(&g, &p.clone().keeping_population(), 1)
+                .population
+                .is_some()
+        );
     }
 
     fn random_graph(n: usize, p: f64, seed: u64, fields: bool) -> Graph {
@@ -502,9 +568,17 @@ mod tests {
         let g = GraphBuilder::new(9).build();
         let p = Params::linear_from_zero(64, 2, 4.0, 12);
         let o = run(&g, &p, 5);
-        assert_eq!(o.ln_z, 9.0 * core::f64::consts::LN_2, "ln Z must be exactly n ln 2");
+        assert_eq!(
+            o.ln_z,
+            9.0 * core::f64::consts::LN_2,
+            "ln Z must be exactly n ln 2"
+        );
         assert!(o.ln_z_is_absolute);
-        assert_eq!(o.rho, vec![1.0; 12], "no replica may be copied when all weights are equal");
+        assert_eq!(
+            o.rho,
+            vec![1.0; 12],
+            "no replica may be copied when all weights are equal"
+        );
         assert_eq!(o.sizes, vec![64; 12], "the population is preserved exactly");
         assert_eq!(o.energy, 0.0);
     }
@@ -550,7 +624,11 @@ mod tests {
         let stages = 20;
         let p = Params::linear_from_zero(64, 1, 1.0, stages);
         let o = run(&g, &p, 3);
-        assert_eq!(o.rho.len(), stages, "the ladder stopped early: overflow was not handled");
+        assert_eq!(
+            o.rho.len(),
+            stages,
+            "the ladder stopped early: overflow was not handled"
+        );
         assert!(o.ln_z.is_finite(), "ln Z = {}", o.ln_z);
         assert!(o.energy.is_finite() && o.energy < 0.0);
     }
@@ -564,7 +642,12 @@ mod tests {
     fn rho_reports_a_collapsed_population() {
         let g = random_graph(30, 0.3, 11, false);
         let r = 128;
-        let p = Params { population: r, sweeps: 1, betas: vec![0.0, 40.0], keep_population: false };
+        let p = Params {
+            population: r,
+            sweeps: 1,
+            betas: vec![0.0, 40.0],
+            keep_population: false,
+        };
         let o = run(&g, &p, 9);
         assert_eq!(o.rho.len(), 1);
         assert!(
@@ -575,7 +658,11 @@ mod tests {
         // And the healthy case, for contrast: the same graph on a gentle ladder stays near 1.
         let gentle = Params::linear_from_zero(r, 4, 4.0, 60);
         let o2 = run(&g, &gentle, 9);
-        assert!(o2.rho_max < 0.25 * r as f64, "gentle ladder rho_max {:.1}", o2.rho_max);
+        assert!(
+            o2.rho_max < 0.25 * r as f64,
+            "gentle ladder rho_max {:.1}",
+            o2.rho_max
+        );
     }
 
     /// Population annealing has to actually find the ground state of something small.
@@ -591,7 +678,11 @@ mod tests {
                 "seed {seed}: found {:.6}, true minimum {min:.6}",
                 o.energy
             );
-            assert_eq!(o.energy, g.energy(&o.state), "energy must match the state returned");
+            assert_eq!(
+                o.energy,
+                g.energy(&o.state),
+                "energy must match the state returned"
+            );
         }
     }
 
@@ -599,10 +690,18 @@ mod tests {
     #[test]
     fn a_ladder_that_skips_infinite_temperature_reports_a_relative_free_energy() {
         let g = random_graph(8, 0.5, 4, false);
-        let p = Params { population: 200, sweeps: 2, betas: vec![0.2, 0.6, 1.0], keep_population: false };
+        let p = Params {
+            population: 200,
+            sweeps: 2,
+            betas: vec![0.2, 0.6, 1.0],
+            keep_population: false,
+        };
         let o = run(&g, &p, 4);
         assert!(!o.ln_z_is_absolute);
-        assert!(o.free_energy_per_spin(1.0, g.n).is_none(), "a ratio is not a free energy");
+        assert!(
+            o.free_energy_per_spin(1.0, g.n).is_none(),
+            "a ratio is not a free energy"
+        );
         // The ratio itself is still meaningful, and must be positive: Z grows as beta rises.
         assert!(o.ln_z > 0.0, "ln(Z(1.0)/Z(0.2)) = {}", o.ln_z);
     }
@@ -614,7 +713,16 @@ mod tests {
         let o = run(&g, &Params::linear_from_zero(10, 1, 1.0, 3), 1);
         assert!(o.state.is_empty() && o.rho.is_empty());
         let g2 = random_graph(6, 0.5, 1, false);
-        let o2 = run(&g2, &Params { population: 10, sweeps: 1, betas: Vec::new(), keep_population: false }, 1);
+        let o2 = run(
+            &g2,
+            &Params {
+                population: 10,
+                sweeps: 1,
+                betas: Vec::new(),
+                keep_population: false,
+            },
+            1,
+        );
         assert!(o2.rho.is_empty() && !o2.ln_z_is_absolute);
     }
 }

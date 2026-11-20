@@ -17,11 +17,12 @@
 
 use ferrotherm::exact::Elimination;
 use ferrotherm::free_energy::{
-    ais, linear_ladder, onsager_log_z_density, reverse_ais, ring_log_z, thermodynamic_integration, Sandwich,
+    Sandwich, ais, linear_ladder, onsager_log_z_density, reverse_ais, ring_log_z,
+    thermodynamic_integration,
 };
 use ferrotherm::gibbs::Sampler;
 use ferrotherm::ising;
-use ferrotherm::popanneal::{run as popanneal, Params};
+use ferrotherm::popanneal::{Params, run as popanneal};
 
 fn main() {
     // ---- 1. a chain with a closed form: every estimator against the transfer matrix -----------
@@ -48,26 +49,37 @@ fn main() {
     let pa = popanneal(&g, &Params::linear_from_zero(512, 2, beta, 64), 4);
 
     println!("--- ring n={n} J={j} h={h} beta={beta}: ln Z, exact by transfer matrix = {truth:.4}");
-    println!("{:<28} {:>10} {:>22} {:>8}", "estimator", "ln Z", "bound / bracket", "cost");
     println!(
-        "{:<28} {:>10.4} {:>22} {:>8}",
-        "AIS (64 rungs x 2 sweeps)", fwd.log_z,
-        format!(">= {:.3} @ 99%", fwd.lower_bound(0.01)), format!("{} runs", fwd.log_weights.len())
+        "{:<28} {:>10} {:>22} {:>8}",
+        "estimator", "ln Z", "bound / bracket", "cost"
     );
     println!(
         "{:<28} {:>10.4} {:>22} {:>8}",
-        "reverse AIS (2000+50/draw)", rev.log_z,
-        format!("<= {:.3} @ 99%*", rev.upper_bound(0.01)), format!("{} runs", rev.log_weights.len())
+        "AIS (64 rungs x 2 sweeps)",
+        fwd.log_z,
+        format!(">= {:.3} @ 99%", fwd.lower_bound(0.01)),
+        format!("{} runs", fwd.log_weights.len())
     );
     println!(
         "{:<28} {:>10.4} {:>22} {:>8}",
-        "sandwich", 0.5 * (sw.lower + sw.upper),
-        format!("[{:.3}, {:.3}] @ 98%", sw.lower, sw.upper), ""
+        "reverse AIS (2000+50/draw)",
+        rev.log_z,
+        format!("<= {:.3} @ 99%*", rev.upper_bound(0.01)),
+        format!("{} runs", rev.log_weights.len())
     );
     println!(
         "{:<28} {:>10.4} {:>22} {:>8}",
-        "TI (32 rungs x 2000 draws)", ti.midpoint(),
-        format!("[{:.3}, {:.3}] @ 3se", ti.lower_widened, ti.upper_widened), "64k sw"
+        "sandwich",
+        0.5 * (sw.lower + sw.upper),
+        format!("[{:.3}, {:.3}] @ 98%", sw.lower, sw.upper),
+        ""
+    );
+    println!(
+        "{:<28} {:>10.4} {:>22} {:>8}",
+        "TI (32 rungs x 2000 draws)",
+        ti.midpoint(),
+        format!("[{:.3}, {:.3}] @ 3se", ti.lower_widened, ti.upper_widened),
+        "64k sw"
     );
     println!(
         "{:<28} {:>10.4} {:>22} {:>8}",
@@ -75,10 +87,16 @@ fn main() {
     );
     println!(
         "  weight ess: forward {:.1} of {}, reverse {:.1} of {}   (* conditional on the starts)",
-        fwd.ess, fwd.log_weights.len(), rev.ess, rev.log_weights.len()
+        fwd.ess,
+        fwd.log_weights.len(),
+        rev.ess,
+        rev.log_weights.len()
     );
-    println!("  truth inside the sandwich: {}   inside the TI bracket: {}\n",
-        sw.contains(truth), ti.lower_widened <= truth && truth <= ti.upper_widened);
+    println!(
+        "  truth inside the sandwich: {}   inside the TI bracket: {}\n",
+        sw.contains(truth),
+        ti.lower_widened <= truth && truth <= ti.upper_widened
+    );
 
     // ---- 1b. the same curve for free, out of an optimisation run ------------------------------
     //
@@ -92,7 +110,11 @@ fn main() {
         let th = traces.thermodynamics(n, 3.0).unwrap();
         println!("--- the same ln Z out of a parallel-tempering run that was optimising anyway");
         println!("  best energy found          {:.4}", res.best_e);
-        println!("  ln Z at the top rung       {:.4} +- {:.4}   (transfer matrix {truth:.4})", th.top().log_z, th.top().stderr);
+        println!(
+            "  ln Z at the top rung       {:.4} +- {:.4}   (transfer matrix {truth:.4})",
+            th.top().log_z,
+            th.top().stderr
+        );
         println!("  entropy there              {:.4} nats", th.top().entropy);
         println!("  heat capacity there        {:.4}", th.top().heat_capacity);
         println!("  the traces cost one energy evaluation per replica per round, which the");
@@ -102,11 +124,20 @@ fn main() {
     // ---- 2. past enumeration: a 6x6 torus against exact elimination ----------------------------
     let g = ising::lattice2d(6, 1.0);
     let beta = 0.4;
-    let elim = Elimination::default().log_partition(&g, beta).unwrap().log_z.unwrap();
+    let elim = Elimination::default()
+        .log_partition(&g, beta)
+        .unwrap()
+        .log_z
+        .unwrap();
     let a = ais(&g, &linear_ladder(beta, 64), 2, 128, 7);
     println!("--- 6x6 torus at beta={beta} (36 spins: enumeration refuses, elimination does not)");
     println!("  elimination (exact)   {elim:.4}");
-    println!("  AIS                   {:.4}   >= {:.3} @ 99%, ess {:.1}\n", a.log_z, a.lower_bound(0.01), a.ess);
+    println!(
+        "  AIS                   {:.4}   >= {:.3} @ 99%, ess {:.1}\n",
+        a.log_z,
+        a.lower_bound(0.01),
+        a.ess
+    );
 
     // ---- 3. the thermodynamic limit: a torus against Onsager ---------------------------------
     // lattice2d is periodic, so finite-size corrections to the infinite-lattice density are
@@ -120,9 +151,19 @@ fn main() {
     let nn = (l * l) as f64;
     println!("--- {l}x{l} torus at beta={beta}: ln Z per spin against Onsager's closed form");
     println!("  Onsager (infinite lattice)  {onsager:.5}");
-    println!("  AIS / N                     {:.5}   (>= {:.5} @ 99%)", a.log_z / nn, a.lower_bound(0.01) / nn);
-    println!("  TI bracket / N              [{:.5}, {:.5}]", ti.lower_widened / nn, ti.upper_widened / nn);
-    println!("  |AIS/N - Onsager| = {:.2e}; the residual is finite size plus estimator noise, and\n  \
+    println!(
+        "  AIS / N                     {:.5}   (>= {:.5} @ 99%)",
+        a.log_z / nn,
+        a.lower_bound(0.01) / nn
+    );
+    println!(
+        "  TI bracket / N              [{:.5}, {:.5}]",
+        ti.lower_widened / nn,
+        ti.upper_widened / nn
+    );
+    println!(
+        "  |AIS/N - Onsager| = {:.2e}; the residual is finite size plus estimator noise, and\n  \
               the bound is a bound on the TORUS's ln Z, which Onsager only approximates.",
-        (a.log_z / nn - onsager).abs());
+        (a.log_z / nn - onsager).abs()
+    );
 }

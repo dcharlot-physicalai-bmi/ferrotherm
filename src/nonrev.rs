@@ -191,8 +191,14 @@ impl SkewLangevin {
             "the skew drift must be exactly antisymmetric; a matrix that is antisymmetric to \
              within rounding does not preserve the target to within rounding"
         );
-        assert!(beta > 0.0 && beta.is_finite(), "beta must be positive and finite, got {beta}");
-        assert!(dt > 0.0 && dt.is_finite(), "dt must be positive and finite, got {dt}");
+        assert!(
+            beta > 0.0 && beta.is_finite(),
+            "beta must be positive and finite, got {beta}"
+        );
+        assert!(
+            dt > 0.0 && dt.is_finite(),
+            "dt must be positive and finite, got {dt}"
+        );
         SkewLangevin { a, n, beta, dt }
     }
 
@@ -205,8 +211,9 @@ impl SkewLangevin {
         assert_eq!(grad.len(), self.n, "gradient must be length {}", self.n);
         assert_eq!(out.len(), self.n, "output must be length {}", self.n);
         for i in 0..self.n {
-            let row: Vec<f64> =
-                (0..self.n).map(|j| self.a[i * self.n + j] * grad[j]).collect();
+            let row: Vec<f64> = (0..self.n)
+                .map(|j| self.a[i * self.n + j] * grad[j])
+                .collect();
             out[i] = sum_up(&row);
         }
     }
@@ -296,7 +303,10 @@ impl<'m> LiftedClock<'m> {
     /// If `beta` is not finite and non-negative.
     #[must_use]
     pub fn new(m: &'m Potts, beta: f64, seed: u64) -> LiftedClock<'m> {
-        assert!(beta >= 0.0 && beta.is_finite(), "beta must be finite and non-negative, got {beta}");
+        assert!(
+            beta >= 0.0 && beta.is_finite(),
+            "beta must be finite and non-negative, got {beta}"
+        );
         let n = m.n();
         let mut deg = vec![0usize; n];
         for (i, j, _) in m.edges() {
@@ -349,7 +359,10 @@ impl<'m> LiftedClock<'m> {
     /// If the length is wrong or any value is not below `q`.
     pub fn set_state(&mut self, a: &[u8]) {
         assert_eq!(a.len(), self.a.len(), "state must have one entry per site");
-        assert!(a.iter().all(|&x| usize::from(x) < self.m.q()), "a state is not below q");
+        assert!(
+            a.iter().all(|&x| usize::from(x) < self.m.q()),
+            "a state is not below q"
+        );
         self.a.copy_from_slice(a);
     }
 
@@ -427,7 +440,11 @@ fn step_state(a: u8, step: i8, q: usize) -> u8 {
 /// If the model has more than one site.
 #[must_use]
 pub fn lifted_matrix(m: &Potts, beta: f64) -> Vec<f64> {
-    assert_eq!(m.n(), 1, "the exact matrix is built for a single site; sweeps compose it");
+    assert_eq!(
+        m.n(),
+        1,
+        "the exact matrix is built for a single site; sweeps compose it"
+    );
     let q = m.q();
     let e: Vec<f64> = (0..q).map(|c| -m.field(0, c as u8)).collect();
     let mut p = vec![0.0; (2 * q) * (2 * q)];
@@ -585,7 +602,11 @@ mod tests {
         // tr(A H) = 0 for antisymmetric A against the symmetric XY Hessian...
         let n = 5;
         let a = skew_matrix(n, 0.8, 4242);
-        assert_eq!(antisymmetry_defect(&a, n), 0.0, "constructed antisymmetric, not rounded to it");
+        assert_eq!(
+            antisymmetry_defect(&a, n),
+            0.0,
+            "constructed antisymmetric, not rounded to it"
+        );
         let mut k = vec![0.0; n * n];
         let mut rng = Pcg::new(99, 3);
         for i in 0..n {
@@ -642,11 +663,17 @@ mod tests {
             // The lifted measure is pi(a)/2 on each of the two direction bits.
             let mu: Vec<f64> = pi.iter().flat_map(|&x| [x / 2.0, x / 2.0]).collect();
             let d = stationary_defect(&p, &mu);
-            assert!(d < 1e-15, "lifted chain is not stationary at beta = {beta}: defect {d}");
+            assert!(
+                d < 1e-15,
+                "lifted chain is not stationary at beta = {beta}: defect {d}"
+            );
             // Every row is a probability distribution.
             for a in 0..(2 * q) {
                 let row: Vec<f64> = (0..(2 * q)).map(|b| p[a * (2 * q) + b]).collect();
-                assert!((sum_up(&row) - 1.0).abs() < 1e-15, "row {a} does not sum to one");
+                assert!(
+                    (sum_up(&row) - 1.0).abs() < 1e-15,
+                    "row {a} does not sum to one"
+                );
             }
         }
     }
@@ -668,7 +695,10 @@ mod tests {
         // The comparator does satisfy it, on the same instance and the same proposal.
         let r = reversible_matrix(&m, beta);
         assert!(stationary_defect(&r, &pi) < 1e-15);
-        assert!(balance_defect(&r, &pi) < 1e-15, "the Metropolis comparator must be reversible");
+        assert!(
+            balance_defect(&r, &pi) < 1e-15,
+            "the Metropolis comparator must be reversible"
+        );
     }
 
     #[test]
@@ -680,8 +710,9 @@ mod tests {
         let r = reversible_matrix(&m, beta);
         let pi = site_measure(&m, beta);
         let mu: Vec<f64> = pi.iter().flat_map(|&x| [x / 2.0, x / 2.0]).collect();
-        let obs: Vec<f64> =
-            (0..q).map(|c| (core::f64::consts::TAU * c as f64 / q as f64).cos()).collect();
+        let obs: Vec<f64> = (0..q)
+            .map(|c| (core::f64::consts::TAU * c as f64 / q as f64).cos())
+            .collect();
         let lifted_obs: Vec<f64> = obs.iter().flat_map(|&x| [x, x]).collect();
         let tau_lift = exact_tau_int(&p, &mu, &lifted_obs, 4_000);
         let tau_rev = exact_tau_int(&r, &pi, &obs, 4_000);
@@ -725,9 +756,21 @@ mod tests {
         let got: Vec<f64> = hist.iter().map(|&c| c as f64 / draws as f64).collect();
         let want = &exact.p;
         let tv: f64 = 0.5
-            * sum_up(&got.iter().zip(want.iter()).map(|(a, b)| (a - b).abs()).collect::<Vec<_>>());
-        assert!(tv < 0.01, "total variation {tv} against the exact distribution is too large");
-        assert_eq!(led.samples, (2_000 + draws) * n as u64, "one sample charged per site per sweep");
+            * sum_up(
+                &got.iter()
+                    .zip(want.iter())
+                    .map(|(a, b)| (a - b).abs())
+                    .collect::<Vec<_>>(),
+            );
+        assert!(
+            tv < 0.01,
+            "total variation {tv} against the exact distribution is too large"
+        );
+        assert_eq!(
+            led.samples,
+            (2_000 + draws) * n as u64,
+            "one sample charged per site per sweep"
+        );
     }
 
     /// The invariance the identities predict, **measured** on the implementation.
@@ -818,7 +861,11 @@ mod tests {
         };
 
         let skew = skew_matrix(N, 1.5, 4242);
-        assert_eq!(antisymmetry_defect(&skew, N), 0.0, "constructed antisymmetric, not rounded to it");
+        assert_eq!(
+            antisymmetry_defect(&skew, N),
+            0.0,
+            "constructed antisymmetric, not rounded to it"
+        );
         let got = through_api(skew);
         let control = through_api(vec![0.0; 4]);
         // A symmetric perturbation, chosen small enough that the integrator stays stable: a
@@ -849,7 +896,10 @@ mod tests {
         // The off-diagonal is where a symmetric added drift shows: the exact value is negative and
         // the perturbed chain puts it the other side of zero.
         let target = want[1];
-        assert!(target < 0.0, "the fixture must have a negative off-diagonal to reverse");
+        assert!(
+            target < 0.0,
+            "the fixture must have a negative off-diagonal to reverse"
+        );
         assert!(
             (wrong_off_diagonal - target).abs() > 5.0 * 0.1 * target.abs(),
             "a symmetric added drift should NOT preserve the target; cov[0][1] came out \

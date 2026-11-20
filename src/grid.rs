@@ -1880,7 +1880,7 @@ mod tests {
         // sparse-rng changes the encoding, so it must be allowed to differ, and it must still move.
         b.sweeps(10);
         assert_ne!(b.spins(), &vec![-1i8; 64]);
-        let err = match OpenIsing::try_new(
+        let Err(err) = OpenIsing::try_new(
             5,
             1.0,
             0.3,
@@ -1890,18 +1890,11 @@ mod tests {
                 ..Levers::SCALAR
             },
             1,
-        ) {
-            Err(err) => err,
-            Ok(_) => panic!("simd accepted an odd side"),
+        ) else {
+            panic!("simd accepted an odd side");
         };
         assert!(err.message.contains("even"), "{}", err.message);
         assert!(err.message.contains('5'), "{}", err.message);
-    }
-
-    fn side8_gap(levers: Levers, seed: u64, warmup: usize, draws: usize) -> (f64, f64, f64) {
-        let a = side8_mean(levers, seed, warmup, draws);
-        let b = side8_mean(levers, seed + 1, warmup, draws);
-        (a, b, (a - b).abs() / 64.0)
     }
 
     fn side8_mean(levers: Levers, seed: u64, warmup: usize, draws: usize) -> f64 {
@@ -1917,7 +1910,10 @@ mod tests {
         // count is warmup 400 and 4096 draws, chosen from a 24-pair pilot on other
         // seeds and applied to every lever.
         let gate = 260_801_615u64 + 9_000 * 8;
-        let incremental = Levers { incremental: true, ..Levers::SCALAR };
+        let incremental = Levers {
+            incremental: true,
+            ..Levers::SCALAR
+        };
         let short_a = side8_mean(incremental, gate, 64, 256);
         let short_b = side8_mean(incremental, gate + 1, 64, 256);
         assert!((short_a - -36.375).abs() < 1e-9, "{short_a}");
@@ -1925,7 +1921,10 @@ mod tests {
         assert!((short_a - short_b).abs() / 64.0 >= 0.05);
         let levers = [
             Levers::SCALAR,
-            Levers { simd: true, ..Levers::SCALAR },
+            Levers {
+                simd: true,
+                ..Levers::SCALAR
+            },
             incremental,
         ];
         for levers in levers {
@@ -1960,10 +1959,17 @@ mod tests {
         // The host refusal at side 8 was two seeds 0.05005 per site apart, after the
         // transfer-matrix clause had passed. That line is sampling noise unless this
         // stream's law is wrong. These counts resolve a per-site bias of that size.
-        let levers = Levers { incremental: true, ..Levers::SCALAR };
+        let levers = Levers {
+            incremental: true,
+            ..Levers::SCALAR
+        };
         // 4×4 has 65536 states. 80k samples cannot drive TV under a few tenths even when the
         // law is exact; the mean is the check that resolves a 0.05-per-site bias there.
-        let cases = [(2usize, 400, 80_000, 0.02), (3, 800, 100_000, 0.05), (4, 1_000, 80_000, 0.55)];
+        let cases = [
+            (2usize, 400, 80_000, 0.02),
+            (3, 800, 100_000, 0.05),
+            (4, 1_000, 80_000, 0.55),
+        ];
         for (side, burn, n, tv_limit) in cases {
             let (distance, mean, exact) = tv_side(levers, side, 0.3, 0x1C, burn, n);
             let per_site = (mean - exact).abs() / (side * side) as f64;
@@ -2106,7 +2112,7 @@ mod tests {
             expect.push(grid_energy(&again, 4, 1.0));
         }
         assert_eq!(got, expect);
-        let err = sweep_packed_cpu(3, &mut vec![-1i8; 9], 1.0, 0.3, 1, 0, 1).unwrap_err();
+        let err = sweep_packed_cpu(3, &mut [-1i8; 9], 1.0, 0.3, 1, 0, 1).unwrap_err();
         assert!(err.contains("even"), "{err}");
     }
 
@@ -2279,9 +2285,8 @@ mod tests {
         let err = Levers::one("cuda").unwrap_err();
         assert!(err.contains("cuda"), "{err}");
         assert!(err.contains("parallel"), "{err}");
-        let err = match OpenIsing::try_new(4, 1.0, 0.3, 1, Levers::SCALAR, 0) {
-            Err(err) => err,
-            Ok(_) => panic!("zero threads was accepted"),
+        let Err(err) = OpenIsing::try_new(4, 1.0, 0.3, 1, Levers::SCALAR, 0) else {
+            panic!("zero threads was accepted");
         };
         assert!(err.message.contains('0'), "{}", err.message);
     }

@@ -19,7 +19,7 @@
 //! system at a handful of oscillators, and the output says so. Section 3 prices the second at the
 //! published scale, where the arithmetic is closed-form and no enumeration is needed.
 use ferrotherm::diffuse::kl;
-use ferrotherm::kuramoto::{dense_coupling_bytes, Kuramoto};
+use ferrotherm::kuramoto::{Kuramoto, dense_coupling_bytes};
 use ferrotherm::potts::enumerate;
 use ferrotherm::rng::Pcg;
 use ferrotherm::sparsify::copies_for;
@@ -78,10 +78,19 @@ fn table(label: &str, sys: &Kuramoto) {
         let cut = enumerate(&t.system.to_clock(Q), BETA).expect("small enough to enumerate");
         let measured = kl(&full.p, &cut.p);
         let bound = t.kl_bound(BETA);
-        let slack = if measured > 0.0 { bound / measured } else { f64::INFINITY };
+        let slack = if measured > 0.0 {
+            bound / measured
+        } else {
+            f64::INFINITY
+        };
         println!(
             "  {:>6} {:>7} {:>8.1}% {:>11.4} {:>11.4} {:>7.1}x",
-            t.degree, t.kept, 100.0 * t.mass_kept(), measured, bound, slack
+            t.degree,
+            t.kept,
+            100.0 * t.mass_kept(),
+            measured,
+            bound,
+            slack
         );
     }
 }
@@ -90,7 +99,10 @@ fn main() {
     let sys = heavy_tailed(N, 20_260_917);
     let pairs = N * (N - 1) / 2;
     println!("== 1. the model ==");
-    println!("  {N} oscillators, all-to-all: {pairs} pairs, coupling mass {:.4}", sys.coupling_mass());
+    println!(
+        "  {N} oscillators, all-to-all: {pairs} pairs, coupling mass {:.4}",
+        sys.coupling_mass()
+    );
     println!(
         "  at the published {PUBLISHED_N} that same density is {} bytes of couplings in f64",
         dense_coupling_bytes(PUBLISHED_N)
@@ -109,7 +121,10 @@ fn main() {
 
     println!("\n== 3. keeping every coupling instead, at the published scale ==");
     println!("  copy-splitting preserves the ground states exactly and pays in nodes:");
-    println!("  {:>7} {:>12} {:>16}", "degree", "copies/osc", "oscillators");
+    println!(
+        "  {:>7} {:>12} {:>16}",
+        "degree", "copies/osc", "oscillators"
+    );
     for d in [3usize, 4, 6, 8, 16, 100] {
         let c = copies_for(PUBLISHED_N - 1, d);
         println!("  {:>7} {:>12} {:>16}", d, c, PUBLISHED_N * c);
@@ -117,14 +132,21 @@ fn main() {
     let six = PUBLISHED_N * copies_for(PUBLISHED_N - 1, 6);
     println!();
     println!("  A degree-6 fabric holding the dense coupling exactly needs {six} oscillators");
-    println!("  for a model of {PUBLISHED_N}: a factor of {}.", six / PUBLISHED_N);
+    println!(
+        "  for a model of {PUBLISHED_N}: a factor of {}.",
+        six / PUBLISHED_N
+    );
     println!("  That factor is the choice. Pay it in silicon, or pay the nats in section 2, or");
     println!("  train a coupling that was sparse to begin with -- which nothing published does.");
 
     println!("\n== what this shows and what it does not ==");
-    println!("  shown:     the truncation cost is exact here, and bounded everywhere by a quantity");
+    println!(
+        "  shown:     the truncation cost is exact here, and bounded everywhere by a quantity"
+    );
     println!("             that needs no enumeration -- 2 beta times the dropped coupling mass.");
-    println!("  not shown: the truncation cost of a REAL trained coupling. That needs the weights,");
+    println!(
+        "  not shown: the truncation cost of a REAL trained coupling. That needs the weights,"
+    );
     println!("             and the published models ship a decoder rather than a K. The two");
     println!("             profiles above bracket it, and the measurement to demand of any such");
     println!("             architecture is one number: what fraction of the coupling mass sits in");

@@ -71,7 +71,10 @@ fn main() {
         "  readout break-even per update at 10 steps, 8 bits: {:.3e} J (Z1 cycle 7.09e-15)",
         readout_break_even(10, 8)
     );
-    println!("  a dense 16,384-oscillator K is {} bytes", dense_coupling_bytes(16_384));
+    println!(
+        "  a dense 16,384-oscillator K is {} bytes",
+        dense_coupling_bytes(16_384)
+    );
 
     println!("\n== 4. what an asymmetric coupling is and is not ==");
     let kk = vec![0.0, 1.0, -0.5, 0.25, 0.0, 0.75, -0.5, 0.75, 0.0];
@@ -89,7 +92,11 @@ fn main() {
             worst_sol = worst_sol.max(asym.solenoidal_divergence(&phi).abs());
         }
     }
-    println!("  asymmetry |A| = {:.4}, winding |omega| = {:.4}", asym.asymmetry(), asym.winding());
+    println!(
+        "  asymmetry |A| = {:.4}, winding |omega| = {:.4}",
+        asym.asymmetry(),
+        asym.winding()
+    );
     println!("  max |div F_A|            = {worst_sol:.3e}   <- solenoidal, identically zero");
     println!("  max |grad E . F_A|       = {worst_defect:.4}       <- NOT zero: no Boltzmann law");
 
@@ -106,15 +113,22 @@ fn main() {
     let pr = reversible_matrix(&m, beta);
     let pi = site_measure(&m, beta);
     let mu: Vec<f64> = pi.iter().flat_map(|&x| [x / 2.0, x / 2.0]).collect();
-    let obs: Vec<f64> =
-        (0..q).map(|c| (core::f64::consts::TAU * c as f64 / q as f64).cos()).collect();
+    let obs: Vec<f64> = (0..q)
+        .map(|c| (core::f64::consts::TAU * c as f64 / q as f64).cos())
+        .collect();
     let lobs: Vec<f64> = obs.iter().flat_map(|&x| [x, x]).collect();
     let tl = exact_tau_int(&pl, &mu, &lobs, 4_000);
     let tr = exact_tau_int(&pr, &pi, &obs, 4_000);
-    println!("  lifted:     stationary defect {:.2e}, balance defect {:.4}, tau_int {tl:.3}",
-        stationary_defect(&pl, &mu), balance_defect(&pl, &mu));
-    println!("  reversible: stationary defect {:.2e}, balance defect {:.2e}, tau_int {tr:.3}",
-        stationary_defect(&pr, &pi), balance_defect(&pr, &pi));
+    println!(
+        "  lifted:     stationary defect {:.2e}, balance defect {:.4}, tau_int {tl:.3}",
+        stationary_defect(&pl, &mu),
+        balance_defect(&pl, &mu)
+    );
+    println!(
+        "  reversible: stationary defect {:.2e}, balance defect {:.2e}, tau_int {tr:.3}",
+        stationary_defect(&pr, &pi),
+        balance_defect(&pr, &pi)
+    );
     println!("  speed-up from lifting alone: {:.2}x", tr / tl);
 
     println!("\n== 6. pricing their instruction set ==");
@@ -123,7 +137,10 @@ fn main() {
         let share = asm
             .configuration_share(&Z1_SPICE, Substrate::Spins, 1.0)
             .expect("Z1_SPICE states every price");
-        println!("  Evolve {sweeps:>9} sweeps -> configuration is {:.2}% of the energy", 100.0 * share);
+        println!(
+            "  Evolve {sweeps:>9} sweeps -> configuration is {:.2}% of the energy",
+            100.0 * share
+        );
     }
 
     println!("\n== 7. an exactly certifiable in-fabric generator ==");
@@ -137,20 +154,33 @@ fn main() {
     )
     .expect("well formed");
     let e = pg.enumerate_grid(16, 1.0).expect("small enough");
-    println!("  ln Z on the q = 16 grid, outputs included     = {:.6}", e.log_z);
-    println!("  ln Z of the model, readout divided out        = {:.6}", e.log_z_continuum());
+    println!(
+        "  ln Z on the q = 16 grid, outputs included     = {:.6}",
+        e.log_z
+    );
+    println!(
+        "  ln Z of the model, readout divided out        = {:.6}",
+        e.log_z_continuum()
+    );
     println!(
         "  the gap is the cell volume, n ln(q / 2 pi)    = {:.6}",
         e.log_z - e.log_z_continuum()
     );
-    println!("  most probable of {} grid states carries p = {:.4}", e.p.len(),
-        e.p.iter().copied().fold(0.0f64, f64::max));
+    println!(
+        "  most probable of {} grid states carries p = {:.4}",
+        e.p.len(),
+        e.p.iter().copied().fold(0.0f64, f64::max)
+    );
 }
 
 fn ring(sweeps: usize) -> Assembled {
     let mut p = Program::new(4);
     for i in 0..4 {
-        p.push(Insn::Connect { i, j: (i + 1) % 4, w: 1.0 });
+        p.push(Insn::Connect {
+            i,
+            j: (i + 1) % 4,
+            w: 1.0,
+        });
     }
     p.push(Insn::Evolve { steps: sweeps });
     p.push(Insn::Store { i: 0 });

@@ -29,10 +29,10 @@
 
 use ferrotherm::fabric::{Device, Fabric, Precision, Unsupported};
 use ferrotherm::ftp::Program;
+use ferrotherm::graph::Graph;
 use ferrotherm::ledger::{Ledger, Prices};
 use ferrotherm::rng::Pcg;
 use ferrotherm::schedule::Schedule;
-use ferrotherm::graph::Graph;
 use ferrotherm::wgsl::GpuModel;
 
 /// A [`Device`] backed by the native WGSL sampler.
@@ -64,7 +64,13 @@ impl GpuDevice {
     /// Wrap an adapter already opened, so a caller that enumerated once does not enumerate again.
     #[must_use]
     pub fn with(gpu: crate::Gpu) -> GpuDevice {
-        GpuDevice { gpu, model: None, graph: None, state: Vec::new(), ledger: Ledger::default() }
+        GpuDevice {
+            gpu,
+            model: None,
+            graph: None,
+            state: Vec::new(),
+            ledger: Ledger::default(),
+        }
     }
 
     /// What the driver reports, for a caller that needs to know whether this is real silicon.
@@ -118,7 +124,9 @@ impl Device for GpuDevice {
                 self.graph = Some(g);
                 Vec::new()
             }
-            Err(e) => vec![Unsupported::Unplaceable { detail: e.to_string() }],
+            Err(e) => vec![Unsupported::Unplaceable {
+                detail: e.to_string(),
+            }],
         }
     }
 
@@ -163,8 +171,11 @@ impl Device for GpuDevice {
             // The seed varies per stage. Reusing one stream across stages would have every stage
             // draw the same numbers at the same nodes, which is the failure the step counter
             // already exists to prevent, one level up.
-            let stage_seed = seed.wrapping_add(i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            self.gpu.sweep_seeded(m, &mut self.state, st.beta, st.sweeps as u32, stage_seed, 0)?;
+            let stage_seed = seed
+                .wrapping_add(i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            self.gpu
+                .sweep_seeded(m, &mut self.state, st.beta, st.sweeps as u32, stage_seed, 0)?;
             self.ledger.samples += m.n as u64 * st.sweeps as u64;
             // `sweep_seeded` brings the state back to the host, and scoring it below is why. One
             // full readback per stage, charged -- on this backend it is the PCIe copy, the term a
@@ -195,15 +206,19 @@ impl Device for GpuDevice {
         self.state = (0..g.n).map(|_| rng.spin(0.5)).collect();
         let thin = plan.thin.max(1);
         if plan.burn_in > 0 {
-            self.gpu.sweep_seeded(m, &mut self.state, beta, plan.burn_in as u32, seed, 0)?;
+            self.gpu
+                .sweep_seeded(m, &mut self.state, beta, plan.burn_in as u32, seed, 0)?;
         }
         let mut states = Vec::with_capacity(plan.draws);
         let mut energies = Vec::with_capacity(plan.draws);
         for d in 0..plan.draws {
             // A fresh stream per draw, for the reason the stage loop in `run` already documents:
             // one stream reused would draw the same numbers at the same nodes every time.
-            let s = seed.wrapping_add(d as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            self.gpu.sweep_seeded(m, &mut self.state, beta, thin as u32, s, 0)?;
+            let s = seed
+                .wrapping_add(d as u64 + 1)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            self.gpu
+                .sweep_seeded(m, &mut self.state, beta, thin as u32, s, 0)?;
             energies.push(g.energy(&self.state));
             states.push(self.state.clone());
         }
@@ -234,7 +249,9 @@ mod tests {
         () => {{
             // Serialised for the same reason as `ferrotherm_gpu::tests::ADAPTER`: parallel
             // Vulkan device creation segfaults the NVIDIA driver stack.
-            let own = crate::tests::ADAPTER.lock().unwrap_or_else(|e| e.into_inner());
+            let own = crate::tests::ADAPTER
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             match GpuDevice::open() {
                 Some(d) => (d, own),
                 None => {
@@ -252,13 +269,19 @@ mod tests {
         // reach -- runnable, and uncheckable against the fabric it claims to be.
         let (mut d, _own) = dev_or_skip!();
         if !d.is_hardware() {
-            eprintln!("software rasteriser; the physics is still checked, the timings mean nothing");
+            eprintln!(
+                "software rasteriser; the physics is still checked, the timings mean nothing"
+            );
         }
         let report = ferrotherm::conform::run(&mut d);
         assert!(
             report.passed(),
             "the GPU path fails conformance:\n{report}\n{}",
-            report.failures().map(|c| format!("  {} -- {}", c.name, c.detail)).collect::<Vec<_>>().join("\n")
+            report
+                .failures()
+                .map(|c| format!("  {} -- {}", c.name, c.detail))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 
@@ -272,10 +295,18 @@ mod tests {
         let f = d.fabric();
         assert_eq!(f.coupling_precision, Precision::Float { mantissa: 24 });
         assert_eq!(f.field_precision, Precision::Float { mantissa: 24 });
-        assert_eq!(f.max_arity, 2, "it lowers through to_graph, which is pairwise");
-        assert!(!f.prices.is_stated(), "a GPU publishes board power, not joules per spin update");
+        assert_eq!(
+            f.max_arity, 2,
+            "it lowers through to_graph, which is pairwise"
+        );
         assert!(
-            f.unstated.iter().any(|u| u.contains("per-operation energy")),
+            !f.prices.is_stated(),
+            "a GPU publishes board power, not joules per spin update"
+        );
+        assert!(
+            f.unstated
+                .iter()
+                .any(|u| u.contains("per-operation energy")),
             "the gap has to be named, not merely left empty: {:?}",
             f.unstated
         );
@@ -301,8 +332,14 @@ mod tests {
         d.gpu.sweep_seeded(&m, &mut a, hot, 40, 1, 0).unwrap();
         d.gpu.sweep_seeded(&m, &mut b, hot, 40, 2, 0).unwrap();
         d.gpu.sweep_seeded(&m, &mut a_again, hot, 40, 1, 0).unwrap();
-        assert_ne!(a, b, "two seeds produced identical states; the seed is being ignored");
-        assert_eq!(a, a_again, "the same seed must reproduce; this is a seed, not just noise");
+        assert_ne!(
+            a, b,
+            "two seeds produced identical states; the seed is being ignored"
+        );
+        assert_eq!(
+            a, a_again,
+            "the same seed must reproduce; this is a seed, not just noise"
+        );
 
         // And seed 0 has to leave the unseeded stream exactly where it was, or every Onsager number
         // ever taken on this shader silently moved.
@@ -310,7 +347,10 @@ mod tests {
         let mut unseeded = vec![1i8; g.n];
         d.gpu.sweep_seeded(&m, &mut viaseed, hot, 40, 0, 0).unwrap();
         d.gpu.sweep(&m, &mut unseeded, hot, 40).unwrap();
-        assert_eq!(viaseed, unseeded, "seed 0 must be the stream that existed before seeding");
+        assert_eq!(
+            viaseed, unseeded,
+            "seed 0 must be the stream that existed before seeding"
+        );
     }
 
     #[test]
@@ -333,7 +373,10 @@ mod tests {
             inst.graph.energy(&a) < 0.0 && inst.graph.energy(&b) < 0.0,
             "both runs should have moved off the initial state at all"
         );
-        assert_ne!(a, b, "two seeds gave the same trajectory; the device is not threading the seed");
+        assert_ne!(
+            a, b,
+            "two seeds gave the same trajectory; the device is not threading the seed"
+        );
     }
 
     #[test]
@@ -347,7 +390,11 @@ mod tests {
         assert_eq!(d.ledger().samples, 0, "loading is not sampling");
 
         d.run(&Schedule::constant(0.6, 10), 3).unwrap();
-        assert_eq!(d.ledger().samples, g.n as u64 * 10, "one sample per node per sweep");
+        assert_eq!(
+            d.ledger().samples,
+            g.n as u64 * 10,
+            "one sample per node per sweep"
+        );
     }
 
     #[test]
@@ -358,7 +405,10 @@ mod tests {
         // And an empty schedule runs nothing, which is worth saying rather than returning the
         // initial state as though it had been sampled.
         let g = lattice2d(8, 1.0);
-        assert!(d.program(&Program::from_graph(&g, &Schedule::default())).is_empty());
+        assert!(
+            d.program(&Program::from_graph(&g, &Schedule::default()))
+                .is_empty()
+        );
         let e2 = d.run(&Schedule::new(), 1).unwrap_err();
         assert!(e2.contains("empty schedule"), "{e2}");
     }

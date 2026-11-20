@@ -20,8 +20,16 @@ use ferrotherm::dense_memory::{DenseMemory, Energy};
 use ferrotherm::hopfield::random_patterns;
 use ferrotherm::rng::Pcg;
 
-fn nrm(a: &[f64]) -> f64 { a.iter().map(|v| v * v).sum::<f64>().sqrt() }
-fn dist(a: &[f64], b: &[f64]) -> f64 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f64>().sqrt() }
+fn nrm(a: &[f64]) -> f64 {
+    a.iter().map(|v| v * v).sum::<f64>().sqrt()
+}
+fn dist(a: &[f64], b: &[f64]) -> f64 {
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (x - y) * (x - y))
+        .sum::<f64>()
+        .sqrt()
+}
 
 fn main() {
     let (k, d) = (8usize, 16usize);
@@ -34,7 +42,10 @@ fn main() {
         for draw in 0..60 {
             let retrieval = draw % 3 == 2;
             let xi: Vec<f64> = if retrieval {
-                mem.patterns[draw % k].iter().map(|&a| 0.5 * f64::from(a)).collect()
+                mem.patterns[draw % k]
+                    .iter()
+                    .map(|&a| 0.5 * f64::from(a))
+                    .collect()
             } else {
                 (0..d).map(|_| 0.2 * (2.0 * rng.f64() - 1.0)).collect()
             };
@@ -45,19 +56,34 @@ fn main() {
             let mut iters = 1;
             loop {
                 let e = mem.lse_energy(&cur, beta);
-                if e > e_prev + 1e-12 { mono_fail += 1; }
+                if e > e_prev + 1e-12 {
+                    mono_fail += 1;
+                }
                 e_prev = e;
                 let next = mem.attention_update(&cur, beta);
-                if dist(&next, &cur) < 1e-12 || iters > 5000 { cur = next; break; }
-                cur = next; iters += 1;
+                if dist(&next, &cur) < 1e-12 || iters > 5000 {
+                    cur = next;
+                    break;
+                }
+                cur = next;
+                iters += 1;
             }
             worst_iters = worst_iters.max(iters);
             let rel = dist(&one, &cur) / nrm(&cur).max(1e-30);
-            if retrieval { retr.push(rel) } else { mixed.push(rel) }
+            if retrieval {
+                retr.push(rel);
+            } else {
+                mixed.push(rel);
+            }
         }
         let mean = |v: &Vec<f64>| v.iter().sum::<f64>() / v.len() as f64;
         let max = |v: &Vec<f64>| v.iter().copied().fold(0.0f64, f64::max);
-        println!("beta {beta:>5}  mixed rel-gap mean {:>9.4} max {:>9.4} | retrieval mean {:>9.6} max {:>9.6} | iters<= {worst_iters:>4} | energy-increases {mono_fail}",
-            mean(&mixed), max(&mixed), mean(&retr), max(&retr));
+        println!(
+            "beta {beta:>5}  mixed rel-gap mean {:>9.4} max {:>9.4} | retrieval mean {:>9.6} max {:>9.6} | iters<= {worst_iters:>4} | energy-increases {mono_fail}",
+            mean(&mixed),
+            max(&mixed),
+            mean(&retr),
+            max(&retr)
+        );
     }
 }

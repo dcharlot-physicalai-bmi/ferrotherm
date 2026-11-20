@@ -71,7 +71,11 @@ impl DenseMemory {
         if let Energy::Polynomial(k) = energy {
             assert!(k >= 1);
         }
-        DenseMemory { patterns, n, energy }
+        DenseMemory {
+            patterns,
+            n,
+            energy,
+        }
     }
 
     fn f(&self, x: f64) -> f64 {
@@ -97,7 +101,15 @@ impl DenseMemory {
     /// The overlaps `x_μ = ξ^μ · s`.
     #[must_use]
     pub fn overlaps(&self, s: &[i8]) -> Vec<f64> {
-        self.patterns.iter().map(|p| p.iter().zip(s).map(|(&a, &b)| (a as i32 * b as i32) as f64).sum()).collect()
+        self.patterns
+            .iter()
+            .map(|p| {
+                p.iter()
+                    .zip(s)
+                    .map(|(&a, &b)| (a as i32 * b as i32) as f64)
+                    .sum()
+            })
+            .collect()
     }
 
     /// `E(s) = −c Σ_μ F(ξ^μ · s)`.
@@ -128,7 +140,11 @@ impl DenseMemory {
     /// The fraction of stored patterns that are fixed points.
     #[must_use]
     pub fn stable_fraction(&self) -> f64 {
-        let k = self.patterns.iter().filter(|p| self.is_fixed_point(p)).count();
+        let k = self
+            .patterns
+            .iter()
+            .filter(|p| self.is_fixed_point(p))
+            .count();
         k as f64 / self.patterns.len() as f64
     }
 
@@ -167,7 +183,17 @@ impl DenseMemory {
     /// If `query` is not the pattern length.
     pub fn attention_update(&self, query: &[f64], beta: f64) -> Vec<f64> {
         assert_eq!(query.len(), self.n);
-        let logits: Vec<f64> = self.patterns.iter().map(|p| beta * p.iter().zip(query).map(|(&a, &q)| a as f64 * q).sum::<f64>()).collect();
+        let logits: Vec<f64> = self
+            .patterns
+            .iter()
+            .map(|p| {
+                beta * p
+                    .iter()
+                    .zip(query)
+                    .map(|(&a, &q)| a as f64 * q)
+                    .sum::<f64>()
+            })
+            .collect();
         let mx = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let w: Vec<f64> = logits.iter().map(|l| (l - mx).exp()).collect();
         let z: f64 = w.iter().sum();
@@ -206,11 +232,20 @@ impl DenseMemory {
     #[must_use]
     pub fn lse_energy(&self, xi: &[f64], beta: f64) -> f64 {
         assert_eq!(xi.len(), self.n, "a query must be the pattern length");
-        assert!(beta > 0.0 && beta.is_finite(), "beta must be positive and finite, got {beta}");
+        assert!(
+            beta > 0.0 && beta.is_finite(),
+            "beta must be positive and finite, got {beta}"
+        );
         let logits: Vec<f64> = self
             .patterns
             .iter()
-            .map(|p| beta * p.iter().zip(xi).map(|(&a, &q)| f64::from(a) * q).sum::<f64>())
+            .map(|p| {
+                beta * p
+                    .iter()
+                    .zip(xi)
+                    .map(|(&a, &q)| f64::from(a) * q)
+                    .sum::<f64>()
+            })
             .collect();
         let mx = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
         let sum: f64 = logits.iter().map(|l| (l - mx).exp()).sum();
@@ -229,7 +264,10 @@ impl DenseMemory {
     /// If `beta` is not positive and finite.
     #[must_use]
     pub fn lse_constant(&self, beta: f64) -> f64 {
-        assert!(beta > 0.0 && beta.is_finite(), "beta must be positive and finite, got {beta}");
+        assert!(
+            beta > 0.0 && beta.is_finite(),
+            "beta must be positive and finite, got {beta}"
+        );
         // Every stored pattern is ±1, so ‖x_μ‖² = n for all of them and the max is exact.
         (self.patterns.len() as f64).ln() / beta + 0.5 * self.n as f64
     }
@@ -270,8 +308,12 @@ pub fn odd_set_count(k: usize, r: usize, n: usize) -> f64 {
     for i in 1..=k {
         fact[i] = fact[i - 1] * i as f64;
     }
-    let sinh: Vec<f64> = (0..=k).map(|d| if d % 2 == 1 { 1.0 / fact[d] } else { 0.0 }).collect();
-    let cosh: Vec<f64> = (0..=k).map(|d| if d % 2 == 0 { 1.0 / fact[d] } else { 0.0 }).collect();
+    let sinh: Vec<f64> = (0..=k)
+        .map(|d| if d % 2 == 1 { 1.0 / fact[d] } else { 0.0 })
+        .collect();
+    let cosh: Vec<f64> = (0..=k)
+        .map(|d| if d % 2 == 0 { 1.0 / fact[d] } else { 0.0 })
+        .collect();
     let pow = |base: &[f64], mut e: usize| -> Vec<f64> {
         let mut result = vec![0.0; k + 1];
         result[0] = 1.0;
@@ -304,8 +346,14 @@ impl DenseMemory {
     pub fn to_hubo(&self) -> Result<(crate::hubo::Hubo, f64), String> {
         let k = match self.energy {
             Energy::Polynomial(k) if k % 2 == 0 => k as usize,
-            Energy::Polynomial(k) => return Err(format!("degree {k} is rectified, not a polynomial in the spins")),
-            Energy::Exponential { .. } => return Err("the exponential energy is not a polynomial".into()),
+            Energy::Polynomial(k) => {
+                return Err(format!(
+                    "degree {k} is rectified, not a polynomial in the spins"
+                ));
+            }
+            Energy::Exponential { .. } => {
+                return Err("the exponential energy is not a polynomial".into());
+            }
         };
         let c = self.c();
         let n = self.n;
@@ -320,7 +368,11 @@ impl DenseMemory {
             // every r-subset of 0..n, in lexicographic order
             let mut subset: Vec<usize> = (0..r).collect();
             loop {
-                let coeff: f64 = self.patterns.iter().map(|p| subset.iter().map(|&i| p[i] as f64).product::<f64>()).sum();
+                let coeff: f64 = self
+                    .patterns
+                    .iter()
+                    .map(|p| subset.iter().map(|&i| p[i] as f64).product::<f64>())
+                    .sum();
                 let w = c * count * coeff;
                 if w != 0.0 {
                     h.add(&subset, w).map_err(|e| format!("{e:?}"))?;
@@ -347,15 +399,23 @@ impl DenseMemory {
     /// # Errors
     ///
     /// As [`DenseMemory::to_hubo`], plus anything the pairwise reduction refuses.
-    pub fn to_program(&self, schedule: &crate::schedule::Schedule) -> Result<(crate::ftp::Program, f64), String> {
+    pub fn to_program(
+        &self,
+        schedule: &crate::schedule::Schedule,
+    ) -> Result<(crate::ftp::Program, f64), String> {
         let (h, offset) = self.to_hubo()?;
         let mut factors = Vec::with_capacity(h.terms());
         for (vars, w) in h.iter() {
-            factors.push(crate::factor::Factor::new(&vars, w, self.n).map_err(|e| format!("{e:?}"))?);
+            factors
+                .push(crate::factor::Factor::new(&vars, w, self.n).map_err(|e| format!("{e:?}"))?);
         }
         Ok((
             crate::ftp::Program {
-                name: Some(format!("dense memory, {} patterns, {:?}", self.patterns.len(), self.energy)),
+                name: Some(format!(
+                    "dense memory, {} patterns, {:?}",
+                    self.patterns.len(),
+                    self.energy
+                )),
                 spins: self.n,
                 bias: Vec::new(),
                 factors,
@@ -375,7 +435,10 @@ impl DenseMemory {
 #[must_use]
 pub fn corrupt(pattern: &[i8], fraction: f64, seed: u64) -> Vec<i8> {
     let mut rng = Pcg::new(seed, 17);
-    pattern.iter().map(|&v| if rng.f64() < fraction { -v } else { v }).collect()
+    pattern
+        .iter()
+        .map(|&v| if rng.f64() < fraction { -v } else { v })
+        .collect()
 }
 
 /// `(1/N) Σ_i ξ_i s_i`.
@@ -421,7 +484,10 @@ mod tests {
             // its own logit is beta*g*d = 32g against ~+-8g for the others, a gap of ~24g, so
             // g = 0.5 puts the top weight past 0.99.
             let xi: Vec<f64> = if draw % 3 == 2 {
-                mem.patterns[draw % k].iter().map(|&a| 0.5 * f64::from(a)).collect()
+                mem.patterns[draw % k]
+                    .iter()
+                    .map(|&a| 0.5 * f64::from(a))
+                    .collect()
             } else {
                 let scale = [0.05, 0.2][draw % 3];
                 (0..d).map(|_| scale * (2.0 * rng.f64() - 1.0)).collect()
@@ -438,28 +504,75 @@ mod tests {
             for i in 0..d {
                 let err = (grad[i] - (xi[i] - t[i])).abs();
                 worst = worst.max(err);
-                assert!(err < 1e-6, "draw {draw} coord {i}: dE/dxi = {} but xi - T(xi) = {}", grad[i], xi[i] - t[i]);
+                assert!(
+                    err < 1e-6,
+                    "draw {draw} coord {i}: dE/dxi = {} but xi - T(xi) = {}",
+                    grad[i],
+                    xi[i] - t[i]
+                );
             }
 
-            let logits: Vec<f64> = mem.patterns.iter().map(|p| beta * p.iter().zip(&xi).map(|(&a, &q)| f64::from(a) * q).sum::<f64>()).collect();
+            let logits: Vec<f64> = mem
+                .patterns
+                .iter()
+                .map(|p| {
+                    beta * p
+                        .iter()
+                        .zip(&xi)
+                        .map(|(&a, &q)| f64::from(a) * q)
+                        .sum::<f64>()
+                })
+                .collect();
             let mx = logits.iter().copied().fold(f64::NEG_INFINITY, f64::max);
             let w: Vec<f64> = logits.iter().map(|l| (l - mx).exp()).collect();
             let top = w.iter().copied().fold(f64::NEG_INFINITY, f64::max) / w.iter().sum::<f64>();
-            if draw % 3 == 2 { pattern_top.push(top) } else { diffuse_top.push(top) }
+            if draw % 3 == 2 {
+                pattern_top.push(top);
+            } else {
+                diffuse_top.push(top);
+            }
         }
-        assert_eq!(diffuse_top.len(), 67, "the construction makes 67 diffuse draws of 100");
+        assert_eq!(
+            diffuse_top.len(),
+            67,
+            "the construction makes 67 diffuse draws of 100"
+        );
         assert_eq!(pattern_top.len(), 33, "and 33 on a stored pattern");
         let hi = |v: &[f64]| v.iter().copied().fold(0.0f64, f64::max);
         let lo = |v: &[f64]| v.iter().copied().fold(1.0f64, f64::min);
-        assert!(hi(&diffuse_top) < 0.9, "every diffuse draw must leave the softmax mixed: worst top weight {}", hi(&diffuse_top));
-        assert!(lo(&pattern_top) > 0.99, "every pattern draw must peak: weakest top weight {}", lo(&pattern_top));
-        assert!(lo(&diffuse_top) < 0.35, "and the diffuse family must reach genuinely flat, not just under the bar: flattest was {}", lo(&diffuse_top));
+        assert!(
+            hi(&diffuse_top) < 0.9,
+            "every diffuse draw must leave the softmax mixed: worst top weight {}",
+            hi(&diffuse_top)
+        );
+        assert!(
+            lo(&pattern_top) > 0.99,
+            "every pattern draw must peak: weakest top weight {}",
+            lo(&pattern_top)
+        );
+        assert!(
+            lo(&diffuse_top) < 0.35,
+            "and the diffuse family must reach genuinely flat, not just under the bar: flattest was {}",
+            lo(&diffuse_top)
+        );
         // A softmax over K terms cannot have a largest weight below 1/K, so a recorded weight under
         // that did not come from this softmax. Without this line, writing 0.0 into `diffuse_top`
         // satisfies both bounds above and the regime check measures nothing.
-        assert!(lo(&diffuse_top) >= 1.0 / k as f64, "a top softmax weight cannot be below 1/K = {}: got {}", 1.0 / k as f64, lo(&diffuse_top));
-        assert!(hi(&pattern_top) <= 1.0, "nor above 1: got {}", hi(&pattern_top));
-        assert!(worst < 1e-6, "worst coordinate error over 100 draws: {worst}");
+        assert!(
+            lo(&diffuse_top) >= 1.0 / k as f64,
+            "a top softmax weight cannot be below 1/K = {}: got {}",
+            1.0 / k as f64,
+            lo(&diffuse_top)
+        );
+        assert!(
+            hi(&pattern_top) <= 1.0,
+            "nor above 1: got {}",
+            hi(&pattern_top)
+        );
+        assert!(
+            worst < 1e-6,
+            "worst coordinate error over 100 draws: {worst}"
+        );
     }
 
     /// **One attention step is not the energy's minimiser**, except in one corner.
@@ -491,7 +604,13 @@ mod tests {
         let (k, d) = (8usize, 16usize);
         let mem = DenseMemory::new(random_patterns(d, k, 77), Energy::Exponential { b: 2.0 });
         let nrm = |a: &[f64]| a.iter().map(|v| v * v).sum::<f64>().sqrt();
-        let dist = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f64>().sqrt();
+        let dist = |a: &[f64], b: &[f64]| {
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| (x - y) * (x - y))
+                .sum::<f64>()
+                .sqrt()
+        };
         let mut increases = 0usize;
         let mut worst_iters = 0usize;
         let mut table = Vec::new();
@@ -501,50 +620,86 @@ mod tests {
             for draw in 0..60 {
                 let retrieval = draw % 3 == 2;
                 let xi: Vec<f64> = if retrieval {
-                    mem.patterns[draw % k].iter().map(|&a| 0.5 * f64::from(a)).collect()
+                    mem.patterns[draw % k]
+                        .iter()
+                        .map(|&a| 0.5 * f64::from(a))
+                        .collect()
                 } else {
                     (0..d).map(|_| 0.2 * (2.0 * rng.f64() - 1.0)).collect()
                 };
                 let one = mem.attention_update(&xi, beta);
-                let (mut cur, mut e_prev, mut iters) = (one.clone(), mem.lse_energy(&xi, beta), 1usize);
+                let (mut cur, mut e_prev, mut iters) =
+                    (one.clone(), mem.lse_energy(&xi, beta), 1usize);
                 loop {
                     let e = mem.lse_energy(&cur, beta);
                     // The iteration is a descent method, so the energy never rises.
-                    if e > e_prev + 1e-12 { increases += 1; }
+                    if e > e_prev + 1e-12 {
+                        increases += 1;
+                    }
                     e_prev = e;
                     let next = mem.attention_update(&cur, beta);
                     let moved = dist(&next, &cur);
                     cur = next;
-                    if moved < 1e-12 || iters > 5000 { break; }
+                    if moved < 1e-12 || iters > 5000 {
+                        break;
+                    }
                     iters += 1;
                 }
                 worst_iters = worst_iters.max(iters);
                 let rel = dist(&one, &cur) / nrm(&cur).max(1e-30);
-                if retrieval { on_pattern.push(rel) } else { diffuse.push(rel) }
+                if retrieval {
+                    on_pattern.push(rel);
+                } else {
+                    diffuse.push(rel);
+                }
             }
             let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len() as f64;
             assert_eq!(on_pattern.len(), 20, "20 pattern queries per beta");
             assert_eq!(diffuse.len(), 40, "40 diffuse queries per beta");
             table.push((beta, mean(&on_pattern), mean(&diffuse)));
         }
-        assert_eq!(increases, 0, "the attention iteration is a descent method: {increases} energy increases");
-        assert!(worst_iters >= 20, "the fixed point must be genuinely far for at least one draw, else this test compares a vector to itself: worst was {worst_iters} iterations");
+        assert_eq!(
+            increases, 0,
+            "the attention iteration is a descent method: {increases} energy increases"
+        );
+        assert!(
+            worst_iters >= 20,
+            "the fixed point must be genuinely far for at least one draw, else this test compares a vector to itself: worst was {worst_iters} iterations"
+        );
 
         // The corner where one step IS the answer: on a pattern, at high beta.
         let (b4, on4, diff4) = table[2];
         assert!((b4 - 4.0).abs() < 1e-12);
-        assert!(on4 < 1e-3, "at beta = 4 a pattern query must converge in one step: {on4}");
+        assert!(
+            on4 < 1e-3,
+            "at beta = 4 a pattern query must converge in one step: {on4}"
+        );
         // Drop beta and the same query no longer converges in one step.
         let (b_lo, on_lo, diff_lo) = table[0];
         assert!((b_lo - 0.25).abs() < 1e-12);
-        assert!(on_lo > 0.5, "at beta = 0.25 the SAME pattern query must not converge in one step: {on_lo}");
+        assert!(
+            on_lo > 0.5,
+            "at beta = 0.25 the SAME pattern query must not converge in one step: {on_lo}"
+        );
         // Drop the separated query and no beta rescues it.
         for &(beta, _, diff) in &table {
-            assert!(diff > 0.4, "a diffuse query must stay far from the fixed point at beta = {beta}: {diff}");
-            assert!(diff < 1.0, "and not so far that the fixed point is degenerate at beta = {beta}: {diff}");
+            assert!(
+                diff > 0.4,
+                "a diffuse query must stay far from the fixed point at beta = {beta}: {diff}"
+            );
+            assert!(
+                diff < 1.0,
+                "and not so far that the fixed point is degenerate at beta = {beta}: {diff}"
+            );
         }
-        assert!(diff4 > 10.0 * on4, "at beta = 4 the two regimes must be far apart: diffuse {diff4} vs on-pattern {on4}");
-        assert!(diff_lo < 2.0 * on_lo, "at beta = 0.25 neither regime converges, so they are comparable: diffuse {diff_lo} vs on-pattern {on_lo}");
+        assert!(
+            diff4 > 10.0 * on4,
+            "at beta = 4 the two regimes must be far apart: diffuse {diff4} vs on-pattern {on4}"
+        );
+        assert!(
+            diff_lo < 2.0 * on_lo,
+            "at beta = 0.25 neither regime converges, so they are comparable: diffuse {diff_lo} vs on-pattern {on_lo}"
+        );
     }
 
     /// **The published constants are what make the energy non-negative.** [`DenseMemory::lse_constant`]
@@ -563,10 +718,21 @@ mod tests {
         let mem = DenseMemory::new(random_patterns(d, 8, 78), Energy::Exponential { b: 2.0 });
         // Recomputed from the pattern data, not from the formula under test: every stored vector
         // is +-1, so M^2 is the largest squared norm actually present.
-        let m2 = mem.patterns.iter().map(|p| p.iter().map(|&a| f64::from(a) * f64::from(a)).sum::<f64>()).fold(0.0f64, f64::max);
+        let m2 = mem
+            .patterns
+            .iter()
+            .map(|p| p.iter().map(|&a| f64::from(a) * f64::from(a)).sum::<f64>())
+            .fold(0.0f64, f64::max);
         let want = (mem.patterns.len() as f64).ln() / beta + 0.5 * m2;
-        assert!((mem.lse_constant(beta) - want).abs() < 1e-12, "constant {} should be beta^-1 ln P + M^2/2 = {want}", mem.lse_constant(beta));
-        assert!((m2 - d as f64).abs() < 1e-12, "+-1 patterns have squared norm n = {d}, measured {m2}");
+        assert!(
+            (mem.lse_constant(beta) - want).abs() < 1e-12,
+            "constant {} should be beta^-1 ln P + M^2/2 = {want}",
+            mem.lse_constant(beta)
+        );
+        assert!(
+            (m2 - d as f64).abs() < 1e-12,
+            "+-1 patterns have squared norm n = {d}, measured {m2}"
+        );
 
         let c = mem.lse_constant(beta);
         let m = m2.sqrt();
@@ -578,26 +744,46 @@ mod tests {
             let raw: Vec<f64> = (0..d).map(|_| 2.0 * rng.f64() - 1.0).collect();
             let rn = raw.iter().map(|v| v * v).sum::<f64>().sqrt();
             let xi: Vec<f64> = if draw % 2 == 0 {
-                mem.patterns[draw % mem.patterns.len()].iter().map(|&a| gain * f64::from(a)).collect()
+                mem.patterns[draw % mem.patterns.len()]
+                    .iter()
+                    .map(|&a| gain * f64::from(a))
+                    .collect()
             } else {
                 raw.iter().map(|v| v * gain * m / rn).collect()
             };
             let ours = mem.lse_energy(&xi, beta);
             let published = ours + c;
-            if ours < 0.0 { went_negative += 1; }
-            assert!(published >= -1e-12, "the published energy must be non-negative, draw {draw} gave {published}");
+            if ours < 0.0 {
+                went_negative += 1;
+            }
+            assert!(
+                published >= -1e-12,
+                "the published energy must be non-negative, draw {draw} gave {published}"
+            );
             let n = xi.iter().map(|v| v * v).sum::<f64>().sqrt();
             let floor = 0.5 * (n - m).powi(2);
-            assert!(published >= floor - 1e-9, "draw {draw}: published {published} below its own bound {floor}");
+            assert!(
+                published >= floor - 1e-9,
+                "draw {draw}: published {published} below its own bound {floor}"
+            );
             tightest = tightest.min(published);
         }
-        assert!(went_negative >= 100, "without the constants the energy is routinely negative: only {went_negative} of 200");
+        assert!(
+            went_negative >= 100,
+            "without the constants the energy is routinely negative: only {went_negative} of 200"
+        );
 
         // `lse <= max + beta^-1 ln P` is tight only when all P logits are EQUAL, so a separated
         // pattern set leaves precisely `beta^-1 ln P` on the table.
         let slack = (mem.patterns.len() as f64).ln() / beta;
-        assert!(tightest > slack, "a separated set cannot reach below the lse slack: {tightest} vs {slack}");
-        assert!(tightest < 1.001 * slack, "and it comes right down to it: {tightest} vs {slack}");
+        assert!(
+            tightest > slack,
+            "a separated set cannot reach below the lse slack: {tightest} vs {slack}"
+        );
+        assert!(
+            tightest < 1.001 * slack,
+            "and it comes right down to it: {tightest} vs {slack}"
+        );
 
         // Where the floor IS attained: P identical patterns make lse exact, so the constants cancel
         // the ln P term outright and E(xi) = 1/2 |xi - x|^2, which is 0 at xi = x.
@@ -612,21 +798,45 @@ mod tests {
         let mut rng2 = Pcg::new(406, 0);
         for draw in 0..60 {
             // draw 0 sits exactly on the pattern -- the only place the floor is attained.
-            let reach = if draw == 0 { 0.0 } else { 0.05 + 3.0 * (draw as f64 / 59.0) };
-            let xi: Vec<f64> = at.iter().map(|v| v + reach * (2.0 * rng2.f64() - 1.0)).collect();
-            let want: f64 = xi.iter().zip(&at).map(|(q, x)| (q - x) * (q - x)).sum::<f64>() / 2.0;
+            let reach = if draw == 0 {
+                0.0
+            } else {
+                0.05 + 3.0 * (draw as f64 / 59.0)
+            };
+            let xi: Vec<f64> = at
+                .iter()
+                .map(|v| v + reach * (2.0 * rng2.f64() - 1.0))
+                .collect();
+            let want: f64 = xi
+                .iter()
+                .zip(&at)
+                .map(|(q, x)| (q - x) * (q - x))
+                .sum::<f64>()
+                / 2.0;
             let got = degenerate.lse_energy(&xi, beta) + degenerate.lse_constant(beta);
-            assert!((got - want).abs() < 1e-9, "draw {draw}: published energy {got} should be |xi-x|^2/2 = {want}");
+            assert!(
+                (got - want).abs() < 1e-9,
+                "draw {draw}: published energy {got} should be |xi-x|^2/2 = {want}"
+            );
             // and the un-shifted energy is the same curve moved down by exactly the constant.
             let bare = degenerate.lse_energy(&xi, beta);
-            assert!((got - bare - degenerate.lse_constant(beta)).abs() < 1e-12, "the constant is the only difference between the two");
+            assert!(
+                (got - bare - degenerate.lse_constant(beta)).abs() < 1e-12,
+                "the constant is the only difference between the two"
+            );
             span_lo = span_lo.min(got);
             span_hi = span_hi.max(got);
         }
-        assert!(span_lo.abs() < 1e-12, "the floor is exactly attained at xi = x: {span_lo}");
+        assert!(
+            span_lo.abs() < 1e-12,
+            "the floor is exactly attained at xi = x: {span_lo}"
+        );
         // The range must outrun the constant under test, or the constant would be setting the scale
         // of its own check. Measured top of range 23.46 against a constant of 9.04.
-        assert!(span_hi > 2.0 * c, "the identity must be checked well away from the floor: top of range {span_hi} against a constant of {c}");
+        assert!(
+            span_hi > 2.0 * c,
+            "the identity must be checked well away from the floor: top of range {span_hi} against a constant of {c}"
+        );
     }
 
     /// Degree 2 IS the classical memory: `E_dense(s)` = `E_Hebb(s)` − P/2 for every state.
@@ -637,20 +847,32 @@ mod tests {
         let hebb = hebbian(&pats);
         let mut rng = Pcg::new(2, 0);
         for _ in 0..50 {
-            let s: Vec<i8> = (0..24).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect();
+            let s: Vec<i8> = (0..24)
+                .map(|_| if rng.f64() < 0.5 { -1 } else { 1 })
+                .collect();
             let want = hebb.energy(&s) - 2.5;
-            assert!((dense.energy_of(&s) - want).abs() < 1e-9, "{} vs {want}", dense.energy_of(&s));
+            assert!(
+                (dense.energy_of(&s) - want).abs() < 1e-9,
+                "{} vs {want}",
+                dense.energy_of(&s)
+            );
         }
     }
 
     /// The cached-overlap flip cost equals the brute-force energy difference.
     #[test]
     fn the_flip_cost_is_the_energy_difference() {
-        for energy in [Energy::Polynomial(2), Energy::Polynomial(3), Energy::Exponential { b: 0.5 }] {
+        for energy in [
+            Energy::Polynomial(2),
+            Energy::Polynomial(3),
+            Energy::Exponential { b: 0.5 },
+        ] {
             let pats = random_patterns(16, 6, 3);
             let m = DenseMemory::new(pats, energy);
             let mut rng = Pcg::new(4, 0);
-            let s: Vec<i8> = (0..16).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect();
+            let s: Vec<i8> = (0..16)
+                .map(|_| if rng.f64() < 0.5 { -1 } else { 1 })
+                .collect();
             let x = m.overlaps(&s);
             for i in 0..16 {
                 let mut t = s.clone();
@@ -671,12 +893,25 @@ mod tests {
         let d2 = DenseMemory::new(pats.clone(), Energy::Polynomial(2)).stable_fraction();
         let d3 = DenseMemory::new(pats.clone(), Energy::Polynomial(3)).stable_fraction();
         let ex = DenseMemory::new(pats, Energy::Exponential { b: 1.0 }).stable_fraction();
-        assert!(d2 < 0.2, "degree 2 at alpha = 1.2 should have lost nearly all patterns: {d2}");
-        assert!(d3 > 0.95, "degree 3 at 120 patterns of 100 spins should keep them: {d3}");
-        assert!(ex == 1.0, "the exponential memory keeps every pattern: {ex}");
+        assert!(
+            d2 < 0.2,
+            "degree 2 at alpha = 1.2 should have lost nearly all patterns: {d2}"
+        );
+        assert!(
+            d3 > 0.95,
+            "degree 3 at 120 patterns of 100 spins should keep them: {d3}"
+        );
+        assert!(
+            ex == 1.0,
+            "the exponential memory keeps every pattern: {ex}"
+        );
         // and at a load the classical memory can carry, all three agree.
         let few = random_patterns(n, 8, 6);
-        for e in [Energy::Polynomial(2), Energy::Polynomial(3), Energy::Exponential { b: 1.0 }] {
+        for e in [
+            Energy::Polynomial(2),
+            Energy::Polynomial(3),
+            Energy::Exponential { b: 1.0 },
+        ] {
             assert_eq!(DenseMemory::new(few.clone(), e).stable_fraction(), 1.0);
         }
     }
@@ -690,10 +925,18 @@ mod tests {
         let start = corrupt(&pats[0], 0.25, 8);
         let d3 = DenseMemory::new(pats.clone(), Energy::Polynomial(3));
         let got = d3.retrieve(&start, 20.0, 30, 9);
-        assert!(overlap(&pats[0], &got) > 0.98, "degree 3 retrieved overlap {}", overlap(&pats[0], &got));
+        assert!(
+            overlap(&pats[0], &got) > 0.98,
+            "degree 3 retrieved overlap {}",
+            overlap(&pats[0], &got)
+        );
         let d2 = DenseMemory::new(pats.clone(), Energy::Polynomial(2));
         let got2 = d2.retrieve(&start, 20.0, 30, 9);
-        assert!(overlap(&pats[0], &got2) < 0.9, "degree 2 at alpha 1.2 should not retrieve: {}", overlap(&pats[0], &got2));
+        assert!(
+            overlap(&pats[0], &got2) < 0.9,
+            "degree 2 at alpha 1.2 should not retrieve: {}",
+            overlap(&pats[0], &got2)
+        );
     }
 
     /// The program path is the memory: HUBO energy plus offset equals the dense energy for every
@@ -707,14 +950,27 @@ mod tests {
             let (h, offset) = m.to_hubo().unwrap();
             assert_eq!(h.max_arity(), k as usize);
             for _ in 0..30 {
-                let s: Vec<i8> = (0..n).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect();
+                let s: Vec<i8> = (0..n)
+                    .map(|_| if rng.f64() < 0.5 { -1 } else { 1 })
+                    .collect();
                 let want = m.energy_of(&s);
                 let got = h.energy(&s) + offset;
-                assert!((got - want).abs() < 1e-9 * (1.0 + want.abs()), "degree {k}: hubo {got} vs dense {want}");
+                assert!(
+                    (got - want).abs() < 1e-9 * (1.0 + want.abs()),
+                    "degree {k}: hubo {got} vs dense {want}"
+                );
             }
         }
-        assert!(DenseMemory::new(random_patterns(8, 2, 1), Energy::Polynomial(3)).to_hubo().is_err());
-        assert!(DenseMemory::new(random_patterns(8, 2, 1), Energy::Exponential { b: 1.0 }).to_hubo().is_err());
+        assert!(
+            DenseMemory::new(random_patterns(8, 2, 1), Energy::Polynomial(3))
+                .to_hubo()
+                .is_err()
+        );
+        assert!(
+            DenseMemory::new(random_patterns(8, 2, 1), Energy::Exponential { b: 1.0 })
+                .to_hubo()
+                .is_err()
+        );
         // the multinomial counts at the small cases one can check by hand
         assert_eq!(odd_set_count(2, 0, 7), 7.0);
         assert_eq!(odd_set_count(2, 2, 7), 2.0);
@@ -743,8 +999,21 @@ mod tests {
 
         // native higher-order annealing retrieves
         let (h, _) = m.to_hubo().unwrap();
-        let out = hubo::anneal(&h, &hubo::Params { beta_min: 0.2, beta_max: 6.0, stages: 30, sweeps_per_stage: 10 }, 5);
-        assert!(overlap(&pats[0], &out.state).abs() > 0.99, "native HUBO annealing retrieved {}", overlap(&pats[0], &out.state));
+        let out = hubo::anneal(
+            &h,
+            &hubo::Params {
+                beta_min: 0.2,
+                beta_max: 6.0,
+                stages: 30,
+                sweeps_per_stage: 10,
+            },
+            5,
+        );
+        assert!(
+            overlap(&pats[0], &out.state).abs() > 0.99,
+            "native HUBO annealing retrieved {}",
+            overlap(&pats[0], &out.state)
+        );
 
         // the reduction is exact: min over ancillas (originals clamped) + offset = HUBO energy
         let (prog, _) = m.to_program(&Schedule::constant(3.0, 100)).unwrap();
@@ -753,14 +1022,24 @@ mod tests {
         let g = red.program.to_graph().unwrap();
         let mut rng = Pcg::new(9, 0);
         for trial in 0..6 {
-            let s: Vec<i8> = if trial == 0 { pats[0].clone() } else { (0..n).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect() };
+            let s: Vec<i8> = if trial == 0 {
+                pats[0].clone()
+            } else {
+                (0..n)
+                    .map(|_| if rng.f64() < 0.5 { -1 } else { 1 })
+                    .collect()
+            };
             let mut sm = Sampler::new(&g, 8.0, trial as u64);
             for i in 0..n {
                 sm.clamp(i, s[i]);
             }
             sm.sweeps(400, None);
             let got = g.energy(&sm.s) + red.offset;
-            assert!((got - h.energy(&s)).abs() < 1e-6, "reduced {got} vs hubo {} on trial {trial}", h.energy(&s));
+            assert!(
+                (got - h.energy(&s)).abs() < 1e-6,
+                "reduced {got} vs hubo {} on trial {trial}",
+                h.energy(&s)
+            );
         }
 
         // degree 2 IS pairwise: onto a Chimera by the structured clique, retrieved on the machine.
@@ -790,7 +1069,11 @@ mod tests {
         // coupling holds every chain and lets the problem move.
         let max_w = g2.w.iter().fold(0.0f64, |a, &b| a.max(b.abs()));
         let hwm = embed::apply_with(&g2, &hw, &e, 6.0 * max_w);
-        let ground = crate::exact::Elimination::default().ground_state(&g2).unwrap().ground_energy.unwrap();
+        let ground = crate::exact::Elimination::default()
+            .ground_state(&g2)
+            .unwrap()
+            .ground_energy
+            .unwrap();
         let mut solved = 0;
         for seed in 0..5u64 {
             let mut sh = Sampler::new(&hwm.graph, 0.05, 11 + seed);
@@ -799,12 +1082,18 @@ mod tests {
                 sh.sweeps(25, None);
             }
             let (logical, broken) = embed::unembed(&e, &sh.s);
-            let ov = pats2.iter().map(|p| overlap(p, &logical).abs()).fold(0.0, f64::max);
+            let ov = pats2
+                .iter()
+                .map(|p| overlap(p, &logical).abs())
+                .fold(0.0, f64::max);
             if broken.is_empty() && (g2.energy(&logical) - ground).abs() < 1e-9 && ov > 0.99 {
                 solved += 1;
             }
         }
-        assert!(solved >= 4, "the machine reached the exact ground state (a stored pattern) in {solved} of 5 anneals");
+        assert!(
+            solved >= 4,
+            "the machine reached the exact ground state (a stored pattern) in {solved} of 5 anneals"
+        );
     }
 
     /// Attention is the exponential memory's one-step update. With 200 patterns in 64 spins —
@@ -818,22 +1107,37 @@ mod tests {
         let n = 64;
         let pats = random_patterns(n, 200, 11);
         let m = DenseMemory::new(pats.clone(), Energy::Exponential { b: 1.0 });
-        let signs_of = |v: &[f64]| -> Vec<i8> { v.iter().map(|&x| if x >= 0.0 { 1 } else { -1 }).collect() };
+        let signs_of =
+            |v: &[f64]| -> Vec<i8> { v.iter().map(|&x| if x >= 0.0 { 1 } else { -1 }).collect() };
         for mu in 0..40 {
-            let q: Vec<f64> = corrupt(&pats[mu], 0.15, 100 + mu as u64).iter().map(|&v| v as f64).collect();
+            let q: Vec<f64> = corrupt(&pats[mu], 0.15, 100 + mu as u64)
+                .iter()
+                .map(|&v| v as f64)
+                .collect();
             let got = signs_of(&m.attention_update(&q, 2.0));
-            assert!(overlap(&pats[mu], &got) > 0.99, "pattern {mu} at 15% corruption: overlap {}", overlap(&pats[mu], &got));
+            assert!(
+                overlap(&pats[mu], &got) > 0.99,
+                "pattern {mu} at 15% corruption: overlap {}",
+                overlap(&pats[mu], &got)
+            );
         }
         let mut ties = 0;
         for mu in 0..40 {
             let qi = corrupt(&pats[mu], 0.25, 200 + mu as u64);
             let q: Vec<f64> = qi.iter().map(|&v| v as f64).collect();
             let out = m.attention_update(&q, 4.0);
-            let best = (0..pats.len()).map(|k| overlap(&pats[k], &qi)).fold(f64::NEG_INFINITY, f64::max);
-            let nearest: Vec<usize> = (0..pats.len()).filter(|&k| (overlap(&pats[k], &qi) - best).abs() < 1e-12).collect();
+            let best = (0..pats.len())
+                .map(|k| overlap(&pats[k], &qi))
+                .fold(f64::NEG_INFINITY, f64::max);
+            let nearest: Vec<usize> = (0..pats.len())
+                .filter(|&k| (overlap(&pats[k], &qi) - best).abs() < 1e-12)
+                .collect();
             if nearest.len() == 1 {
                 let got = signs_of(&out);
-                assert!(overlap(&pats[nearest[0]], &got) > 0.99, "pattern {mu} at 25%: not the nearest stored pattern");
+                assert!(
+                    overlap(&pats[nearest[0]], &got) > 0.99,
+                    "pattern {mu} at 25%: not the nearest stored pattern"
+                );
             } else {
                 // An exact tie (measured: it happens): the softmax blends the tied patterns, so
                 // the output carries their common sign where they agree and is near zero where
@@ -841,8 +1145,14 @@ mod tests {
                 // e^{-beta gap} into the blend (measured: e^{-8} = 3.4e-4 at a gap of 2).
                 ties += 1;
                 for i in 0..n {
-                    let mean: f64 = nearest.iter().map(|&k| pats[k][i] as f64).sum::<f64>() / nearest.len() as f64;
-                    assert!((out[i] - mean).abs() < 0.05, "tie of {}: coordinate {i} should be the tied patterns' mean {mean}, got {}", nearest.len(), out[i]);
+                    let mean: f64 = nearest.iter().map(|&k| pats[k][i] as f64).sum::<f64>()
+                        / nearest.len() as f64;
+                    assert!(
+                        (out[i] - mean).abs() < 0.05,
+                        "tie of {}: coordinate {i} should be the tied patterns' mean {mean}, got {}",
+                        nearest.len(),
+                        out[i]
+                    );
                 }
             }
         }
@@ -852,6 +1162,10 @@ mod tests {
         let start = corrupt(&pats[0], 0.15, 300);
         let got = crate::hopfield::retrieval_overlap(&hebb, &pats[0], 4.0, 20, 20, 1);
         let _ = start;
-        assert!(got.value < 0.5, "the classical memory at alpha = 3.1 should not retrieve: {}", got.value);
+        assert!(
+            got.value < 0.5,
+            "the classical memory at alpha = 3.1 should not retrieve: {}",
+            got.value
+        );
     }
 }

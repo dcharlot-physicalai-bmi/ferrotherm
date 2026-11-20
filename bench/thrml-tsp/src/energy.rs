@@ -311,9 +311,9 @@ pub fn device_binding_refusal(requested: &str, platform: &str) -> Option<&'stati
         return None;
     }
     match requested {
-        "cpu" if platform != "cpu" => Some(
-            "device refusal: cpu was requested and JAX did not bind a CPU device",
-        ),
+        "cpu" if platform != "cpu" => {
+            Some("device refusal: cpu was requested and JAX did not bind a CPU device")
+        }
         "cuda" if platform != "gpu" => Some(
             "device refusal: cuda was requested and JAX did not bind a GPU device. A CPU device is not a CUDA device.",
         ),
@@ -3005,10 +3005,7 @@ mod tests {
         for pair in 0..2 {
             seq.extend(pair_order(pair));
         }
-        assert_eq!(
-            seq,
-            ["ferrotherm", "thrml", "thrml", "ferrotherm"]
-        );
+        assert_eq!(seq, ["ferrotherm", "thrml", "thrml", "ferrotherm"]);
         assert!((BRACKET_SLICES as f64 * BRACKET_SLICE_S - BRACKET_S).abs() < 1e-12);
         assert!((BRACKET_S - 1.0).abs() < 1e-12);
     }
@@ -3523,7 +3520,10 @@ mod tests {
         });
         assert_eq!(reps, calls);
         assert!(reps >= 1, "a sampler that runs is a repetition");
-        assert!(reps < 50_000_000, "the window did not stay open, reps={reps}");
+        assert!(
+            reps < 50_000_000,
+            "the window did not stay open, reps={reps}"
+        );
     }
 
     #[test]

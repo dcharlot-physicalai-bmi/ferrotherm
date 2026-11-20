@@ -141,7 +141,11 @@ impl<'g> SpinFlip<'g> {
     /// A run against a planted instance's true optimum.
     #[must_use]
     pub fn on_planted(p: &'g Planted, beta: f64) -> SpinFlip<'g> {
-        SpinFlip { g: &p.graph, beta, target: p.ground_energy }
+        SpinFlip {
+            g: &p.graph,
+            beta,
+            target: p.ground_energy,
+        }
     }
 }
 
@@ -242,7 +246,10 @@ impl Rld {
     /// If `trials` is empty.
     #[must_use]
     pub fn from_trials(solver: &str, trials: &[Trial]) -> Rld {
-        assert!(!trials.is_empty(), "an RLD over no trials is not a measurement");
+        assert!(
+            !trials.is_empty(),
+            "an RLD over no trials is not a measurement"
+        );
         let mut ladder: Vec<u64> = trials.iter().map(|t| t.run_length).collect();
         ladder.sort_unstable();
         ladder.dedup();
@@ -256,7 +263,9 @@ impl Rld {
         for t in trials {
             steps_used = steps_used.saturating_add(t.run_length);
             if t.solved {
-                let si = seeds.binary_search(&t.seed).expect("seed was collected above");
+                let si = seeds
+                    .binary_search(&t.seed)
+                    .expect("seed was collected above");
                 if first[si].is_none_or(|had| t.run_length < had) {
                     first[si] = Some(t.run_length);
                 }
@@ -283,15 +292,23 @@ impl Rld {
     #[must_use]
     pub fn success(&self, k: usize) -> f64 {
         let rungs = self.ladder.len();
-        assert!(k < rungs, "rung {k} is past the end of a {rungs}-rung ladder");
-        assert!(self.attempts[k] > 0, "rung {k} has no attempts, so it has no solve rate");
+        assert!(
+            k < rungs,
+            "rung {k} is past the end of a {rungs}-rung ladder"
+        );
+        assert!(
+            self.attempts[k] > 0,
+            "rung {k} has no attempts, so it has no solve rate"
+        );
         self.solved[k] as f64 / self.attempts[k] as f64
     }
 
     /// The curve itself: run length against solve rate.
     #[must_use]
     pub fn curve(&self) -> Vec<(u64, f64)> {
-        (0..self.ladder.len()).map(|k| (self.ladder[k], self.success(k))).collect()
+        (0..self.ladder.len())
+            .map(|k| (self.ladder[k], self.success(k)))
+            .collect()
     }
 
     /// The same curve with its x-axis in another unit: seconds per proposal gives an RTD, joules
@@ -371,9 +388,18 @@ impl Rld {
             let t = self.ladder[k] as f64;
             // At p = 1 the formula's ln(1-p) is -infinity and the ratio collapses to zero, which is
             // not the answer: one run of length t always succeeds, so the cost is t.
-            let steps = if p >= 1.0 { t } else { t * (1.0 - s).ln() / (1.0 - p).ln() };
+            let steps = if p >= 1.0 {
+                t
+            } else {
+                t * (1.0 - s).ln() / (1.0 - p).ln()
+            };
             if best.as_ref().is_none_or(|b| steps < b.steps) {
-                best = Some(Tts { steps, run_length: self.ladder[k], success: p, confidence: s });
+                best = Some(Tts {
+                    steps,
+                    run_length: self.ladder[k],
+                    success: p,
+                    confidence: s,
+                });
             }
         }
         best
@@ -448,7 +474,11 @@ pub fn measure_anytime<S: FirstHit + ?Sized>(solver: &S, seeds: &[u64], ladder: 
     let mut trials = Vec::with_capacity(ladder.len() * seeds.len());
     for &t in ladder {
         for (i, &seed) in seeds.iter().enumerate() {
-            trials.push(Trial { seed, run_length: t, solved: first[i].is_some_and(|h| h <= t) });
+            trials.push(Trial {
+                seed,
+                run_length: t,
+                solved: first[i].is_some_and(|h| h <= t),
+            });
         }
     }
     let (solved, attempts) = tally(ladder, &trials);
@@ -498,7 +528,11 @@ pub fn measure_ladder(
             if solved && first[i].is_none_or(|had| t < had) {
                 first[i] = Some(t);
             }
-            trials.push(Trial { seed, run_length: t, solved });
+            trials.push(Trial {
+                seed,
+                run_length: t,
+                solved,
+            });
         }
     }
     let (solved, attempts) = tally(ladder, &trials);
@@ -521,12 +555,7 @@ pub fn measure_ladder(
 ///
 /// If `seeds` is empty, or `ladder` is empty or not strictly increasing.
 #[must_use]
-pub fn measure_planted(
-    search: &dyn Search,
-    p: &Planted,
-    seeds: &[u64],
-    ladder: &[u64],
-) -> Rld {
+pub fn measure_planted(search: &dyn Search, p: &Planted, seeds: &[u64], ladder: &[u64]) -> Rld {
     measure_ladder(search, &p.graph, p.ground_energy, seeds, ladder)
 }
 
@@ -535,7 +564,9 @@ fn tally(ladder: &[u64], trials: &[Trial]) -> (Vec<usize>, Vec<usize>) {
     let mut solved = vec![0usize; ladder.len()];
     let mut attempts = vec![0usize; ladder.len()];
     for t in trials {
-        let k = ladder.binary_search(&t.run_length).expect("every trial's run length is a rung");
+        let k = ladder
+            .binary_search(&t.run_length)
+            .expect("every trial's run length is a rung");
         attempts[k] += 1;
         solved[k] += usize::from(t.solved);
     }
@@ -543,7 +574,10 @@ fn tally(ladder: &[u64], trials: &[Trial]) -> (Vec<usize>, Vec<usize>) {
 }
 
 fn check_ladder(seeds: &[u64], ladder: &[u64]) {
-    assert!(!seeds.is_empty(), "an RLD over no seeds is not a measurement");
+    assert!(
+        !seeds.is_empty(),
+        "an RLD over no seeds is not a measurement"
+    );
     assert!(!ladder.is_empty(), "a ladder needs at least one rung");
     assert!(
         ladder.windows(2).all(|w| w[0] < w[1]),
@@ -599,7 +633,11 @@ mod tests {
             assert_eq!(r.attempts[k], seeds.len());
         }
         // and the curve is a CDF: non-decreasing.
-        assert!(r.curve().windows(2).all(|w| w[0].1 <= w[1].1), "{:?}", r.curve());
+        assert!(
+            r.curve().windows(2).all(|w| w[0].1 <= w[1].1),
+            "{:?}",
+            r.curve()
+        );
     }
 
     /// EXACT, no sampling: an ensemble whose first-hit histogram IS the geometric one at p = 1/2,
@@ -632,8 +670,15 @@ mod tests {
             );
         }
         let got = r.tts(s).expect("the ensemble solves");
-        assert!((got.steps - analytic).abs() < 1e-12, "{} vs {analytic}", got.steps);
-        assert!((got.steps - 6.643_856_189_774_724).abs() < 1e-9, "ln(0.01)/ln(0.5)");
+        assert!(
+            (got.steps - analytic).abs() < 1e-12,
+            "{} vs {analytic}",
+            got.steps
+        );
+        assert!(
+            (got.steps - 6.643_856_189_774_724).abs() < 1e-9,
+            "ln(0.01)/ln(0.5)"
+        );
     }
 
     /// The median of the exact geometric ensemble at p = 1/2 is 1 step, and the 0.75 quantile is 2 —
@@ -670,11 +715,17 @@ mod tests {
             );
             // and the interval quoted for that rung must cover the truth it is quoted about
             let (lo, hi) = r.wilson(k, 1.96);
-            assert!(lo <= closed && closed <= hi, "rung {t}: [{lo}, {hi}] misses {closed}");
+            assert!(
+                lo <= closed && closed <= hi,
+                "rung {t}: [{lo}, {hi}] misses {closed}"
+            );
         }
         let analytic = (1.0 - 0.99f64).ln() / (1.0 - p).ln();
         let got = r.tts(0.99).expect("it solves").steps;
-        assert!((got - analytic).abs() / analytic < 0.03, "TTS {got} vs analytic {analytic}");
+        assert!(
+            (got - analytic).abs() / analytic < 0.03,
+            "TTS {got} vs analytic {analytic}"
+        );
     }
 
     /// The two sweep modes must AGREE exactly on a budget-independent solver, because the same seed
@@ -694,14 +745,24 @@ mod tests {
             for &seed in &seeds {
                 let h = solver.first_hit(seed, t);
                 spent += h.unwrap_or(t);
-                trials.push(Trial { seed, run_length: t, solved: h.is_some() });
+                trials.push(Trial {
+                    seed,
+                    run_length: t,
+                    solved: h.is_some(),
+                });
             }
         }
         let dear = Rld::from_trials("bernoulli", &trials);
-        assert_eq!(cheap.trials, dear.trials, "every attempt, not merely every count");
+        assert_eq!(
+            cheap.trials, dear.trials,
+            "every attempt, not merely every count"
+        );
         assert_eq!(cheap.solved, dear.solved);
         assert_eq!(cheap.first_solved_at.len(), dear.first_solved_at.len());
-        assert!(spent > cheap.steps_used, "the ladder sweep must cost more, or it is not a saving");
+        assert!(
+            spent > cheap.steps_used,
+            "the ladder sweep must cost more, or it is not a saving"
+        );
     }
 
     /// EXACT, and it names what a trial list loses. A [`Trial`] carries `(run_length, solved)` and
@@ -725,11 +786,14 @@ mod tests {
         }
         // and the quantization is upward, never downward: a rebuilt curve can only look slower
         assert!(
-            back.first_solved_at.iter().zip(&r.first_solved_at).all(|(b, e)| match (b, e) {
-                (Some(b), Some(e)) => b >= e,
-                (None, None) => true,
-                _ => false,
-            })
+            back.first_solved_at
+                .iter()
+                .zip(&r.first_solved_at)
+                .all(|(b, e)| match (b, e) {
+                    (Some(b), Some(e)) => b >= e,
+                    (None, None) => true,
+                    _ => false,
+                })
         );
     }
 
@@ -737,23 +801,36 @@ mod tests {
     /// The naive interval reports [0, 0] here, which is a claim of certainty from 0/100.
     #[test]
     fn the_wilson_interval_matches_its_closed_form_at_zero_successes() {
-        let none: Vec<Trial> =
-            (0..100).map(|seed| Trial { seed, run_length: 10, solved: false }).collect();
+        let none: Vec<Trial> = (0..100)
+            .map(|seed| Trial {
+                seed,
+                run_length: 10,
+                solved: false,
+            })
+            .collect();
         let r = Rld::from_trials("none", &none);
         assert_eq!(r.attempts, vec![100]);
         let (lo, hi) = r.wilson(0, 1.96);
         let closed = 1.96 * 1.96 / (100.0 + 1.96 * 1.96);
         assert_eq!(lo, 0.0);
         assert!((hi - closed).abs() < 1e-12, "{hi} vs {closed}");
-        assert!(r.tts(0.99).is_none(), "a solver that never solved has no time to solution");
+        assert!(
+            r.tts(0.99).is_none(),
+            "a solver that never solved has no time to solution"
+        );
         assert_eq!(r.quantile(0.5), None);
     }
 
     /// At p = 1 the restart formula divides by `ln(0)`; the answer is the run length itself.
     #[test]
     fn a_rung_that_always_solves_costs_exactly_one_run() {
-        let all: Vec<Trial> =
-            (0..50).map(|seed| Trial { seed, run_length: 7, solved: true }).collect();
+        let all: Vec<Trial> = (0..50)
+            .map(|seed| Trial {
+                seed,
+                run_length: 7,
+                solved: true,
+            })
+            .collect();
         let r = Rld::from_trials("always", &all);
         assert_eq!(r.success(0), 1.0);
         let t = r.tts(0.99).expect("it solves");
@@ -777,8 +854,16 @@ mod tests {
         let seeds: Vec<u64> = (0..64).collect();
         let rungs = ladder(1, 4096, 7);
         let r = measure_anytime(&SpinFlip::on_planted(&p, 2.0), &seeds, &rungs);
-        assert!(r.curve().windows(2).all(|w| w[0].1 <= w[1].1), "a CDF cannot fall: {:?}", r.curve());
-        assert_eq!(r.success(r.ladder.len() - 1), 1.0, "4096 proposals on 16 spins should solve");
+        assert!(
+            r.curve().windows(2).all(|w| w[0].1 <= w[1].1),
+            "a CDF cannot fall: {:?}",
+            r.curve()
+        );
+        assert_eq!(
+            r.success(r.ladder.len() - 1),
+            1.0,
+            "4096 proposals on 16 spins should solve"
+        );
         assert!(r.success(0) < 1.0, "one proposal should not");
         assert!(r.tts(0.99).is_some());
     }
@@ -797,10 +882,20 @@ mod tests {
         let g = b.build();
         let (_best, opt) = crate::oracle::Exhaustive.solve(&g);
         let decoy = g.energy(&[1, -1]);
-        assert!(decoy - opt < RESYNC_SLACK, "the decoy must sit inside the resync slack");
-        assert!(decoy - opt > SOLVED_TOL, "and outside the success tolerance, or it proves nothing");
+        assert!(
+            decoy - opt < RESYNC_SLACK,
+            "the decoy must sit inside the resync slack"
+        );
+        assert!(
+            decoy - opt > SOLVED_TOL,
+            "and outside the success tolerance, or it proves nothing"
+        );
 
-        let solver = SpinFlip { g: &g, beta: 5.0, target: opt };
+        let solver = SpinFlip {
+            g: &g,
+            beta: 5.0,
+            target: opt,
+        };
         let mut hits = 0;
         for seed in 0..64u64 {
             let (h, state) = solver.first_hit_state(seed, 200);
@@ -814,7 +909,10 @@ mod tests {
                 );
             }
         }
-        assert_eq!(hits, 64, "a two-spin chain at beta 5 reaches both states within 200 proposals");
+        assert_eq!(
+            hits, 64,
+            "a two-spin chain at beta 5 reaches both states within 200 proposals"
+        );
     }
 
     /// The falsifier. Given a target BELOW the true optimum, nothing can reach it, so the curve must
@@ -823,7 +921,11 @@ mod tests {
     #[test]
     fn an_unreachable_target_is_never_reached() {
         let p = crate::planted::frustrated_loops(4, 12, 7);
-        let below = SpinFlip { g: &p.graph, beta: 2.0, target: p.ground_energy - 1.0 };
+        let below = SpinFlip {
+            g: &p.graph,
+            beta: 2.0,
+            target: p.ground_energy - 1.0,
+        };
         let seeds: Vec<u64> = (0..32).collect();
         let rungs = ladder(1, 2048, 5);
         let r = measure_anytime(&below, &seeds, &rungs);
@@ -850,7 +952,10 @@ mod tests {
             &seeds,
             &rungs,
         );
-        assert!(!wrong.sound(), "attempts beat the claimed optimum and that must be visible");
+        assert!(
+            !wrong.sound(),
+            "attempts beat the claimed optimum and that must be visible"
+        );
         assert!(wrong.impossible > 0);
     }
 
@@ -863,10 +968,20 @@ mod tests {
         let r = measure_planted(&crate::portfolio::Tabu, &p, &seeds, &rungs);
         assert_eq!(r.solver, "tabu");
         assert_eq!(r.attempts, vec![seeds.len(); rungs.len()]);
-        assert_eq!(r.trials.len(), rungs.len() * seeds.len(), "one trial per attempt, all kept");
-        assert!(r.steps_used >= rungs.iter().sum::<u64>(), "every rung was actually run");
+        assert_eq!(
+            r.trials.len(),
+            rungs.len() * seeds.len(),
+            "one trial per attempt, all kept"
+        );
+        assert!(
+            r.steps_used >= rungs.iter().sum::<u64>(),
+            "every rung was actually run"
+        );
         assert!(r.sound());
-        assert!(r.success(rungs.len() - 1) > 0.0, "tabu should solve a 36-spin planted instance");
+        assert!(
+            r.success(rungs.len() - 1) > 0.0,
+            "tabu should solve a 36-spin planted instance"
+        );
         // the RTD is the RLD with a cost per proposal attached; the shape is unchanged.
         let rtd = r.curve_scaled(1e-9);
         assert_eq!(rtd.len(), r.ladder.len());
@@ -908,15 +1023,29 @@ mod tests {
         );
         let seeds: Vec<u64> = (0..5).collect();
         let rungs = vec![20u64, 40, 80];
-        let r = measure_planted(&OneRung { planted: &p, rung: 40 }, &p, &seeds, &rungs);
+        let r = measure_planted(
+            &OneRung {
+                planted: &p,
+                rung: 40,
+            },
+            &p,
+            &seeds,
+            &rungs,
+        );
 
         assert_eq!(r.solved, vec![0, 5, 0], "it solves at 40 and nowhere else");
         assert_eq!(r.first_solved_at, vec![Some(40); 5]);
         assert!(
-            r.trials.iter().filter(|t| t.run_length == 80).all(|t| !t.solved),
+            r.trials
+                .iter()
+                .filter(|t| t.run_length == 80)
+                .all(|t| !t.solved),
             "the record must keep the miss at 80 that the summary alone would hide"
         );
-        assert!(r.sound(), "it returns the true optimum, never anything below it");
+        assert!(
+            r.sound(),
+            "it returns the true optimum, never anything below it"
+        );
         // TTS therefore comes from rung 40, the only one with a success.
         assert_eq!(r.tts(0.99).expect("one rung solves").run_length, 40);
     }

@@ -13,7 +13,7 @@
 //
 // run on the board host: cargo run -p ferrotherm-silicon --features flash --example probe
 use ferrotherm_silicon::bitstream::reg;
-use ferrotherm_silicon::flash::{xc7_part, Ftdi, Stat, Tap};
+use ferrotherm_silicon::flash::{Ftdi, Stat, Tap, xc7_part};
 
 fn main() {
     let (ftdi, product) = match Ftdi::open("Alchitry") {
@@ -27,7 +27,10 @@ fn main() {
     let mut tap = Tap::new(ftdi).expect("tap init");
 
     let jtag_id = tap.idcode().expect("jtag idcode");
-    println!("IDCODE (JTAG DR):        0x{jtag_id:08X}  -> {}", xc7_part(jtag_id).unwrap_or("unknown"));
+    println!(
+        "IDCODE (JTAG DR):        0x{jtag_id:08X}  -> {}",
+        xc7_part(jtag_id).unwrap_or("unknown")
+    );
 
     let cfg_id = tap.read_config_reg(reg::IDCODE).expect("config idcode");
     println!("IDCODE (config port):    0x{cfg_id:08X}");
@@ -43,10 +46,18 @@ fn main() {
     let stat = Stat(tap.read_config_reg(reg::STAT).expect("stat"));
     println!("{}", stat.describe());
     if let Ok(boot) = tap.read_config_reg(reg::BOOTSTS) {
-        println!("BOOTSTS=0x{boot:08X}  (valid_0={} fallback_0={})", boot & 1, boot >> 1 & 1);
+        println!(
+            "BOOTSTS=0x{boot:08X}  (valid_0={} fallback_0={})",
+            boot & 1,
+            boot >> 1 & 1
+        );
     }
     println!(
         "verdict: {}",
-        if stat.done() { "a design is configured and running (DONE high)" } else { "fabric unconfigured (DONE low)" }
+        if stat.done() {
+            "a design is configured and running (DONE high)"
+        } else {
+            "fabric unconfigured (DONE low)"
+        }
     );
 }

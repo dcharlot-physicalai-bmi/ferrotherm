@@ -180,7 +180,10 @@ impl Interaction {
     /// it would silently alias state `q` onto state 0.
     #[must_use]
     pub fn pair(self, q: usize, a: u8, b: u8) -> f64 {
-        assert!(q >= 2, "a model with fewer than 2 states per site is a constant, got q = {q}");
+        assert!(
+            q >= 2,
+            "a model with fewer than 2 states per site is a constant, got q = {q}"
+        );
         assert!(
             usize::from(a) < q && usize::from(b) < q,
             "states must be below q = {q}, got ({a}, {b})"
@@ -202,10 +205,15 @@ impl Interaction {
     /// If `q` is below 2.
     #[must_use]
     pub fn span(self, q: usize) -> f64 {
-        assert!(q >= 2, "a model with fewer than 2 states per site is a constant, got q = {q}");
+        assert!(
+            q >= 2,
+            "a model with fewer than 2 states per site is a constant, got q = {q}"
+        );
         match self {
             Interaction::Potts => 1.0,
-            Interaction::Clock => 1.0 - (0..q).map(|k| cos_step(q, k)).fold(f64::INFINITY, f64::min),
+            Interaction::Clock => {
+                1.0 - (0..q).map(|k| cos_step(q, k)).fold(f64::INFINITY, f64::min)
+            }
         }
     }
 
@@ -412,9 +420,21 @@ impl PottsBuilder {
     /// rather than a number, and a label that does not fit in a byte is a different data structure.
     #[must_use]
     pub fn new(q: usize, n: usize, kind: Interaction) -> PottsBuilder {
-        assert!(q >= 2, "a model with fewer than 2 states per site is a constant, got q = {q}");
-        assert!(q <= 255, "states are u8 labels, so q must be at most 255, got q = {q}");
-        PottsBuilder { q, n, kind, edges: Vec::new(), h: vec![0.0; n * q] }
+        assert!(
+            q >= 2,
+            "a model with fewer than 2 states per site is a constant, got q = {q}"
+        );
+        assert!(
+            q <= 255,
+            "states are u8 labels, so q must be at most 255, got q = {q}"
+        );
+        PottsBuilder {
+            q,
+            n,
+            kind,
+            edges: Vec::new(),
+            h: vec![0.0; n * q],
+        }
     }
 
     /// Add an undirected coupling `J_ij`. Duplicate pairs are summed at build time.
@@ -423,7 +443,11 @@ impl PottsBuilder {
     ///
     /// If either index is past the site count, or they are equal — a self-coupling is a constant.
     pub fn couple(&mut self, i: usize, j: usize, jij: f64) {
-        assert!(i < self.n && j < self.n && i != j, "bad edge ({i},{j}) n = {}", self.n);
+        assert!(
+            i < self.n && j < self.n && i != j,
+            "bad edge ({i},{j}) n = {}",
+            self.n
+        );
         self.edges.push((i as u32, j as u32, jij));
     }
 
@@ -435,8 +459,16 @@ impl PottsBuilder {
     /// If the site is past the end, or `a` is not below `q` — naming both, because a state index
     /// silently reduced modulo `q` is the failure this crate's tenth invariant is about.
     pub fn field(&mut self, i: usize, a: u8, h: f64) {
-        assert!(i < self.n, "site {i} is past the end of a {}-site model", self.n);
-        assert!(usize::from(a) < self.q, "state {a} is not below q = {} at site {i}", self.q);
+        assert!(
+            i < self.n,
+            "site {i} is past the end of a {}-site model",
+            self.n
+        );
+        assert!(
+            usize::from(a) < self.q,
+            "state {a} is not below q = {} at site {i}",
+            self.q
+        );
         self.h[i * self.q + usize::from(a)] += h;
     }
 
@@ -476,7 +508,16 @@ impl PottsBuilder {
             w[cursor[b as usize]] = j;
             cursor[b as usize] += 1;
         }
-        Potts { q: self.q, n, kind: self.kind, offset, nbr, w, h: self.h, n_edges: merged.len() }
+        Potts {
+            q: self.q,
+            n,
+            kind: self.kind,
+            offset,
+            nbr,
+            w,
+            h: self.h,
+            n_edges: merged.len(),
+        }
     }
 }
 
@@ -538,8 +579,16 @@ impl Potts {
     /// If the site is past the end or `a` is not below `q`.
     #[must_use]
     pub fn field(&self, i: usize, a: u8) -> f64 {
-        assert!(i < self.n, "site {i} is past the end of a {}-site model", self.n);
-        assert!(usize::from(a) < self.q, "state {a} is not below q = {}", self.q);
+        assert!(
+            i < self.n,
+            "site {i} is past the end of a {}-site model",
+            self.n
+        );
+        assert!(
+            usize::from(a) < self.q,
+            "state {a} is not below q = {}",
+            self.q
+        );
         self.h[i * self.q + usize::from(a)]
     }
 
@@ -567,11 +616,18 @@ impl Potts {
     /// As [`Potts::energy`].
     pub fn check(&self, s: &[u8]) -> Result<(), Invalid> {
         if s.len() != self.n {
-            return Err(Invalid::Width { got: s.len(), want: self.n });
+            return Err(Invalid::Width {
+                got: s.len(),
+                want: self.n,
+            });
         }
         for (site, &v) in s.iter().enumerate() {
             if usize::from(v) >= self.q {
-                return Err(Invalid::State { site, value: v, q: self.q });
+                return Err(Invalid::State {
+                    site,
+                    value: v,
+                    q: self.q,
+                });
             }
         }
         Ok(())
@@ -632,7 +688,11 @@ impl Potts {
             *v = (index % self.q) as u8;
             index /= self.q;
         }
-        assert_eq!(index, 0, "index is past q^n for q = {} on {} sites", self.q, self.n);
+        assert_eq!(
+            index, 0,
+            "index is past q^n for q = {} on {} sites",
+            self.q, self.n
+        );
         s
     }
 
@@ -686,7 +746,11 @@ impl Potts {
             // by it. The bound direction was never at risk; the *no scale at all* answer was.
             let mut terms: Vec<f64> = (self.offset[i]..self.offset[i + 1])
                 .map(|k| {
-                    if self.w[k] == 0.0 { 0.0 } else { (span * self.w[k].abs()).next_up() }
+                    if self.w[k] == 0.0 {
+                        0.0
+                    } else {
+                        (span * self.w[k].abs()).next_up()
+                    }
                 })
                 .collect();
             let fields = &self.h[i * self.q..(i + 1) * self.q];
@@ -724,7 +788,10 @@ impl Potts {
     /// [`NotBinary`] at any `q` other than 2. A spin has two states; there is no map to invent.
     pub fn to_ising(&self) -> Result<(Graph, f64), NotBinary> {
         if self.q != 2 {
-            return Err(NotBinary { q: self.q, kind: self.kind });
+            return Err(NotBinary {
+                q: self.q,
+                kind: self.kind,
+            });
         }
         let same = self.kind.pair(2, 0, 0);
         let diff = self.kind.pair(2, 0, 1);
@@ -797,7 +864,10 @@ pub fn lattice2d(l: usize, q: usize, j: f64, kind: Interaction) -> Potts {
 /// If `q` is below 2.
 #[must_use]
 pub fn critical_beta(q: usize) -> f64 {
-    assert!(q >= 2, "a model with fewer than 2 states per site has no transition, got q = {q}");
+    assert!(
+        q >= 2,
+        "a model with fewer than 2 states per site has no transition, got q = {q}"
+    );
     (1.0 + (q as f64).sqrt()).ln()
 }
 
@@ -817,7 +887,10 @@ pub fn critical_beta(q: usize) -> f64 {
 /// If `q` is below 2.
 #[must_use]
 pub fn critical_bond_energy(q: usize) -> f64 {
-    assert!(q >= 2, "a model with fewer than 2 states per site has no transition, got q = {q}");
+    assert!(
+        q >= 2,
+        "a model with fewer than 2 states per site has no transition, got q = {q}"
+    );
     (1.0 + 1.0 / (q as f64).sqrt()) / 2.0
 }
 
@@ -886,7 +959,14 @@ pub fn enumerate(m: &Potts, beta: f64) -> Result<Enumerated, TooBig> {
     let states = u32::try_from(m.n).ok().and_then(|e| m.q.checked_pow(e));
     let total = match states {
         Some(s) if s <= ENUMERATION_LIMIT => s,
-        other => return Err(TooBig { q: m.q, n: m.n, states: other, limit: ENUMERATION_LIMIT }),
+        other => {
+            return Err(TooBig {
+                q: m.q,
+                n: m.n,
+                states: other,
+                limit: ENUMERATION_LIMIT,
+            });
+        }
     };
 
     let mut energies = vec![0.0f64; total];
@@ -915,7 +995,15 @@ pub fn enumerate(m: &Potts, beta: f64) -> Result<Enumerated, TooBig> {
         *v /= z;
         mean_energy += *v * e;
     }
-    Ok(Enumerated { q: m.q, n: m.n, beta, log_z: mx + z.ln(), mean_energy, p, energies })
+    Ok(Enumerated {
+        q: m.q,
+        n: m.n,
+        beta,
+        log_z: mx + z.ln(),
+        mean_energy,
+        p,
+        energies,
+    })
 }
 
 /// A scalar trace turned into a number with an error bar.
@@ -934,7 +1022,12 @@ pub fn enumerate(m: &Potts, beta: f64) -> Result<Enumerated, TooBig> {
 pub fn estimate(trace: &[f64]) -> Estimate {
     let n = trace.len();
     if n == 0 {
-        return Estimate { value: f64::NAN, stderr: f64::NAN, ess: 0.0, tau_int: f64::NAN };
+        return Estimate {
+            value: f64::NAN,
+            stderr: f64::NAN,
+            ess: 0.0,
+            tau_int: f64::NAN,
+        };
     }
     let value = trace.iter().sum::<f64>() / n as f64;
     let var = if n > 1 {
@@ -943,8 +1036,17 @@ pub fn estimate(trace: &[f64]) -> Estimate {
         0.0
     };
     let tau = crate::certify::tau_estimate(&[trace]).tau;
-    let ess = if tau.is_finite() && tau > 0.0 { n as f64 / (2.0 * tau) } else { 1.0 };
-    Estimate { value, stderr: (var / ess).sqrt(), ess, tau_int: tau }
+    let ess = if tau.is_finite() && tau > 0.0 {
+        n as f64 / (2.0 * tau)
+    } else {
+        1.0
+    };
+    Estimate {
+        value,
+        stderr: (var / ess).sqrt(),
+        ess,
+        tau_int: tau,
+    }
 }
 
 /// States a run produced, in the model's own values.
@@ -1009,11 +1111,18 @@ impl Run {
     /// [`TooBig`], on the same limit [`enumerate`] uses — the two vectors have to be the same length
     /// to be compared at all, and [`crate::ising::tv`] refuses a truncated comparison.
     pub fn histogram(&self) -> Result<Vec<f64>, TooBig> {
-        let states = u32::try_from(self.n).ok().and_then(|e| self.q.checked_pow(e));
+        let states = u32::try_from(self.n)
+            .ok()
+            .and_then(|e| self.q.checked_pow(e));
         let total = match states {
             Some(s) if s <= ENUMERATION_LIMIT => s,
             other => {
-                return Err(TooBig { q: self.q, n: self.n, states: other, limit: ENUMERATION_LIMIT });
+                return Err(TooBig {
+                    q: self.q,
+                    n: self.n,
+                    states: other,
+                    limit: ENUMERATION_LIMIT,
+                });
             }
         };
         let mut hist = vec![0.0f64; total];
@@ -1104,7 +1213,13 @@ impl<'m> Sampler<'m> {
     pub fn new(m: &'m Potts, beta: f64, seed: u64) -> Sampler<'m> {
         let mut rng = Pcg::new(seed, POTTS_STREAM);
         let s = (0..m.n).map(|_| uniform_state(&mut rng, m.q)).collect();
-        Sampler { m, beta, s, rng, scratch: vec![0.0; m.q] }
+        Sampler {
+            m,
+            beta,
+            s,
+            rng,
+            scratch: vec![0.0; m.q],
+        }
     }
 
     /// Start from a given state instead of a random one.
@@ -1186,7 +1301,10 @@ impl<'m> Sampler<'m> {
                 changed += 1;
             }
         }
-        SweepStats { updates: m.n as u64, changed }
+        SweepStats {
+            updates: m.n as u64,
+            changed,
+        }
     }
 
     fn heat_bath_sweep(&mut self) -> SweepStats {
@@ -1227,7 +1345,10 @@ impl<'m> Sampler<'m> {
             }
             self.s[i] = pick;
         }
-        SweepStats { updates: m.n as u64, changed }
+        SweepStats {
+            updates: m.n as u64,
+            changed,
+        }
     }
 
     /// Draw a chain: burn in, then keep `draws` states one every `thin` sweeps.
@@ -1246,7 +1367,12 @@ impl<'m> Sampler<'m> {
                 l.reads += self.m.n as u64;
             }
         }
-        Run { q: self.m.q, n: self.m.n, states, energies }
+        Run {
+            q: self.m.q,
+            n: self.m.n,
+            states,
+            energies,
+        }
     }
 }
 
@@ -1351,14 +1477,22 @@ impl<'m> ClusterSampler<'m> {
             for a in 0..m.q {
                 let h = m.h[i * m.q + a];
                 if h != 0.0 {
-                    return Err(NoCluster::Fielded { site: i, state: a as u8, field: h });
+                    return Err(NoCluster::Fielded {
+                        site: i,
+                        state: a as u8,
+                        field: h,
+                    });
                 }
             }
         }
         if m.kind == Interaction::Potts {
             for (i, j, jij) in m.edges() {
                 if jij < 0.0 {
-                    return Err(NoCluster::Antiferromagnetic { i, j, coupling: jij });
+                    return Err(NoCluster::Antiferromagnetic {
+                        i,
+                        j,
+                        coupling: jij,
+                    });
                 }
             }
         }
@@ -1428,7 +1562,11 @@ impl<'m> ClusterSampler<'m> {
     /// `q2_cluster_sizes_match_the_binary_cluster_module` measures that rather than asserting it.
     #[must_use]
     pub fn bond_probability(&self, d: f64) -> f64 {
-        if d <= 0.0 { 0.0 } else { 1.0 - (-self.beta * d).exp() }
+        if d <= 0.0 {
+            0.0
+        } else {
+            1.0 - (-self.beta * d).exp()
+        }
     }
 
     /// The energy change if site `i` ALONE were reflected, counting only the edge at CSR slot `k`.
@@ -1591,9 +1729,11 @@ impl<'m> ClusterSampler<'m> {
         let refl = match m.kind {
             Interaction::Potts => Reflect::Swap(a, other_state(&mut self.rng, q, a)),
             // `r = 2a mod q` is the one reflection fixing the seed, and it is the one excluded.
-            Interaction::Clock => {
-                Reflect::Mirror(other_state(&mut self.rng, q, ((2 * usize::from(a)) % q) as u8))
-            }
+            Interaction::Clock => Reflect::Mirror(other_state(
+                &mut self.rng,
+                q,
+                ((2 * usize::from(a)) % q) as u8,
+            )),
         };
 
         self.stack.clear();
@@ -1639,7 +1779,12 @@ impl<'m> ClusterSampler<'m> {
     /// Draw a chain: burn in, then keep `draws` states one every `thin` sweeps.
     ///
     /// `reads` is charged here, `n` per kept state.
-    pub fn collect(&mut self, plan: &Plan, update: Cluster, mut ledger: Option<&mut Ledger>) -> Run {
+    pub fn collect(
+        &mut self,
+        plan: &Plan,
+        update: Cluster,
+        mut ledger: Option<&mut Ledger>,
+    ) -> Run {
         self.sweeps(plan.burn_in, update, ledger.as_deref_mut());
         let thin = plan.thin.max(1);
         let mut states = Vec::with_capacity(plan.draws);
@@ -1652,7 +1797,12 @@ impl<'m> ClusterSampler<'m> {
                 l.reads += self.m.n as u64;
             }
         }
-        Run { q: self.m.q, n: self.m.n, states, energies }
+        Run {
+            q: self.m.q,
+            n: self.m.n,
+            states,
+            energies,
+        }
     }
 }
 
@@ -1664,7 +1814,10 @@ struct Uf {
 
 impl Uf {
     fn new(n: usize) -> Uf {
-        Uf { parent: (0..n).collect(), size: vec![1; n] }
+        Uf {
+            parent: (0..n).collect(),
+            size: vec![1; n],
+        }
     }
     fn find(&mut self, mut v: usize) -> usize {
         while self.parent[v] != v {
@@ -1748,7 +1901,10 @@ mod tests {
         for kind in [Interaction::Potts, Interaction::Clock] {
             let m = binary_fixture(kind);
             let (g, c) = m.to_ising().expect("q = 2 has an Ising form");
-            assert_ne!(c, 0.0, "{kind:?}: this fixture must have a non-zero constant to test one");
+            assert_ne!(
+                c, 0.0,
+                "{kind:?}: this fixture must have a non-zero constant to test one"
+            );
 
             let mut disagreed_without_c = 0usize;
             for index in 0..(1usize << m.n()) {
@@ -1805,7 +1961,10 @@ mod tests {
             // `1024 * eps * max(p)` = 1.1e-13. Measured worst over the three temperatures: 1.0e-14
             // at beta = 2, where the distribution is most peaked and `max(p)` largest. The ENERGIES
             // are exact — that is the test above — and only the normalisation is not.
-            assert!(worst < 1e-13, "beta {beta}: distributions differ by {worst:e}");
+            assert!(
+                worst < 1e-13,
+                "beta {beta}: distributions differ by {worst:e}"
+            );
         }
     }
 
@@ -1889,14 +2048,20 @@ mod tests {
 
         // And the same contradiction at the level of whole energies: three states whose
         // (E_potts, E_clock) pairs are not collinear, so no affine map relates the two models.
-        let (clock, potts) = (ring(4, 4, 1.0, Interaction::Clock), ring(4, 4, 1.0, Interaction::Potts));
+        let (clock, potts) = (
+            ring(4, 4, 1.0, Interaction::Clock),
+            ring(4, 4, 1.0, Interaction::Potts),
+        );
         let pts: Vec<(f64, f64)> = [[0u8, 0, 0, 0], [0, 1, 0, 1], [0, 2, 0, 2]]
             .iter()
             .map(|s| (potts.energy(s).unwrap(), clock.energy(s).unwrap()))
             .collect();
         let area = (pts[1].0 - pts[0].0) * (pts[2].1 - pts[0].1)
             - (pts[2].0 - pts[0].0) * (pts[1].1 - pts[0].1);
-        assert!(area.abs() > 1e-9, "at q = 4 the two models were collinear: {pts:?}");
+        assert!(
+            area.abs() > 1e-9,
+            "at q = 4 the two models were collinear: {pts:?}"
+        );
     }
 
     /// A model small enough to enumerate, its exact distribution, and the noise floor a
@@ -1919,8 +2084,14 @@ mod tests {
         let hist = run.histogram().expect("small enough to enumerate");
         let tv = crate::ising::tv(&hist, &ex.p);
         let floor = 0.5 * (ex.p.len() as f64 / e.ess).sqrt();
-        assert!(floor < 1.0, "{label}: a noise floor of {floor:.2} passes every sampler alive");
-        assert!(tv < floor, "{label}: total variation {tv:.4} above its noise floor {floor:.4}");
+        assert!(
+            floor < 1.0,
+            "{label}: a noise floor of {floor:.2} passes every sampler alive"
+        );
+        assert!(
+            tv < floor,
+            "{label}: total variation {tv:.4} above its noise floor {floor:.4}"
+        );
     }
 
     /// Both single-site updates reproduce the exact Boltzmann distribution, at several `q`, under
@@ -1959,7 +2130,9 @@ mod tests {
                 let beta = 0.5;
                 let ex = enumerate(&m, beta).unwrap();
                 for update in [Cluster::SwendsenWang, Cluster::Wolff] {
-                    let mut sm = ClusterSampler::new(&m, beta, 7).unwrap().with_wolff_steps(3);
+                    let mut sm = ClusterSampler::new(&m, beta, 7)
+                        .unwrap()
+                        .with_wolff_steps(3);
                     let run = sm.collect(&Plan::new(1000, 20000, 2), update, None);
                     score_against_enumeration(&run, &ex, &format!("{kind:?} q={q} {update:?}"));
                 }
@@ -2008,7 +2181,11 @@ mod tests {
         );
         match err {
             NoCluster::Antiferromagnetic { i, j, coupling } => {
-                assert_eq!((i, j, coupling), (1, 2, -1.0), "the refusal must name the real edge");
+                assert_eq!(
+                    (i, j, coupling),
+                    (1, 2, -1.0),
+                    "the refusal must name the real edge"
+                );
             }
             other => panic!("wrong refusal: {other}"),
         }
@@ -2092,7 +2269,9 @@ mod tests {
             let mut s = crate::cluster::Sampler::new(&g, b, 3).unwrap();
             let mut acc = 0.0;
             for _ in 0..600 {
-                acc += s.sweep_with(crate::cluster::Update::SwendsenWang, None).largest as f64;
+                acc += s
+                    .sweep_with(crate::cluster::Update::SwendsenWang, None)
+                    .largest as f64;
             }
             acc / 600.0
         };
@@ -2124,7 +2303,10 @@ mod tests {
         b.field(3, 2, -0.75);
         let m = b.build();
         assert!(m.has_field());
-        match err_of(ClusterSampler::new(&m, 0.5, 1), "a field has no cluster move") {
+        match err_of(
+            ClusterSampler::new(&m, 0.5, 1),
+            "a field has no cluster move",
+        ) {
             NoCluster::Fielded { site, state, field } => {
                 assert_eq!((site, state, field), (3, 2, -0.75));
             }
@@ -2142,19 +2324,37 @@ mod tests {
     #[test]
     fn energy_refuses_a_state_this_model_cannot_read() {
         let m = ring(4, 3, 1.0, Interaction::Potts);
-        assert_eq!(m.energy(&[0, 1, 2]), Err(Invalid::Width { got: 3, want: 4 }));
+        assert_eq!(
+            m.energy(&[0, 1, 2]),
+            Err(Invalid::Width { got: 3, want: 4 })
+        );
         assert_eq!(
             m.energy(&[0, 1, 3, 2]),
-            Err(Invalid::State { site: 2, value: 3, q: 3 })
+            Err(Invalid::State {
+                site: 2,
+                value: 3,
+                q: 3
+            })
         );
         // State 3 must not be read as state 0. If it were, this would be the energy of [0,1,0,2].
         let aliased = m.energy(&[0, 1, 0, 2]).unwrap();
-        assert!(m.energy(&[0, 1, 3, 2]).is_err(), "state 3 was accepted as {aliased}");
+        assert!(
+            m.energy(&[0, 1, 3, 2]).is_err(),
+            "state 3 was accepted as {aliased}"
+        );
         assert!(m.index_of(&[0, 1, 3, 2]).is_err());
         assert!(Sampler::new(&m, 0.5, 1).from_state(&[0, 1, 3, 2]).is_err());
         // And the message says what it saw.
-        let msg = Invalid::State { site: 2, value: 3, q: 3 }.to_string();
-        assert!(msg.contains("site 2") && msg.contains("state 3") && msg.contains("3 states"), "{msg}");
+        let msg = Invalid::State {
+            site: 2,
+            value: 3,
+            q: 3,
+        }
+        .to_string();
+        assert!(
+            msg.contains("site 2") && msg.contains("state 3") && msg.contains("3 states"),
+            "{msg}"
+        );
     }
 
     /// A model with more than two states has no Ising form, and says so.
@@ -2163,7 +2363,10 @@ mod tests {
         for q in [3usize, 5] {
             for kind in [Interaction::Potts, Interaction::Clock] {
                 let m = ring(4, q, 1.0, kind);
-                assert_eq!(err_of(m.to_ising(), "q > 2 has no Ising form"), NotBinary { q, kind });
+                assert_eq!(
+                    err_of(m.to_ising(), "q > 2 has no Ising form"),
+                    NotBinary { q, kind }
+                );
             }
         }
         assert!(ring(4, 2, 1.0, Interaction::Potts).to_ising().is_ok());
@@ -2271,7 +2474,10 @@ mod tests {
         assert_eq!(Interaction::Potts.span(7), 1.0);
         assert_eq!(Interaction::Clock.span(4), 2.0);
         assert_eq!(Interaction::Clock.span(3), 1.5);
-        assert!((Interaction::Clock.span(5) - (1.0 + (core::f64::consts::PI / 5.0).cos())).abs() < 1e-15);
+        assert!(
+            (Interaction::Clock.span(5) - (1.0 + (core::f64::consts::PI / 5.0).cos())).abs()
+                < 1e-15
+        );
     }
 
     /// The single-site gap is an UPPER BOUND on every single-site move, and on these instances it is
@@ -2287,7 +2493,9 @@ mod tests {
         for kind in [Interaction::Potts, Interaction::Clock] {
             for q in [2usize, 3, 5] {
                 let m = ring(6, q, 1.0, kind);
-                let bound = m.single_site_gap_max().expect("a coupled ring has an energy scale");
+                let bound = m
+                    .single_site_gap_max()
+                    .expect("a coupled ring has an energy scale");
                 let mut worst = 0.0f64;
                 for index in 0..q.pow(6) {
                     let s = m.state_at(index);
@@ -2300,7 +2508,10 @@ mod tests {
                         }
                     }
                 }
-                assert!(bound >= worst, "{kind:?} q={q}: bound {bound} is BELOW the true {worst}");
+                assert!(
+                    bound >= worst,
+                    "{kind:?} q={q}: bound {bound} is BELOW the true {worst}"
+                );
                 assert!(
                     bound - worst < 1e-12,
                     "{kind:?} q={q}: bound {bound} is loose against the true {worst}"
@@ -2308,7 +2519,12 @@ mod tests {
             }
         }
         // A model with nothing in it has no energy scale, and says so rather than returning zero.
-        assert_eq!(PottsBuilder::new(3, 4, Interaction::Potts).build().single_site_gap_max(), None);
+        assert_eq!(
+            PottsBuilder::new(3, 4, Interaction::Potts)
+                .build()
+                .single_site_gap_max(),
+            None
+        );
     }
 
     /// The same seed gives the same chain, and different seeds do not.
@@ -2321,7 +2537,12 @@ mod tests {
         for update in [Local::Metropolis, Local::HeatBath] {
             let trace = |seed: u64| {
                 let mut s = Sampler::new(&m, 0.6, seed);
-                (0..50).map(|_| { s.sweep(update, None); s.energy() }).collect::<Vec<_>>()
+                (0..50)
+                    .map(|_| {
+                        s.sweep(update, None);
+                        s.energy()
+                    })
+                    .collect::<Vec<_>>()
             };
             assert_eq!(trace(4), trace(4), "{update:?} is not reproducible");
             assert_ne!(trace(4), trace(5), "{update:?} ignores its seed");
@@ -2329,7 +2550,12 @@ mod tests {
         for update in [Cluster::SwendsenWang, Cluster::Wolff] {
             let trace = |seed: u64| {
                 let mut s = ClusterSampler::new(&m, 0.6, seed).unwrap();
-                (0..50).map(|_| { s.sweep(update, None); s.energy() }).collect::<Vec<_>>()
+                (0..50)
+                    .map(|_| {
+                        s.sweep(update, None);
+                        s.energy()
+                    })
+                    .collect::<Vec<_>>()
             };
             assert_eq!(trace(4), trace(4), "{update:?} is not reproducible");
             assert_ne!(trace(4), trace(5), "{update:?} ignores its seed");
@@ -2358,7 +2584,10 @@ mod tests {
             let mut l = Ledger::default();
             let st = s.sweeps(20, update, Some(&mut l));
             assert_eq!((l.samples, l.writes, l.reads), (st.visited, st.changed, 0));
-            assert!(st.bonds_tested > 0, "{update:?} tested bonds and did not count them");
+            assert!(
+                st.bonds_tested > 0,
+                "{update:?} tested bonds and did not count them"
+            );
         }
         // A readout is charged per site per kept state, which is this crate's eighth invariant.
         let mut s = Sampler::new(&m, 0.5, 2);
@@ -2399,7 +2628,10 @@ mod tests {
         assert_eq!(err.q, 3);
         assert_eq!(err.n, 40);
         assert_eq!(err.limit, ENUMERATION_LIMIT);
-        assert!(err.to_string().contains("above the enumeration limit"), "{err}");
+        assert!(
+            err.to_string().contains("above the enumeration limit"),
+            "{err}"
+        );
         // The boundary itself: 2^20 is allowed and 2^21 is not.
         assert!(enumerate(&ring(20, 2, 1.0, Interaction::Potts), 0.5).is_ok());
         assert!(enumerate(&ring(21, 2, 1.0, Interaction::Potts), 0.5).is_err());
@@ -2431,7 +2663,11 @@ mod tests {
         for n in [0usize, 1] {
             let m = PottsBuilder::new(3, n, Interaction::Potts).build();
             assert_eq!(m.energy(&vec![0u8; n]).unwrap(), 0.0);
-            assert_eq!(m.single_site_gap_max(), None, "nothing to couple is no energy scale");
+            assert_eq!(
+                m.single_site_gap_max(),
+                None,
+                "nothing to couple is no energy scale"
+            );
             for update in [Local::Metropolis, Local::HeatBath] {
                 let mut s = Sampler::new(&m, 0.5, 1);
                 let st = s.sweeps(3, update, None);
@@ -2441,7 +2677,10 @@ mod tests {
             let mut c = ClusterSampler::new(&m, 0.5, 1).unwrap();
             for update in [Cluster::SwendsenWang, Cluster::Wolff] {
                 let st = c.sweeps(3, update, None);
-                assert_eq!(st.bonds_tested, 0, "an uncoupled model has no bonds to test");
+                assert_eq!(
+                    st.bonds_tested, 0,
+                    "an uncoupled model has no bonds to test"
+                );
                 assert_eq!(st.visited, 3 * n as u64);
                 assert_eq!(c.energy(), 0.0);
             }
@@ -2467,6 +2706,10 @@ mod tests {
         let by_table: f64 = ex.p.iter().zip(&ex.energies).map(|(p, e)| p * e).sum();
         let by_mean = ex.mean(|s| m.energy(s).unwrap());
         assert!((by_table - ex.mean_energy).abs() < 1e-12);
-        assert!((by_mean - ex.mean_energy).abs() < 1e-12, "{by_mean} against {}", ex.mean_energy);
+        assert!(
+            (by_mean - ex.mean_energy).abs() < 1e-12,
+            "{by_mean} against {}",
+            ex.mean_energy
+        );
     }
 }

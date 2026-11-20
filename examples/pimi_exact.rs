@@ -19,7 +19,9 @@
 //
 // run: cargo run --release --example pimi_exact
 
-use ferrotherm::autocorr::{boltzmann, kemeny_constant, peretto, stationary_solved, total_variation, Kernel};
+use ferrotherm::autocorr::{
+    Kernel, boltzmann, kemeny_constant, peretto, stationary_solved, total_variation,
+};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -87,9 +89,14 @@ fn nearest_beta(g: &Graph, law: &[f64], lo: f64, hi: f64) -> (f64, f64) {
 fn run(name: &str, g: &Graph, beta: f64) {
     let b = boltzmann(g, beta).expect("small");
     let sync = total_variation(&peretto(g, beta).expect("small"), &b);
-    let fab = total_variation(&stationary_solved(g, beta, Kernel::FixedFabric).expect("small"), &b);
+    let fab = total_variation(
+        &stationary_solved(g, beta, Kernel::FixedFabric).expect("small"),
+        &b,
+    );
     let k_chrom = kemeny_constant(g, beta, Kernel::ChromaticGibbs).expect("small");
-    println!("  {name}, beta {beta}: TV(sync logistic, B) = {sync:.3e}; TV(fabric, B) = {fab:.3e}; K chromatic = {k_chrom:.3e}\n");
+    println!(
+        "  {name}, beta {beta}: TV(sync logistic, B) = {sync:.3e}; TV(fabric, B) = {fab:.3e}; K chromatic = {k_chrom:.3e}\n"
+    );
     println!(
         "  {:>5} {:>5}   {:>10} {:>9} {:>10}   {:>12} {:>9}",
         "eta", "xi", "TV(pimi,B)", "beta_eff", "TV at eff", "K pimi", "ratio"
@@ -101,13 +108,19 @@ fn run(name: &str, g: &Graph, beta: f64) {
             // law: the solve reports the singular system, and the row says so rather than
             // inventing a distribution for a frozen chain.
             let Ok(law) = stationary_solved(g, beta, k) else {
-                println!("  {eta:>5.2} {xi:>5.2}   {:>10} {:>9} {:>10}   {:>12} {:>9}   frozen: no unique invariant law (singular to 1e-14)", "-", "-", "-", "-", "-");
+                println!(
+                    "  {eta:>5.2} {xi:>5.2}   {:>10} {:>9} {:>10}   {:>12} {:>9}   frozen: no unique invariant law (singular to 1e-14)",
+                    "-", "-", "-", "-", "-"
+                );
                 continue;
             };
             let tv = total_variation(&law, &b);
             let (b_eff, tv_eff) = nearest_beta(g, &law, 0.05 * beta, 16.0 * beta);
             let kk = if xi == 0.0 || xi == 0.5 || xi == 1.0 {
-                kemeny_constant(g, beta, k).map_or_else(|_| format!("{:>12} {:>9}", "-", "frozen"), |kk| format!("{kk:>12.4e} {:>9.3e}", kk / k_chrom))
+                kemeny_constant(g, beta, k).map_or_else(
+                    |_| format!("{:>12} {:>9}", "-", "frozen"),
+                    |kk| format!("{kk:>12.4e} {:>9.3e}", kk / k_chrom),
+                )
             } else {
                 format!("{:>12} {:>9}", "-", "-")
             };
@@ -119,15 +132,39 @@ fn run(name: &str, g: &Graph, beta: f64) {
 
 fn main() {
     println!("THE PIMI RULE AGAINST THE BOLTZMANN DISTRIBUTION, EXACTLY, ON ALL 2^12 STATES\n");
-    println!("  kernel   Kernel::Pimi {{ xi, eta }}: every site at once, P(+1) = Phi((tanh(beta f) + xi s) / eta)");
-    println!("  oracle   direct solve for the stationary law; Kemeny's constant for relaxation per full update\n");
-    run("4x3 grid, +-1 couplings, fields in [-0.2, 0.2]", &grid_glass(4, 3, 7), 1.0);
-    run("K_{6,6}, Gaussian couplings of scale 1/sqrt(6), fields in [-0.2, 0.2]", &dense_bipartite(5), 1.0);
+    println!(
+        "  kernel   Kernel::Pimi {{ xi, eta }}: every site at once, P(+1) = Phi((tanh(beta f) + xi s) / eta)"
+    );
+    println!(
+        "  oracle   direct solve for the stationary law; Kemeny's constant for relaxation per full update\n"
+    );
+    run(
+        "4x3 grid, +-1 couplings, fields in [-0.2, 0.2]",
+        &grid_glass(4, 3, 7),
+        1.0,
+    );
+    run(
+        "K_{6,6}, Gaussian couplings of scale 1/sqrt(6), fields in [-0.2, 0.2]",
+        &dense_bipartite(5),
+        1.0,
+    );
     println!("  WHAT THE TABLES SAY.\n");
-    println!("  TV(pimi,B) is the equilibrium error of the PIMI rule, the part no number of updates removes; the");
-    println!("  'sampling floor' the claim would have to beat is the two-run noise of a finite sample, and these are");
-    println!("  exact, so any value visibly above 1e-3 is a law the rule cannot sample. beta_eff and TV at eff say");
-    println!("  whether the error is a temperature shift. The xi = 0 rows isolate the probit-of-tanh nonlinearity");
-    println!("  from the inertia; the fully synchronous logistic sweep and the fabric's arithmetic are printed above");
-    println!("  each table for scale. K is relaxation per full update against the chromatic sweep's.");
+    println!(
+        "  TV(pimi,B) is the equilibrium error of the PIMI rule, the part no number of updates removes; the"
+    );
+    println!(
+        "  'sampling floor' the claim would have to beat is the two-run noise of a finite sample, and these are"
+    );
+    println!(
+        "  exact, so any value visibly above 1e-3 is a law the rule cannot sample. beta_eff and TV at eff say"
+    );
+    println!(
+        "  whether the error is a temperature shift. The xi = 0 rows isolate the probit-of-tanh nonlinearity"
+    );
+    println!(
+        "  from the inertia; the fully synchronous logistic sweep and the fabric's arithmetic are printed above"
+    );
+    println!(
+        "  each table for scale. K is relaxation per full update against the chromatic sweep's."
+    );
 }

@@ -37,45 +37,6 @@ match the request. `cpu` matches platform `cpu`. `cuda` matches platform
 does not change the trial-window thresholds and it does not change the 0.05
 parity line.
 
-## A repetition is one execution of the sampler
-
-The metered window is still warmup plus draws, repeated until the window has
-lasted 2 s, and joules are still divided by that repetition count. A call
-that does not execute the sampler is not a repetition, and it does not keep
-the window open. v3.1 counted those calls. Two paths did it.
-
-With `--skip-thrml` the THRML side has no process. The loop still ran until
-2 s had passed. On an x86_64 host that is tens of millions of empty
-iterations per side. The phase then kept one outside-step record per
-iteration. Measured here with a readable RAPL package counter, RSS rose by
-about 1.4 GB per skipped side and was still rising at 6.1 GB. The same
-command with no counter returns before that loop. A Jetson run that finishes
-in about 29 s at about 20 MB is the quiet-host wait (15 attempts, 2 s
-apart) leaving the phase before the loop, not a different sampler.
-
-The records are appended after the post-trial bracket, so that allocation
-is outside the counter window. The empty loop that produced the count ran
-inside the window. A skipped THRML row that was metered is the joules of
-that loop.
-
-With THRML running, non-grid `COST` called `sample_states` on an empty
-block. In THRML 0.1.4, `Block.node_type` raises `ValueError: Block is empty
-and doesn't have a node type` before a sweep. Measured with that pin and
-JAX 0.12.0.1, `COST` of `thrml_readme_ising_chain_n5` raises it for every
-seed tried, including seed 1, seed 0, and the energy-phase seed
-`260811615`. The seed is not the input that selects it. The observer block
-is `Block([])` on every non-grid `COST`. `RUN` and `ESS` pass the real
-even/odd blocks and do not raise, including at seed 1. `serve` catches the
-exception and prints `ERR`, so the process stays up. A log that shows the
-error on some lines of that workload and not others is `COST` versus
-`RUN`/`ESS`, not a seed that sometimes works. The same 2 s loop counted
-the failures. Grid `COST` already used a null observer and did run the sweeps.
-
-v3.2 counts an execution only when ferrotherm's warmup-plus-draws returns,
-or when THRML `COST` returns a positive sweep count. Non-grid `COST` uses
-the same null observer as grid `COST`: the sweep runs, and states are not
-stacked. There is no RSS cap and no watchdog.
-
 ## A THRML server builds only the workloads it will sample
 
 `serve` builds and warms every workload in its spec before it prints
@@ -88,13 +49,55 @@ warmup into that window, and it does not change THRML or JAX.
 2048 and 4096. Side 4096 is 16,777,216 sites. The suite phase was started
 with that file, so the CPU-suite server built the 2048 and 4096 grids
 before `READY` and was killed at about 12.5 GB. The same server given only
-the 15-workload suite spec sits at about 1.3 to 1.5 GB. This is not the
-`--skip-thrml` audit growth. That one runs with no THRML process at all.
+the 15-workload suite spec sits at about 1.3 to 1.5 GB. This is separate
+from the `--skip-thrml` audit growth below. That growth runs with no THRML
+process at all.
 
 v3.2 hands each server a spec of the workloads that server will sample.
 The suite server gets the suite workloads. Each grid server gets one side,
-the spec already written for that side before the process is armed. A
-server does not construct a grid it will not be asked to sample.
+the spec written for that side before the process is armed. A server does
+not construct a grid it will not be asked to sample.
+
+## A repetition is one execution of the sampler
+
+The metered window is still warmup plus draws, repeated until the window has
+lasted 2 s, and joules are still divided by that repetition count. A call
+that does not execute the sampler is not a repetition, and it does not keep
+the window open. v3.1 counted those calls. Two paths did it.
+
+With `--skip-thrml` the THRML side has no process. The loop still ran until
+2 s had passed. On an x86_64 host that is tens of millions of empty
+iterations per side. The phase then kept one outside-step record per
+iteration. Measured on an x86_64 VM with a readable RAPL package counter, RSS rose by
+about 1.4 GB per skipped side and was still rising at 6.1 GB. The same
+command with no counter returns before that loop. jetson-hub is not a v3.2
+campaign host: that machine does not have enough memory for these campaigns.
+The growth above was reproduced on the VM.
+
+The records are appended after the post-trial bracket, so that allocation
+is outside the counter window. The empty loop that produced the count ran
+inside the window. A skipped THRML row that was metered is the joules of
+that loop.
+
+With THRML running, non-grid `COST` called `sample_states` on an empty
+block. In THRML 0.1.4, `Block.node_type` raises `ValueError: Block is empty
+and doesn't have a node type` before a sweep. Measured with that pin and
+JAX 0.12.0.1, one `serve` process, `COST` of `thrml_readme_ising_chain_n5`
+failed for all 39 seeds in the sweep: 0 through 32, 100, 101,
+2147483647, 260801615, 260801616, and 260811615. Seed 1 is in that list.
+`ESS` and `RUN` at seed 1 both returned a chain. The seed is not the
+input that selects the error. The observer block
+is `Block([])` on every non-grid `COST`. `RUN` and `ESS` pass the real
+even/odd blocks and do not raise, including at seed 1. `serve` catches the
+exception and prints `ERR`, so the process stays up. A log that shows the
+error on some lines of that workload and not others is `COST` versus
+`RUN`/`ESS`, not a seed that sometimes works. The same 2 s loop counted
+the failures. Grid `COST` already used a null observer and did run the sweeps.
+
+v3.2 counts an execution only when ferrotherm's warmup-plus-draws returns,
+or when THRML `COST` returns a positive sweep count. Non-grid `COST` uses
+the same null observer as grid `COST`: the sweep runs, and states are not
+stacked. There is no RSS cap and no watchdog.
 
 ## What a finished receipt can contain
 

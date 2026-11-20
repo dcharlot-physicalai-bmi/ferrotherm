@@ -122,7 +122,11 @@ pub fn tts(trials: &[Trial], confidence: f64) -> Option<Tts> {
     }
     let mut curve = Vec::with_capacity(trials.len());
     for t in trials {
-        let p = if t.trials == 0 { 0.0 } else { t.successes as f64 / t.trials as f64 };
+        let p = if t.trials == 0 {
+            0.0
+        } else {
+            t.successes as f64 / t.trials as f64
+        };
         let v = runs_needed(p, confidence).map(|r| r * t.length as f64);
         curve.push((t.length, p, v));
     }
@@ -192,20 +196,48 @@ mod tests {
     fn the_minimum_over_run_length_is_found_rather_than_an_endpoint() {
         // p(t) chosen so TTS(t) = t * ln(0.01)/ln(1-p) dips at t = 400.
         let trials = vec![
-            Trial { length: 100, successes: 1, trials: 100 },   // p=0.01, huge TTS
-            Trial { length: 200, successes: 10, trials: 100 },  // p=0.10
-            Trial { length: 400, successes: 60, trials: 100 },  // p=0.60  <- the dip
-            Trial { length: 800, successes: 80, trials: 100 },  // p=0.80, but twice the length
-            Trial { length: 3200, successes: 95, trials: 100 }, // p=0.95, eight times
+            Trial {
+                length: 100,
+                successes: 1,
+                trials: 100,
+            }, // p=0.01, huge TTS
+            Trial {
+                length: 200,
+                successes: 10,
+                trials: 100,
+            }, // p=0.10
+            Trial {
+                length: 400,
+                successes: 60,
+                trials: 100,
+            }, // p=0.60  <- the dip
+            Trial {
+                length: 800,
+                successes: 80,
+                trials: 100,
+            }, // p=0.80, but twice the length
+            Trial {
+                length: 3200,
+                successes: 95,
+                trials: 100,
+            }, // p=0.95, eight times
         ];
         let t = tts(&trials, 0.99).unwrap();
         assert_eq!(t.best_length, 400, "the minimum is interior: {:?}", t.curve);
-        assert!((t.tts.unwrap() - 2010.35).abs() < 0.1, "TTS at the dip: {:?}", t.tts);
+        assert!(
+            (t.tts.unwrap() - 2010.35).abs() < 0.1,
+            "TTS at the dip: {:?}",
+            t.tts
+        );
         // Every length must appear, so a reader can see the curve rather than trust the minimum.
         assert_eq!(t.curve.len(), trials.len());
         // And quoting the LONGEST length instead would overstate it, which is the usual error.
         let at_longest = t.curve.last().unwrap().2.unwrap();
-        assert!(at_longest > 2.4 * t.tts.unwrap(), "{at_longest} against {:?}", t.tts);
+        assert!(
+            at_longest > 2.4 * t.tts.unwrap(),
+            "{at_longest} against {:?}",
+            t.tts
+        );
     }
 
     /// A length that never succeeded is an absent measurement, not a large TTS. Including it as
@@ -213,8 +245,16 @@ mod tests {
     #[test]
     fn a_length_that_never_succeeded_is_absent_rather_than_infinite() {
         let trials = vec![
-            Trial { length: 10, successes: 0, trials: 50 },
-            Trial { length: 1000, successes: 25, trials: 50 },
+            Trial {
+                length: 10,
+                successes: 0,
+                trials: 50,
+            },
+            Trial {
+                length: 1000,
+                successes: 25,
+                trials: 50,
+            },
         ];
         let t = tts(&trials, 0.99).unwrap();
         assert_eq!(t.best_length, 1000);
@@ -222,7 +262,11 @@ mod tests {
         assert!(t.tts.is_some());
 
         // Nothing succeeded anywhere: no TTS at all, and the longest length tried is reported.
-        let none = vec![Trial { length: 7, successes: 0, trials: 20 }];
+        let none = vec![Trial {
+            length: 7,
+            successes: 0,
+            trials: 20,
+        }];
         let t = tts(&none, 0.99).unwrap();
         assert_eq!(t.tts, None);
         assert_eq!(t.best_length, 7);
@@ -238,25 +282,58 @@ mod tests {
         // success it goes negative: p̂ ± z·sqrt(p̂(1-p̂)/n) = 0.05 − 1.96·0.0487 = −0.045.
         let phat: f64 = 1.0 / 20.0;
         let naive_lo = phat - 1.96 * (phat * (1.0 - phat) / 20.0).sqrt();
-        assert!(naive_lo < 0.0, "the fixture must exercise the difference: {naive_lo}");
+        assert!(
+            naive_lo < 0.0,
+            "the fixture must exercise the difference: {naive_lo}"
+        );
         let (lo, hi) = wilson(1, 20, 1.96);
         assert!(lo > 0.0 && hi < 1.0, "({lo}, {hi})");
-        assert!(lo <= phat && phat <= hi, "the interval must contain the estimate");
+        assert!(
+            lo <= phat && phat <= hi,
+            "the interval must contain the estimate"
+        );
 
         // Ordering: TTS falls as p rises, so the interval on TTS flips relative to the one on p.
-        let t = tts(&[Trial { length: 100, successes: 10, trials: 40 }], 0.99).unwrap();
+        let t = tts(
+            &[Trial {
+                length: 100,
+                successes: 10,
+                trials: 40,
+            }],
+            0.99,
+        )
+        .unwrap();
         let (a, b) = t.interval.unwrap();
-        assert!(a < t.tts.unwrap() && t.tts.unwrap() < b, "{a} {:?} {b}", t.tts);
+        assert!(
+            a < t.tts.unwrap() && t.tts.unwrap() < b,
+            "{a} {:?} {b}",
+            t.tts
+        );
     }
 
     /// Refusals rather than a number nobody can read.
     #[test]
     fn malformed_input_is_refused() {
         assert!(tts(&[], 0.99).is_none());
-        let one = [Trial { length: 1, successes: 1, trials: 1 }];
-        assert!(tts(&one, 1.0).is_none(), "a confidence of 1 needs infinitely many runs");
+        let one = [Trial {
+            length: 1,
+            successes: 1,
+            trials: 1,
+        }];
+        assert!(
+            tts(&one, 1.0).is_none(),
+            "a confidence of 1 needs infinitely many runs"
+        );
         assert!(tts(&one, 0.0).is_none());
-        assert_eq!(runs_needed(1.5, 0.99), None, "a probability above one is not one");
-        assert_eq!(wilson(0, 0, 1.96), (0.0, 1.0), "no trials means no information");
+        assert_eq!(
+            runs_needed(1.5, 0.99),
+            None,
+            "a probability above one is not one"
+        );
+        assert_eq!(
+            wilson(0, 0, 1.96),
+            (0.0, 1.0),
+            "no trials means no information"
+        );
     }
 }

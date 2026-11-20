@@ -168,7 +168,12 @@ pub fn search(g: &Graph, p: &Params, seed: u64) -> Outcome {
 
 /// As [`search`], charging every spin update to a [`Ledger`].
 #[must_use]
-pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut Ledger>) -> Outcome {
+pub fn search_metered(
+    g: &Graph,
+    p: &Params,
+    seed: u64,
+    mut ledger: Option<&mut Ledger>,
+) -> Outcome {
     let n = g.n;
     if n == 0 {
         return Outcome {
@@ -189,7 +194,9 @@ pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut 
     let mut delta = gains(g, &s);
     let mut energy = g.energy(&s);
 
-    let l0 = p.l0.unwrap_or_else(|| ((n as f64 * 0.01).round() as usize).max(1)).clamp(1, n);
+    let l0 =
+        p.l0.unwrap_or_else(|| ((n as f64 * 0.01).round() as usize).max(1))
+            .clamp(1, n);
     let (t_lo, t_hi) = p.tenure.unwrap_or((3, (n / 10).max(4)));
     let (t_lo, t_hi) = (t_lo.max(1), t_hi.max(t_lo + 1));
     let t = p.t.max(1);
@@ -293,7 +300,10 @@ pub fn search_metered(g: &Graph, p: &Params, seed: u64, mut ledger: Option<&mut 
             }
             let moves = match kind {
                 Kind::Random => [Some((rng.next_u32() as usize) % n), None],
-                Kind::DirectedOne => [pick_eligible(&delta, &tabu_until, iter, energy, best_e, &s, None), None],
+                Kind::DirectedOne => [
+                    pick_eligible(&delta, &tabu_until, iter, energy, best_e, &s, None),
+                    None,
+                ],
                 Kind::DirectedTwo => [
                     pick_eligible(&delta, &tabu_until, iter, energy, best_e, &s, Some(1)),
                     pick_eligible(&delta, &tabu_until, iter, energy, best_e, &s, Some(-1)),
@@ -384,9 +394,10 @@ fn pick_eligible(
     let mut low = f64::INFINITY;
     for i in 0..delta.len() {
         if let Some(v) = side
-            && s[i] != v {
-                continue;
-            }
+            && s[i] != v
+        {
+            continue;
+        }
         let free = tabu_until[i] == usize::MAX || iter > tabu_until[i];
         let aspires = energy + delta[i] < best - 1e-12;
         if (free || aspires) && delta[i] < low {
@@ -409,12 +420,23 @@ mod tests {
         let g = crate::ising::lattice2d(8, 1.0);
         let optimum = vec![1i8; g.n];
         let e_opt = g.energy(&optimum);
-        let p = Params { iterations: 2_000, start: Some(optimum), ..Params::default() };
+        let p = Params {
+            iterations: 2_000,
+            start: Some(optimum),
+            ..Params::default()
+        };
         let r = search(&g, &p, 5);
-        assert!(r.energy <= e_opt + 1e-9, "handed the optimum, returned {} vs {e_opt}", r.energy);
+        assert!(
+            r.energy <= e_opt + 1e-9,
+            "handed the optimum, returned {} vs {e_opt}",
+            r.energy
+        );
 
         // A wrong length is ignored rather than panicking: the search runs from noise.
-        let bad = Params { start: Some(vec![1i8; g.n + 2]), ..Params::default() };
+        let bad = Params {
+            start: Some(vec![1i8; g.n + 2]),
+            ..Params::default()
+        };
         let r2 = search(&g, &bad, 5);
         assert_eq!(r2.state.len(), g.n);
         assert!(r2.energy.is_finite());
@@ -464,7 +486,14 @@ mod tests {
     fn the_energy_returned_is_the_energy_of_the_state_returned() {
         for seed in 0..8u64 {
             let g = frustrated(40, 0.3, seed);
-            let r = search(&g, &Params { iterations: 4_000, ..Params::default() }, seed);
+            let r = search(
+                &g,
+                &Params {
+                    iterations: 4_000,
+                    ..Params::default()
+                },
+                seed,
+            );
             assert_eq!(r.state.len(), g.n);
             assert!(r.state.iter().all(|&v| v == 1 || v == -1));
             assert!(
@@ -482,15 +511,28 @@ mod tests {
         for seed in 0..30u64 {
             let g = frustrated(30, 0.35, seed + 500);
             let d = steepest_descent(&g, seed);
-            let b = search(&g, &Params { iterations: 3_000, ..Params::default() }, seed);
+            let b = search(
+                &g,
+                &Params {
+                    iterations: 3_000,
+                    ..Params::default()
+                },
+                seed,
+            );
             if b.energy < d - 1e-9 {
                 wins += 1;
             } else if b.energy > d + 1e-9 {
                 losses += 1;
             }
         }
-        assert_eq!(losses, 0, "BLS ended above a plain descent on {losses} of 30 instances");
-        assert!(wins >= 20, "only beat descent on {wins} of 30; the perturbation is not working");
+        assert_eq!(
+            losses, 0,
+            "BLS ended above a plain descent on {losses} of 30 instances"
+        );
+        assert!(
+            wins >= 20,
+            "only beat descent on {wins} of 30; the perturbation is not working"
+        );
     }
 
     /// The adaptive schedule is the algorithm. A run that only ever fired one kind of perturbation
@@ -499,7 +541,14 @@ mod tests {
     #[test]
     fn the_perturbation_mix_is_genuinely_mixed() {
         let g = frustrated(60, 0.25, 3);
-        let r = search(&g, &Params { iterations: 20_000, ..Params::default() }, 3);
+        let r = search(
+            &g,
+            &Params {
+                iterations: 20_000,
+                ..Params::default()
+            },
+            3,
+        );
         let p = r.perturbations;
         assert!(p.random > 0, "no random perturbation fired");
         assert!(p.directed_one > 0, "no M1 perturbation fired");
@@ -513,7 +562,14 @@ mod tests {
     #[test]
     fn the_jump_grows_exactly_when_the_search_comes_back() {
         let g = frustrated(50, 0.3, 11);
-        let r = search(&g, &Params { iterations: 30_000, ..Params::default() }, 11);
+        let r = search(
+            &g,
+            &Params {
+                iterations: 30_000,
+                ..Params::default()
+            },
+            11,
+        );
         let l0 = ((50.0f64 * 0.01).round() as usize).max(1);
         assert!(r.max_jump >= l0);
         assert_eq!(
@@ -531,10 +587,21 @@ mod tests {
     #[test]
     fn the_two_readings_of_the_pseudo_code_are_different_searches() {
         let g = frustrated(60, 0.25, 21);
-        let faithful = search(&g, &Params { iterations: 20_000, ..Params::default() }, 21);
+        let faithful = search(
+            &g,
+            &Params {
+                iterations: 20_000,
+                ..Params::default()
+            },
+            21,
+        );
         let intended = search(
             &g,
-            &Params { iterations: 20_000, random_after_improvement: false, ..Params::default() },
+            &Params {
+                iterations: 20_000,
+                random_after_improvement: false,
+                ..Params::default()
+            },
             21,
         );
         assert_ne!(
@@ -561,7 +628,14 @@ mod tests {
         for budget in [999, 5_000, 20_001] {
             for seed in 0..6u64 {
                 let g = frustrated(24, 0.35, seed);
-                let r = search(&g, &Params { iterations: budget, ..Params::default() }, seed);
+                let r = search(
+                    &g,
+                    &Params {
+                        iterations: budget,
+                        ..Params::default()
+                    },
+                    seed,
+                );
                 assert_eq!(
                     r.iterations_run, budget,
                     "budget {budget}, seed {seed}: ran {} flips",
@@ -571,7 +645,14 @@ mod tests {
         }
         // And a ferromagnet is solved on the way: all-aligned, one per bond, both directions.
         let g = lattice2d(6, 1.0);
-        let r = search(&g, &Params { iterations: 5_000, ..Params::default() }, 2);
+        let r = search(
+            &g,
+            &Params {
+                iterations: 5_000,
+                ..Params::default()
+            },
+            2,
+        );
         assert!((r.energy + 2.0 * 36.0).abs() < 1e-9, "energy {}", r.energy);
     }
 
@@ -586,7 +667,15 @@ mod tests {
     fn the_ledger_charges_a_move_evaluation_per_node_per_move() {
         let g = frustrated(20, 0.4, 5);
         let mut led = Ledger::default();
-        let r = search_metered(&g, &Params { iterations: 1_000, ..Params::default() }, 5, Some(&mut led));
+        let r = search_metered(
+            &g,
+            &Params {
+                iterations: 1_000,
+                ..Params::default()
+            },
+            5,
+            Some(&mut led),
+        );
         assert_eq!(led.samples, (r.iterations_run * g.n) as u64);
     }
 }

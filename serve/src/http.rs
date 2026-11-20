@@ -1,7 +1,7 @@
 //! A small HTTP/1.1 server over `std::net`, enough to expose the API and nothing more.
 
 use crate::api;
-use crate::json::{write, Json};
+use crate::json::{Json, write};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
@@ -29,7 +29,10 @@ pub struct Response {
 
 impl Response {
     fn json(status: u16, v: &Json) -> Response {
-        Response { status, body: write(v) }
+        Response {
+            status,
+            body: write(v),
+        }
     }
     fn err(status: u16, msg: &str) -> Response {
         Response::json(
@@ -54,13 +57,19 @@ fn reason(status: u16) -> &'static str {
 #[must_use]
 pub fn route(req: &Request) -> Response {
     if req.method == "OPTIONS" {
-        return Response { status: 200, body: String::new() };
+        return Response {
+            status: 200,
+            body: String::new(),
+        };
     }
     let path = req.path.split('?').next().unwrap_or("");
     match (req.method.as_str(), path) {
         ("GET", "/v1/health") => Response::json(
             200,
-            &Json::obj(vec![("ok", Json::Bool(true)), ("service", Json::s("ferrotherm"))]),
+            &Json::obj(vec![
+                ("ok", Json::Bool(true)),
+                ("service", Json::s("ferrotherm")),
+            ]),
         ),
         ("GET", "/v1/capabilities" | "/") => Response::json(200, &api::capabilities()),
         ("POST", p) if p.starts_with("/v1/") => {
@@ -77,7 +86,10 @@ pub fn route(req: &Request) -> Response {
             }
         }
         ("GET", _) => Response::err(404, "no such endpoint; GET /v1/capabilities lists them"),
-        _ => Response::err(405, "method not allowed; the operations are POST /v1/<operation>"),
+        _ => Response::err(
+            405,
+            "method not allowed; the operations are POST /v1/<operation>",
+        ),
     }
 }
 
@@ -106,9 +118,10 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
             break;
         }
         if let Some((k, v)) = h.split_once(':')
-            && k.eq_ignore_ascii_case("content-length") {
-                len = v.trim().parse().unwrap_or(0);
-            }
+            && k.eq_ignore_ascii_case("content-length")
+        {
+            len = v.trim().parse().unwrap_or(0);
+        }
     }
 
     let resp = if len > MAX_BODY {
@@ -168,10 +181,18 @@ mod tests {
     use crate::json::parse;
 
     fn get(path: &str) -> Response {
-        route(&Request { method: "GET".into(), path: path.into(), body: String::new() })
+        route(&Request {
+            method: "GET".into(),
+            path: path.into(),
+            body: String::new(),
+        })
     }
     fn post(path: &str, body: &str) -> Response {
-        route(&Request { method: "POST".into(), path: path.into(), body: body.into() })
+        route(&Request {
+            method: "POST".into(),
+            path: path.into(),
+            body: body.into(),
+        })
     }
 
     #[test]
@@ -185,9 +206,15 @@ mod tests {
 
     #[test]
     fn sample_over_http() {
-        let r = post("/v1/sample", r#"{"graph":{"builtin":"ring","n":16},"sweeps":10}"#);
+        let r = post(
+            "/v1/sample",
+            r#"{"graph":{"builtin":"ring","n":16},"sweeps":10}"#,
+        );
         assert_eq!(r.status, 200);
-        assert_eq!(parse(&r.body).unwrap().get("nodes").unwrap().as_f64(), Some(16.0));
+        assert_eq!(
+            parse(&r.body).unwrap().get("nodes").unwrap().as_f64(),
+            Some(16.0)
+        );
     }
 
     #[test]
@@ -199,7 +226,15 @@ mod tests {
     fn caller_errors_are_400_with_a_reason() {
         let r = post("/v1/sample", "not json");
         assert_eq!(r.status, 400);
-        assert!(parse(&r.body).unwrap().get("error").unwrap().as_str().unwrap().contains("JSON"));
+        assert!(
+            parse(&r.body)
+                .unwrap()
+                .get("error")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("JSON")
+        );
 
         let r = post("/v1/sample", r#"{"graph":{"n":4,"couplings":[[0,7,1.0]]}}"#);
         assert_eq!(r.status, 400);
@@ -214,8 +249,12 @@ mod tests {
     #[test]
     fn wrong_method_is_405() {
         assert_eq!(
-            route(&Request { method: "DELETE".into(), path: "/v1/sample".into(), body: String::new() })
-                .status,
+            route(&Request {
+                method: "DELETE".into(),
+                path: "/v1/sample".into(),
+                body: String::new()
+            })
+            .status,
             405
         );
     }
@@ -223,8 +262,12 @@ mod tests {
     #[test]
     fn preflight_succeeds() {
         assert_eq!(
-            route(&Request { method: "OPTIONS".into(), path: "/v1/sample".into(), body: String::new() })
-                .status,
+            route(&Request {
+                method: "OPTIONS".into(),
+                path: "/v1/sample".into(),
+                body: String::new()
+            })
+            .status,
             200
         );
     }
@@ -233,6 +276,14 @@ mod tests {
     fn empty_body_is_a_readable_error_not_a_panic() {
         let r = post("/v1/sample", "");
         assert_eq!(r.status, 400);
-        assert!(parse(&r.body).unwrap().get("error").unwrap().as_str().unwrap().contains("graph"));
+        assert!(
+            parse(&r.body)
+                .unwrap()
+                .get("error")
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .contains("graph")
+        );
     }
 }

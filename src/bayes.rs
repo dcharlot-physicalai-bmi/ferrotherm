@@ -143,15 +143,25 @@ impl core::fmt::Display for BayesError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             BayesError::OutOfRange { var, n } => {
-                write!(f, "variable {var} is out of range for a model of {n} variables")
+                write!(
+                    f,
+                    "variable {var} is out of range for a model of {n} variables"
+                )
             }
             BayesError::SelfParent { child } => {
                 write!(f, "variable {child} is listed as its own parent")
             }
             BayesError::RepeatedParent { child, parent } => {
-                write!(f, "variable {parent} appears twice among the parents of {child}")
+                write!(
+                    f,
+                    "variable {parent} appears twice among the parents of {child}"
+                )
             }
-            BayesError::TooManyParents { child, parents, max } => write!(
+            BayesError::TooManyParents {
+                child,
+                parents,
+                max,
+            } => write!(
                 f,
                 "variable {child} has {parents} parents, over the cap of {max}; its table would \
                  hold 2^{parents} rows"
@@ -162,7 +172,10 @@ impl core::fmt::Display for BayesError {
                  parent configuration"
             ),
             BayesError::NotAProbability { child, row, p } => {
-                write!(f, "row {row} of variable {child}'s table is {p}, not a probability in [0, 1]")
+                write!(
+                    f,
+                    "row {row} of variable {child}'s table is {p}, not a probability in [0, 1]"
+                )
             }
             BayesError::AlreadySet { child } => {
                 write!(f, "variable {child} already has a table")
@@ -231,13 +244,22 @@ impl core::fmt::Display for QueryError {
                  {max}"
             ),
             QueryError::ImpossibleEvidence => {
-                write!(f, "this evidence has probability zero, so no conditional is defined")
+                write!(
+                    f,
+                    "this evidence has probability zero, so no conditional is defined"
+                )
             }
             QueryError::OutOfRange { var, n } => {
-                write!(f, "variable {var} is out of range for a model of {n} variables")
+                write!(
+                    f,
+                    "variable {var} is out of range for a model of {n} variables"
+                )
             }
             QueryError::EvidenceSize { got, want } => {
-                write!(f, "the evidence holds {got} entries and the model has {want} variables")
+                write!(
+                    f,
+                    "the evidence holds {got} entries and the model has {want} variables"
+                )
             }
             QueryError::HigherOrder { child, free } => write!(
                 f,
@@ -274,7 +296,11 @@ impl Evidence {
     ///
     /// If `var` is not below the variable count this was built with.
     pub fn observe(&mut self, var: usize, value: bool) -> &mut Evidence {
-        assert!(var < self.obs.len(), "variable {var} is out of range for {}", self.obs.len());
+        assert!(
+            var < self.obs.len(),
+            "variable {var} is out of range for {}",
+            self.obs.len()
+        );
         self.obs[var] = Some(value);
         self
     }
@@ -285,7 +311,11 @@ impl Evidence {
     ///
     /// If `var` is not below the variable count this was built with.
     pub fn forget(&mut self, var: usize) -> &mut Evidence {
-        assert!(var < self.obs.len(), "variable {var} is out of range for {}", self.obs.len());
+        assert!(
+            var < self.obs.len(),
+            "variable {var} is out of range for {}",
+            self.obs.len()
+        );
         self.obs[var] = None;
         self
     }
@@ -356,7 +386,11 @@ impl Family {
                 }
             }
             let pt = self.p_true[row];
-            data.push(if value(self.child) { pt.ln() } else { (1.0 - pt).ln() });
+            data.push(if value(self.child) {
+                pt.ln()
+            } else {
+                (1.0 - pt).ln()
+            });
         }
         (vars, data)
     }
@@ -373,7 +407,10 @@ impl BayesBuilder {
     /// A builder over `n` binary variables, none of which has a table yet.
     #[must_use]
     pub fn new(n: usize) -> BayesBuilder {
-        BayesBuilder { n, cpts: vec![None; n] }
+        BayesBuilder {
+            n,
+            cpts: vec![None; n],
+        }
     }
 
     /// Give `child` a table: `p_true[row]` is `P(child = true | parents)`, bit `k` of `row` being
@@ -390,7 +427,10 @@ impl BayesBuilder {
         p_true: &[f64],
     ) -> Result<(), BayesError> {
         if child >= self.n {
-            return Err(BayesError::OutOfRange { var: child, n: self.n });
+            return Err(BayesError::OutOfRange {
+                var: child,
+                n: self.n,
+            });
         }
         if self.cpts[child].is_some() {
             return Err(BayesError::AlreadySet { child });
@@ -415,7 +455,11 @@ impl BayesBuilder {
         }
         let want = 1usize << parents.len();
         if p_true.len() != want {
-            return Err(BayesError::TableSize { child, got: p_true.len(), want });
+            return Err(BayesError::TableSize {
+                child,
+                got: p_true.len(),
+                want,
+            });
         }
         for (row, &p) in p_true.iter().enumerate() {
             // `contains` is false for NaN, so the negation rejects it -- which is the point.
@@ -423,8 +467,11 @@ impl BayesBuilder {
                 return Err(BayesError::NotAProbability { child, row, p });
             }
         }
-        self.cpts[child] =
-            Some(Family { child, parents: parents.to_vec(), p_true: p_true.to_vec() });
+        self.cpts[child] = Some(Family {
+            child,
+            parents: parents.to_vec(),
+            p_true: p_true.to_vec(),
+        });
         Ok(())
     }
 
@@ -474,7 +521,11 @@ impl BayesBuilder {
         if let Some(var) = (0..self.n).find(|&v| indeg[v] > 0) {
             return Err(BayesError::Cycle { var });
         }
-        Ok(Bayes { n: self.n, fam, max_entries: 1 << 26 })
+        Ok(Bayes {
+            n: self.n,
+            fam,
+            max_entries: 1 << 26,
+        })
     }
 }
 
@@ -531,7 +582,10 @@ impl Bayes {
     /// [`QueryError::EvidenceSize`] when `state` is not one value per variable.
     pub fn log_joint(&self, state: &[bool]) -> Result<f64, QueryError> {
         if state.len() != self.n {
-            return Err(QueryError::EvidenceSize { got: state.len(), want: self.n });
+            return Err(QueryError::EvidenceSize {
+                got: state.len(),
+                want: self.n,
+            });
         }
         let mut acc = 0.0;
         for f in &self.fam {
@@ -542,7 +596,11 @@ impl Bayes {
                 }
             }
             let pt = f.p_true[row];
-            acc += if state[f.child] { pt.ln() } else { (1.0 - pt).ln() };
+            acc += if state[f.child] {
+                pt.ln()
+            } else {
+                (1.0 - pt).ln()
+            };
         }
         Ok(acc)
     }
@@ -562,7 +620,9 @@ impl Bayes {
         self.check_evidence(e)?;
         let net: Network<LogSumExp> = self.net(e, |l| l);
         let t = contract(&net, self.max_entries)?;
-        let v = t.value().expect("a contraction with no open index is rank zero");
+        let v = t
+            .value()
+            .expect("a contraction with no open index is rank zero");
         if v == f64::NEG_INFINITY {
             return Err(QueryError::ImpossibleEvidence);
         }
@@ -646,8 +706,9 @@ impl Bayes {
             }
             fixed.observe(v, d[1] < d[0]);
         }
-        let state: Vec<bool> =
-            (0..self.n).map(|v| fixed.get(v).expect("every variable is now fixed")).collect();
+        let state: Vec<bool> = (0..self.n)
+            .map(|v| fixed.get(v).expect("every variable is now fixed"))
+            .collect();
         let log_prob = self.log_joint(&state)?;
         if log_prob == f64::NEG_INFINITY {
             return Err(QueryError::ImpossibleEvidence);
@@ -702,10 +763,19 @@ impl Bayes {
                         0.25 * (g[0] - g[1] - g[2] + g[3]),
                     );
                 }
-                free_n => return Err(QueryError::HigherOrder { child: f.child, free: free_n }),
+                free_n => {
+                    return Err(QueryError::HigherOrder {
+                        child: f.child,
+                        free: free_n,
+                    });
+                }
             }
         }
-        Ok(IsingForm { graph: b.build(), vars, log_offset })
+        Ok(IsingForm {
+            graph: b.build(),
+            vars,
+            log_offset,
+        })
     }
 
     /// `(P(var = true | e), ln P(e))` for a variable known to be free.
@@ -751,16 +821,16 @@ impl Bayes {
         if e.vars() == self.n {
             Ok(())
         } else {
-            Err(QueryError::EvidenceSize { got: e.vars(), want: self.n })
+            Err(QueryError::EvidenceSize {
+                got: e.vars(),
+                want: self.n,
+            })
         }
     }
 }
 
 /// Contract, translating the tensor engine's refusal into this module's.
-fn contract<S: Semiring>(
-    net: &Network<S>,
-    max_entries: u128,
-) -> Result<Tensor<S>, QueryError> {
+fn contract<S: Semiring>(net: &Network<S>, max_entries: u128) -> Result<Tensor<S>, QueryError> {
     match net.contract_with(Order::GreedySize, max_entries) {
         Ok(t) => Ok(t),
         Err(Uncontractable::TooWide { entries, max }) => Err(QueryError::TooWide { entries, max }),
@@ -893,8 +963,16 @@ mod tests {
     fn log_sum_exp_obeys_the_semiring_laws() {
         let vals = [-30.0, -3.0, -0.5, 0.0, 2.0, f64::NEG_INFINITY];
         for &a in &vals {
-            assert_eq!(LogSumExp::add(a, LogSumExp::zero()), a, "zero is the additive identity");
-            assert_eq!(LogSumExp::mul(a, LogSumExp::one()), a, "one is the multiplicative identity");
+            assert_eq!(
+                LogSumExp::add(a, LogSumExp::zero()),
+                a,
+                "zero is the additive identity"
+            );
+            assert_eq!(
+                LogSumExp::mul(a, LogSumExp::one()),
+                a,
+                "one is the multiplicative identity"
+            );
             assert_eq!(
                 LogSumExp::mul(a, LogSumExp::zero()),
                 LogSumExp::zero(),
@@ -911,12 +989,18 @@ mod tests {
                     );
                     let l2 = LogSumExp::add(LogSumExp::add(a, b), c);
                     let r2 = LogSumExp::add(a, LogSumExp::add(b, c));
-                    assert!((l2 - r2).abs() < 1e-12 || (l2 == r2), "associativity at ({a},{b},{c})");
+                    assert!(
+                        (l2 - r2).abs() < 1e-12 || (l2 == r2),
+                        "associativity at ({a},{b},{c})"
+                    );
                 }
             }
         }
         // and it is the arithmetic it claims to be
-        assert_eq!(LogSumExp::add(0.0_f64.ln(), 0.0_f64.ln()), f64::NEG_INFINITY);
+        assert_eq!(
+            LogSumExp::add(0.0_f64.ln(), 0.0_f64.ln()),
+            f64::NEG_INFINITY
+        );
         assert!((LogSumExp::add(0.25_f64.ln(), 0.5_f64.ln()) - 0.75_f64.ln()).abs() < 1e-15);
     }
 
@@ -928,7 +1012,10 @@ mod tests {
             let mut total = 0.0;
             for x in r.states() {
                 let p = b.log_joint(&x).expect("a complete assignment").exp();
-                assert!((p - r.joint(&x)).abs() < 1e-13, "log_joint disagrees with the product");
+                assert!(
+                    (p - r.joint(&x)).abs() < 1e-13,
+                    "log_joint disagrees with the product"
+                );
                 total += p;
             }
             assert!((total - 1.0).abs() < 1e-12, "the joint sums to {total}");
@@ -1005,7 +1092,10 @@ mod tests {
         let b = r.bayes();
         let e = evidence(5, &[(3, true), (4, true)]);
         let p = b.marginal(0, &e).expect("possible evidence");
-        assert!((p - 0.284_171_835_364_392_94).abs() < 1e-12, "got {p}, textbook 0.284");
+        assert!(
+            (p - 0.284_171_835_364_392_94).abs() < 1e-12,
+            "got {p}, textbook 0.284"
+        );
         // and the evidence likelihood behind it
         let pe = b.log_evidence(&e).expect("possible evidence").exp();
         assert!((pe - 0.002_084_100_239).abs() < 1e-12, "P(j, m) = {pe}");
@@ -1028,21 +1118,31 @@ mod tests {
         let prior = b.marginal(0, &evidence(5, &[])).expect("possible");
         let given_quake = b.marginal(0, &evidence(5, &[(1, true)])).expect("possible");
         let given_alarm = b.marginal(0, &evidence(5, &[(2, true)])).expect("possible");
-        let given_both = b.marginal(0, &evidence(5, &[(2, true), (1, true)])).expect("possible");
+        let given_both = b
+            .marginal(0, &evidence(5, &[(2, true), (1, true)]))
+            .expect("possible");
 
         assert!((prior - 0.001).abs() < 1e-15, "the prior is the root table");
         assert!(
             (given_quake - prior).abs() < 1e-14,
             "marginally independent: P(b|e) = {given_quake}, P(b) = {prior}"
         );
-        assert!(given_alarm > 100.0 * prior, "the alarm implicates the burglar: {given_alarm}");
+        assert!(
+            given_alarm > 100.0 * prior,
+            "the alarm implicates the burglar: {given_alarm}"
+        );
         assert!(
             given_both < given_alarm / 8.0,
             "the earthquake explains the alarm away: P(b|a,e) = {given_both} vs P(b|a) = \
              {given_alarm}"
         );
         // every one of them against the enumerated joint
-        for obs in [vec![], vec![(1, true)], vec![(2, true)], vec![(2, true), (1, true)]] {
+        for obs in [
+            vec![],
+            vec![(1, true)],
+            vec![(2, true)],
+            vec![(2, true), (1, true)],
+        ] {
             let e = evidence(5, &obs);
             let (pe, num, _, _) = r.brute(&e);
             let got = b.marginal(0, &e).expect("possible");
@@ -1062,20 +1162,34 @@ mod tests {
         let r = alarm();
         let b = r.bayes();
         let e = evidence(5, &[(2, true)]);
-        let f = b.to_ising(&e).expect("observing the alarm leaves every family pairwise");
+        let f = b
+            .to_ising(&e)
+            .expect("observing the alarm leaves every family pairwise");
         let (bi, ei) = (
-            f.vars.iter().position(|&v| v == 0).expect("burglary is free"),
-            f.vars.iter().position(|&v| v == 1).expect("earthquake is free"),
+            f.vars
+                .iter()
+                .position(|&v| v == 0)
+                .expect("burglary is free"),
+            f.vars
+                .iter()
+                .position(|&v| v == 1)
+                .expect("earthquake is free"),
         );
         let w = coupling(&f.graph, bi, ei).expect("the moral edge exists");
-        assert!(w.abs() > 1.0, "the moral coupling is {w}, not a rounding artefact");
+        assert!(
+            w.abs() > 1.0,
+            "the moral coupling is {w}, not a rounding artefact"
+        );
 
         let elim = Elimination::default();
         let with = elim.marginals(&f.graph, 1.0).expect("tiny graph")[bi];
         let moral = without_edge(&f.graph, bi, ei);
         let without = elim.marginals(&moral, 1.0).expect("tiny graph")[bi];
         let truth = b.marginal(0, &e).expect("possible");
-        assert!((with - truth).abs() < 1e-12, "the Ising form must reproduce the answer: {with}");
+        assert!(
+            (with - truth).abs() < 1e-12,
+            "the Ising form must reproduce the answer: {with}"
+        );
         assert!(
             (without - truth).abs() > 0.05,
             "without the moral edge the marginal is {without}, and the truth is {truth}"
@@ -1083,7 +1197,9 @@ mod tests {
     }
 
     fn coupling(g: &Graph, i: usize, j: usize) -> Option<f64> {
-        (g.offset[i]..g.offset[i + 1]).find(|&k| g.nbr[k] as usize == j).map(|k| g.w[k])
+        (g.offset[i]..g.offset[i + 1])
+            .find(|&k| g.nbr[k] as usize == j)
+            .map(|k| g.w[k])
     }
 
     /// `g` with the edge `(i, j)` deleted, everything else identical.
@@ -1119,9 +1235,15 @@ mod tests {
         for (r, obs) in cases {
             let b = r.bayes();
             let e = evidence(r.n, &obs);
-            let f = b.to_ising(&e).expect("every conditioned family is pairwise here");
+            let f = b
+                .to_ising(&e)
+                .expect("every conditioned family is pairwise here");
             let elim = Elimination::default();
-            let lz = elim.log_partition(&f.graph, 1.0).expect("tiny graph").log_z.expect("ran");
+            let lz = elim
+                .log_partition(&f.graph, 1.0)
+                .expect("tiny graph")
+                .log_z
+                .expect("ran");
             let le = b.log_evidence(&e).expect("possible");
             assert!(
                 (f.log_offset + lz - le).abs() < 1e-11,
@@ -1130,7 +1252,10 @@ mod tests {
                 f.log_offset + lz
             );
             let (pe, num, _, _) = r.brute(&e);
-            assert!((le.exp() - pe).abs() < 1e-14, "and both against the enumerated joint");
+            assert!(
+                (le.exp() - pe).abs() < 1e-14,
+                "and both against the enumerated joint"
+            );
             let m = elim.marginals(&f.graph, 1.0).expect("tiny graph");
             for (i, &v) in f.vars.iter().enumerate() {
                 assert!(
@@ -1168,8 +1293,24 @@ mod tests {
     #[test]
     fn mpe_matches_the_enumerated_maximum() {
         let cases: Cases = vec![
-            (alarm(), vec![vec![], vec![(3, true), (4, true)], vec![(0, true)], vec![(2, true)]]),
-            (tangle(), vec![vec![], vec![(5, true)], vec![(0, true), (4, true)], vec![(2, false)]]),
+            (
+                alarm(),
+                vec![
+                    vec![],
+                    vec![(3, true), (4, true)],
+                    vec![(0, true)],
+                    vec![(2, true)],
+                ],
+            ),
+            (
+                tangle(),
+                vec![
+                    vec![],
+                    vec![(5, true)],
+                    vec![(0, true), (4, true)],
+                    vec![(2, false)],
+                ],
+            ),
         ];
         for (r, patterns) in cases {
             let b = r.bayes();
@@ -1178,14 +1319,20 @@ mod tests {
                 let (_, _, best, _) = r.brute(&e);
                 let m = b.mpe(&e).expect("possible");
                 for &(v, val) in &obs {
-                    assert_eq!(m.state[v], val, "the explanation must agree with the evidence");
+                    assert_eq!(
+                        m.state[v], val,
+                        "the explanation must agree with the evidence"
+                    );
                 }
                 assert!(
                     (r.joint(&m.state) - best).abs() < 1e-15,
                     "{obs:?}: the state returned has probability {}, and the maximum is {best}",
                     r.joint(&m.state)
                 );
-                assert!((m.log_prob.exp() - best).abs() < 1e-15, "and log_prob agrees");
+                assert!(
+                    (m.log_prob.exp() - best).abs() < 1e-15,
+                    "and log_prob agrees"
+                );
             }
         }
     }
@@ -1207,7 +1354,10 @@ mod tests {
         assert_eq!(m.state, vec![true, true, true]);
         assert!((m.log_prob.exp() - 0.4 * 0.3).abs() < 1e-15);
         // and the impossible evidence is refused rather than answered
-        assert_eq!(b.mpe(&evidence(3, &[(0, false), (2, true)])), Err(QueryError::ImpossibleEvidence));
+        assert_eq!(
+            b.mpe(&evidence(3, &[(0, false), (2, true)])),
+            Err(QueryError::ImpossibleEvidence)
+        );
         assert_eq!(
             b.log_evidence(&evidence(3, &[(0, false), (2, true)])),
             Err(QueryError::ImpossibleEvidence)
@@ -1249,8 +1399,14 @@ mod tests {
         };
         let want = p_flip.ln() + (n - 1) as f64 * p_stay.ln();
         let got = b.log_evidence(&e).expect("a log never underflows");
-        assert!((got - want).abs() < 1e-9, "ln P(e) = {got}, closed form {want}");
-        assert!(want < -300.0 * core::f64::consts::LN_10, "this is below 1e-300");
+        assert!(
+            (got - want).abs() < 1e-9,
+            "ln P(e) = {got}, closed form {want}"
+        );
+        assert!(
+            want < -300.0 * core::f64::consts::LN_10,
+            "this is below 1e-300"
+        );
 
         let mut linear = p_flip;
         for _ in 1..n {
@@ -1274,22 +1430,45 @@ mod tests {
     #[test]
     fn malformed_networks_are_refused() {
         let mut b = BayesBuilder::new(3);
-        assert_eq!(b.cpt(3, &[], &[0.5]), Err(BayesError::OutOfRange { var: 3, n: 3 }));
-        assert_eq!(b.cpt(0, &[7], &[0.5, 0.5]), Err(BayesError::OutOfRange { var: 7, n: 3 }));
-        assert_eq!(b.cpt(0, &[0], &[0.5, 0.5]), Err(BayesError::SelfParent { child: 0 }));
+        assert_eq!(
+            b.cpt(3, &[], &[0.5]),
+            Err(BayesError::OutOfRange { var: 3, n: 3 })
+        );
+        assert_eq!(
+            b.cpt(0, &[7], &[0.5, 0.5]),
+            Err(BayesError::OutOfRange { var: 7, n: 3 })
+        );
+        assert_eq!(
+            b.cpt(0, &[0], &[0.5, 0.5]),
+            Err(BayesError::SelfParent { child: 0 })
+        );
         assert_eq!(
             b.cpt(0, &[1, 1], &[0.5; 4]),
-            Err(BayesError::RepeatedParent { child: 0, parent: 1 })
+            Err(BayesError::RepeatedParent {
+                child: 0,
+                parent: 1
+            })
         );
         assert_eq!(
             b.cpt(0, &[1, 2], &[0.5; 3]),
-            Err(BayesError::TableSize { child: 0, got: 3, want: 4 })
+            Err(BayesError::TableSize {
+                child: 0,
+                got: 3,
+                want: 4
+            })
         );
         assert_eq!(
             b.cpt(0, &[], &[1.5]),
-            Err(BayesError::NotAProbability { child: 0, row: 0, p: 1.5 })
+            Err(BayesError::NotAProbability {
+                child: 0,
+                row: 0,
+                p: 1.5
+            })
         );
-        assert!(matches!(b.cpt(0, &[], &[f64::NAN]), Err(BayesError::NotAProbability { .. })));
+        assert!(matches!(
+            b.cpt(0, &[], &[f64::NAN]),
+            Err(BayesError::NotAProbability { .. })
+        ));
         b.root(0, 0.5).expect("valid");
         assert_eq!(b.root(0, 0.25), Err(BayesError::AlreadySet { child: 0 }));
         assert_eq!(b.clone().build(), Err(BayesError::Missing { var: 1 }));
@@ -1298,7 +1477,11 @@ mod tests {
         let parents: Vec<usize> = (1..=21).collect();
         assert_eq!(
             wide.cpt(0, &parents, &[0.5]),
-            Err(BayesError::TooManyParents { child: 0, parents: 21, max: MAX_PARENTS })
+            Err(BayesError::TooManyParents {
+                child: 0,
+                parents: 21,
+                max: MAX_PARENTS
+            })
         );
     }
 
@@ -1330,7 +1513,10 @@ mod tests {
             b.marginal(9, &Evidence::none(5)),
             Err(QueryError::OutOfRange { var: 9, n: 5 })
         );
-        assert_eq!(b.log_joint(&[true; 3]), Err(QueryError::EvidenceSize { got: 3, want: 5 }));
+        assert_eq!(
+            b.log_joint(&[true; 3]),
+            Err(QueryError::EvidenceSize { got: 3, want: 5 })
+        );
         assert_eq!(b.parents(2), &[0, 1]);
         assert_eq!(b.n(), 5);
         let e = evidence(5, &[(1, true)]);

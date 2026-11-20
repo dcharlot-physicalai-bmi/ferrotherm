@@ -191,7 +191,10 @@ impl core::fmt::Display for Error {
                 "the edge set recovered from the dual does not two-colour, so it is not a cut. The \
                  reduction is wrong and no number is returned"
             ),
-            Error::Disagreement { via_join, via_state } => write!(
+            Error::Disagreement {
+                via_join,
+                via_state,
+            } => write!(
                 f,
                 "the T-join says the cut is {via_join} and the recovered state says {via_state}. \
                  Two disjoint computations of the same quantity disagree, so neither is reported"
@@ -255,20 +258,35 @@ pub struct SurfaceBound {
 /// surfaces as a refusal instead of a wrong number.
 pub fn solve(g: &Graph, p: &Params) -> Result<Outcome, Error> {
     if g.n == 0 {
-        return Ok(Outcome { state: Vec::new(), cut: 0.0, energy: 0.0, faces: 0, odd_faces: 0 });
+        return Ok(Outcome {
+            state: Vec::new(),
+            cut: 0.0,
+            energy: 0.0,
+            faces: 0,
+            odd_faces: 0,
+        });
     }
     for (i, &h) in g.h.iter().enumerate() {
         if h != 0.0 {
             return Err(Error::HasFields { node: i, h });
         }
     }
-    let emb = planar::embed(g)
-        .ok_or_else(|| Error::NotEmbeddable(planar::why(g).unwrap_or(planar::Refusal::NotPlanar)))?;
+    let emb = planar::embed(g).ok_or_else(|| {
+        Error::NotEmbeddable(planar::why(g).unwrap_or(planar::Refusal::NotPlanar))
+    })?;
     let b = solve_inner(g, &emb, p)?;
     // On the sphere the relaxation IS the cut space, so a failure to attain would mean the
     // reduction is wrong -- which is what `NotACut` says.
-    let (Some(state), Some(energy)) = (b.state, b.energy) else { return Err(Error::NotACut) };
-    Ok(Outcome { state, cut: b.cut, energy, faces: b.faces, odd_faces: b.odd_faces })
+    let (Some(state), Some(energy)) = (b.state, b.energy) else {
+        return Err(Error::NotACut);
+    };
+    Ok(Outcome {
+        state,
+        cut: b.cut,
+        energy,
+        faces: b.faces,
+        odd_faces: b.odd_faces,
+    })
 }
 
 fn solve_inner(g: &Graph, emb: &Embedding, p: &Params) -> Result<SurfaceBound, Error> {
@@ -279,8 +297,13 @@ fn solve_inner(g: &Graph, emb: &Embedding, p: &Params) -> Result<SurfaceBound, E
     }
     if g.n == 0 {
         return Ok(SurfaceBound {
-            cut: 0.0, attained: true, state: Some(Vec::new()), energy: Some(0.0),
-            genus: 0, faces: 0, odd_faces: 0,
+            cut: 0.0,
+            attained: true,
+            state: Some(Vec::new()),
+            energy: Some(0.0),
+            genus: 0,
+            faces: 0,
+            odd_faces: 0,
         });
     }
 
@@ -409,8 +432,13 @@ fn solve_inner(g: &Graph, emb: &Embedding, p: &Params) -> Result<SurfaceBound, E
     let genus = emb.genus().unwrap_or(0);
     let Some(state) = two_colour(g.n, &edges, &cut_edge) else {
         return Ok(SurfaceBound {
-            cut: via_join, attained: false, state: None, energy: None,
-            genus, faces: nf, odd_faces: k,
+            cut: via_join,
+            attained: false,
+            state: None,
+            energy: None,
+            genus,
+            faces: nf,
+            odd_faces: k,
         });
     };
 
@@ -423,12 +451,20 @@ fn solve_inner(g: &Graph, emb: &Embedding, p: &Params) -> Result<SurfaceBound, E
         }
     }
     if (via_join - via_state).abs() > 1e-6 {
-        return Err(Error::Disagreement { via_join, via_state });
+        return Err(Error::Disagreement {
+            via_join,
+            via_state,
+        });
     }
     let energy = g.energy(&state);
     Ok(SurfaceBound {
-        cut: via_state, attained: true, state: Some(state), energy: Some(energy),
-        genus, faces: nf, odd_faces: k,
+        cut: via_state,
+        attained: true,
+        state: Some(state),
+        energy: Some(energy),
+        genus,
+        faces: nf,
+        odd_faces: k,
     })
 }
 
@@ -497,13 +533,22 @@ mod tests {
     use crate::graph::GraphBuilder;
     use crate::ising::{grid2d, lattice2d, ring};
     use crate::rng::Pcg;
-    use crate::{branch, bls};
+    use crate::{bls, branch};
 
     /// The maximum cut, by exhaustive search through [`crate::branch`], which is exact by a
     /// completely different argument: enumeration with a bound, in the spin domain.
     fn truth(g: &Graph) -> f64 {
-        let o = branch::solve(g, &branch::Params { max_nodes: 50_000_000, ..Default::default() });
-        assert!(o.proved_optimal, "the control must actually prove its answer");
+        let o = branch::solve(
+            g,
+            &branch::Params {
+                max_nodes: 50_000_000,
+                ..Default::default()
+            },
+        );
+        assert!(
+            o.proved_optimal,
+            "the control must actually prove its answer"
+        );
         // `cut = (W - E) / 2` with `W = Σ(-J)`, because the max-cut weights are the NEGATED
         // couplings. Using `Σ J` here computes the MINIMUM cut, which coincides with the maximum on
         // every bipartite instance -- so a test suite full of grids would not notice.
@@ -532,7 +577,10 @@ mod tests {
     fn it_agrees_with_exhaustive_proof_on_planar_instances() {
         for seed in 0..60u64 {
             let mut rng = Pcg::new(seed, 0x91A4_AC07);
-            let (w, h) = (2 + (rng.next_u32() % 3) as usize, 2 + (rng.next_u32() % 3) as usize);
+            let (w, h) = (
+                2 + (rng.next_u32() % 3) as usize,
+                2 + (rng.next_u32() % 3) as usize,
+            );
             if w * h < 4 {
                 continue;
             }
@@ -551,7 +599,9 @@ mod tests {
                 }
             }
             let g = gb.build();
-            let Ok(out) = solve(&g, &Params::default()) else { continue };
+            let Ok(out) = solve(&g, &Params::default()) else {
+                continue;
+            };
             let want = truth(&g);
             assert!(
                 (out.cut - want).abs() < 1e-9,
@@ -567,7 +617,10 @@ mod tests {
                     }
                 }
             }
-            assert!((got - out.cut).abs() < 1e-9, "seed {seed}: the state does not make that cut");
+            assert!(
+                (got - out.cut).abs() < 1e-9,
+                "seed {seed}: the state does not make that cut"
+            );
             assert!(out.state.iter().all(|&v| v == 1 || v == -1));
         }
     }
@@ -592,7 +645,14 @@ mod tests {
             }
             let g = gb.build();
             let exact = solve(&g, &Params::default()).expect("a grid is planar");
-            let heur = bls::search(&g, &bls::Params { iterations: 200_000, ..Default::default() }, 5);
+            let heur = bls::search(
+                &g,
+                &bls::Params {
+                    iterations: 200_000,
+                    ..Default::default()
+                },
+                5,
+            );
             let mut hcut = 0.0;
             for u in 0..g.n {
                 for k in g.offset[u]..g.offset[u + 1] {
@@ -621,18 +681,32 @@ mod tests {
 
             // ANTIferromagnet: every edge frustrated at once, so under `w = -J` every edge is cut.
             let anti = solve(&grid2d(w, h, -1.0), &Params::default()).unwrap();
-            assert_eq!(anti.cut, m, "{w}x{h}: a bipartite antiferromagnet cuts everything");
+            assert_eq!(
+                anti.cut, m,
+                "{w}x{h}: a bipartite antiferromagnet cuts everything"
+            );
             assert_eq!(anti.energy, -m);
             assert_eq!(anti.faces, (w - 1) * (h - 1) + 1);
 
             // Ferromagnet: the ground state is all-aligned, so it cuts nothing.
             let ferro = solve(&grid2d(w, h, 1.0), &Params::default()).unwrap();
-            assert_eq!(ferro.cut, 0.0, "{w}x{h}: a ferromagnet's ground state cuts nothing");
+            assert_eq!(
+                ferro.cut, 0.0,
+                "{w}x{h}: a ferromagnet's ground state cuts nothing"
+            );
             assert_eq!(ferro.energy, -m);
         }
         // An odd cycle is the smallest non-bipartite case: all but one edge can be frustrated.
-        assert_eq!(solve(&ring(7, -1.0, 0.0), &Params::default()).unwrap().cut, 6.0);
-        assert_eq!(solve(&ring(7, -1.0, 0.0), &Params::default()).unwrap().energy, -5.0);
+        assert_eq!(
+            solve(&ring(7, -1.0, 0.0), &Params::default()).unwrap().cut,
+            6.0
+        );
+        assert_eq!(
+            solve(&ring(7, -1.0, 0.0), &Params::default())
+                .unwrap()
+                .energy,
+            -5.0
+        );
     }
 
     /// Every refusal is a different instruction to the caller, so they must not collapse into one.
@@ -645,7 +719,10 @@ mod tests {
         gb.couple(2, 3, 1.0);
         gb.couple(3, 0, 1.0);
         gb.bias(2, 0.5);
-        assert!(matches!(solve(&gb.build(), &Params::default()), Err(Error::HasFields { node: 2, .. })));
+        assert!(matches!(
+            solve(&gb.build(), &Params::default()),
+            Err(Error::HasFields { node: 2, .. })
+        ));
 
         // A torus is genus 1, and the whole reduction is a plane statement.
         let e = solve(&lattice2d(4, 1.0), &Params::default()).unwrap_err();
@@ -659,7 +736,10 @@ mod tests {
         gb.couple(2, 3, 1.0);
         gb.couple(3, 0, 1.0);
         let g = gb.build();
-        assert!(matches!(solve(&g, &Params::default()), Err(Error::NotIntegral { u: 1, v: 2, .. })));
+        assert!(matches!(
+            solve(&g, &Params::default()),
+            Err(Error::NotIntegral { u: 1, v: 2, .. })
+        ));
         // And with a scale that makes them whole, it solves.
         // A 4-cycle with couplings 1, 0.5, 1, 1: the ground state frustrates the cheapest edge,
         // so the cut under `w = -J` leaves it out and is -(1 + 1 + 1) ... measured, not asserted
@@ -686,7 +766,11 @@ mod tests {
             }
             let g = gb.build();
             let out = solve(&g, &Params::default()).unwrap();
-            assert!((out.cut - truth(&g)).abs() < 1e-9, "{w}x{h}: {} vs proof", out.cut);
+            assert!(
+                (out.cut - truth(&g)).abs() < 1e-9,
+                "{w}x{h}: {} vs proof",
+                out.cut
+            );
             // All couplings -1 on a bipartite grid: every edge is cut under `w = -J`.
             assert_eq!(out.cut, (w * (h - 1) + h * (w - 1)) as f64);
         }
@@ -699,8 +783,16 @@ mod tests {
         for y in 0..h {
             for x in 0..w {
                 let i = y * w + x;
-                gb.couple(i, y * w + (x + 1) % w, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
-                gb.couple(i, ((y + 1) % h) * w + x, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+                gb.couple(
+                    i,
+                    y * w + (x + 1) % w,
+                    if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+                );
+                gb.couple(
+                    i,
+                    ((y + 1) % h) * w + x,
+                    if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+                );
             }
         }
         gb.build()
@@ -752,7 +844,10 @@ mod tests {
                     assert!((got - b.cut).abs() < 1e-9);
                     assert_eq!(b.energy, Some(g.energy(s)));
                 } else {
-                    assert!(b.state.is_none() && b.energy.is_none(), "no state without a proof");
+                    assert!(
+                        b.state.is_none() && b.energy.is_none(),
+                        "no state without a proof"
+                    );
                 }
                 assert_eq!(b.genus, 1);
             }
@@ -760,8 +855,14 @@ mod tests {
         // Not every instance attains -- that is the point of the flag -- but if NONE did, the flag
         // would be decoration and the module would be an upper bound generator wearing a proof's
         // clothes.
-        assert!(attained > 0, "the bound was attained on none of {total} toroidal instances");
-        assert!(attained < total, "attained on ALL of them, so the test never exercised a bound");
+        assert!(
+            attained > 0,
+            "the bound was attained on none of {total} toroidal instances"
+        );
+        assert!(
+            attained < total,
+            "attained on ALL of them, so the test never exercised a bound"
+        );
     }
 
     /// The same reduction on the sphere always attains, which is the control for the test above:
@@ -786,7 +887,10 @@ mod tests {
             let g = gb.build();
             let emb = planar::embed(&g).expect("a grid is planar");
             let b = bound_on_surface(&g, &emb, &Params::default()).unwrap();
-            assert!(b.attained, "seed {seed}: on the sphere every even dual subgraph IS a cut");
+            assert!(
+                b.attained,
+                "seed {seed}: on the sphere every even dual subgraph IS a cut"
+            );
             assert_eq!(b.genus, 0);
             assert!((b.cut - truth(&g)).abs() < 1e-9);
         }

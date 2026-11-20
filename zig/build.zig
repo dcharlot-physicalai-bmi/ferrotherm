@@ -17,23 +17,32 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const run_cargo = b.option(bool, "cargo", "Build the Rust library first (default true)") orelse true;
 
-    // The repository root, one level up from this file.
-    const root = b.pathFromRoot("..");
-    const lib_dir = b.pathJoin(&.{ root, "target", "release" });
+    // The repository root, one level up from this file. Zig 0.17 takes that as
+    // a lazy path relative to the build root; `pathFromRoot` is gone.
+    const repo = b.path("..");
+    const lib_dir = b.path("../target/release");
 
     const cargo = b.addSystemCommand(&.{ "cargo", "build", "--release" });
-    cargo.setCwd(.{ .cwd_relative = root });
+    cargo.setCwd(repo);
 
+    // Zig 0.17 removed `@cImport`. The header is translated in the build and
+    // imported as `c`.
+    const translated = b.addTranslateC(.{
+        .root_source_file = b.path("../include/ferrotherm.h"),
+        .target = target,
+        .optimize = optimize,
+    });
     const mod = b.addModule("ferrotherm", .{
         .root_source_file = b.path("ferrotherm.zig"),
         .target = target,
         .optimize = optimize,
     });
-    mod.addIncludePath(.{ .cwd_relative = b.pathJoin(&.{ root, "include" }) });
-    mod.addLibraryPath(.{ .cwd_relative = lib_dir });
+    mod.addImport("c", translated.createModule());
+    mod.addIncludePath(b.path("../include"));
+    mod.addLibraryPath(lib_dir);
     mod.linkSystemLibrary("ferrotherm", .{});
     mod.link_libc = true;
-    mod.addRPath(.{ .cwd_relative = lib_dir });
+    mod.addRPath(lib_dir);
 
     // So the test binary finds the shared library at run time without LD_LIBRARY_PATH. A test that
     // cannot start is indistinguishable from a test that fails, and the message is worse.

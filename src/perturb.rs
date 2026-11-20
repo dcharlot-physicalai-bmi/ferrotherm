@@ -88,7 +88,12 @@ fn estimate(vals: &[f64]) -> LogZEstimate {
     } else {
         0.0
     };
-    LogZEstimate { value: mean, stderr: (variance / n as f64).sqrt(), variance, draws: n }
+    LogZEstimate {
+        value: mean,
+        stderr: (variance / n as f64).sqrt(),
+        variance,
+        draws: n,
+    }
 }
 
 /// One exact Gibbs sample, by perturbing every state's score and taking the argmax.
@@ -99,7 +104,10 @@ fn estimate(vals: &[f64]) -> LogZEstimate {
 /// Gumbel per state, so it visits `2^n` of them.
 pub fn perturb_and_map(g: &Graph, beta: f64, r: &mut Pcg) -> Result<Draw, Refused> {
     if g.n > ENUMERATION_LIMIT {
-        return Err(Refused::TooLargeToEnumerate { spins: g.n, limit: ENUMERATION_LIMIT });
+        return Err(Refused::TooLargeToEnumerate {
+            spins: g.n,
+            limit: ENUMERATION_LIMIT,
+        });
     }
     let m = 1usize << g.n;
     let mut s = vec![-1i8; g.n];
@@ -117,7 +125,10 @@ pub fn perturb_and_map(g: &Graph, beta: f64, r: &mut Pcg) -> Result<Draw, Refuse
     for b in 0..g.n {
         s[b] = if arg >> b & 1 == 1 { 1 } else { -1 };
     }
-    Ok(Draw { state: s, value: best })
+    Ok(Draw {
+        state: s,
+        value: best,
+    })
 }
 
 /// Average `draws` full-order perturbed maxima: an unbiased estimator of `log Z`.
@@ -133,10 +144,18 @@ pub fn perturb_and_map(g: &Graph, beta: f64, r: &mut Pcg) -> Result<Draw, Refuse
 /// # Panics
 ///
 /// If `draws` is zero — an average needs something to average.
-pub fn gumbel_log_z(g: &Graph, beta: f64, draws: usize, seed: u64) -> Result<LogZEstimate, Refused> {
+pub fn gumbel_log_z(
+    g: &Graph,
+    beta: f64,
+    draws: usize,
+    seed: u64,
+) -> Result<LogZEstimate, Refused> {
     assert!(draws > 0, "an average needs at least one draw");
     if g.n > ENUMERATION_LIMIT {
-        return Err(Refused::TooLargeToEnumerate { spins: g.n, limit: ENUMERATION_LIMIT });
+        return Err(Refused::TooLargeToEnumerate {
+            spins: g.n,
+            limit: ENUMERATION_LIMIT,
+        });
     }
     let m = 1usize << g.n;
     let mut s = vec![-1i8; g.n];
@@ -255,7 +274,10 @@ pub fn map_ladder(
     sites: &[usize],
     el: &Elimination,
 ) -> Result<MapLadder, TooWide> {
-    assert!(beta.is_finite() && beta >= 0.0, "beta must be finite and non-negative; got {beta}");
+    assert!(
+        beta.is_finite() && beta >= 0.0,
+        "beta must be finite and non-negative; got {beta}"
+    );
     assert!(
         sites.len() <= LADDER_LIMIT,
         "summing over {} spins is 2^{} MAP solves; the limit is {LADDER_LIMIT}",
@@ -277,7 +299,10 @@ pub fn map_ladder(
             fixed[i] = Some(if mask >> b & 1 == 1 { 1 } else { -1 });
         }
         let (red, offset) = condition(g, &fixed);
-        let e = el.ground_state(&red)?.ground_energy.expect("min-sum was run, so it reports one");
+        let e = el
+            .ground_state(&red)?
+            .ground_energy
+            .expect("min-sum was run, so it reports one");
         scores.push(-beta * (offset + e));
     }
 
@@ -290,7 +315,12 @@ pub fn map_ladder(
     let top = slack_up(mx + crate::round::sum_up(&terms).ln());
     let upper = slack_up(top + (g.n - k) as f64 * std::f64::consts::LN_2);
 
-    Ok(MapLadder { summed: sites.to_vec(), lower, upper, solves: m })
+    Ok(MapLadder {
+        summed: sites.to_vec(),
+        lower,
+        upper,
+        solves: m,
+    })
 }
 
 /// The tightest single-spin bound: [`map_ladder`] over each spin in turn, the best kept.
@@ -342,7 +372,10 @@ pub fn perturbed_map_upper(
     el: &Elimination,
 ) -> Result<LogZEstimate, TooWide> {
     assert!(draws > 0, "an average needs at least one draw");
-    assert!(beta.is_finite() && beta >= 0.0, "beta must be finite and non-negative; got {beta}");
+    assert!(
+        beta.is_finite() && beta >= 0.0,
+        "beta must be finite and non-negative; got {beta}"
+    );
 
     // `theta(s) = -beta E(s)` is the energy of the beta-scaled model, negated, so the perturbed
     // maximum is a MINIMUM of that model's energy with the fields shifted. Scale once; only the
@@ -357,7 +390,10 @@ pub fn perturbed_map_upper(
             consts[i] = 0.5 * (gp + gm);
             work.h[i] = beta * g.h[i] + 0.5 * (gp - gm);
         }
-        let e = el.ground_state(&work)?.ground_energy.expect("min-sum was run, so it reports one");
+        let e = el
+            .ground_state(&work)?
+            .ground_energy
+            .expect("min-sum was run, so it reports one");
         vals.push(consts.iter().sum::<f64>() - e);
     }
     Ok(estimate(&vals))
@@ -389,7 +425,9 @@ mod tests {
     }
 
     fn mask_of(s: &[i8]) -> usize {
-        s.iter().enumerate().fold(0usize, |m, (b, &v)| if v > 0 { m | 1 << b } else { m })
+        s.iter()
+            .enumerate()
+            .fold(0usize, |m, (b, &v)| if v > 0 { m | 1 << b } else { m })
     }
 
     /// The primitive's own two moments, against their closed forms.
@@ -405,7 +443,12 @@ mod tests {
         let v: Vec<f64> = (0..n).map(|_| gumbel(&mut r)).collect();
         let est = estimate(&v);
         // Four standard errors of the mean, 1.2825/sqrt(n).
-        assert!(est.value.abs() < 4.0 * est.stderr, "mean {} (se {})", est.value, est.stderr);
+        assert!(
+            est.value.abs() < 4.0 * est.stderr,
+            "mean {} (se {})",
+            est.value,
+            est.stderr
+        );
         assert!(
             (est.variance - GUMBEL_VAR).abs() < 0.05,
             "variance {} against pi^2/6 = {GUMBEL_VAR}",
@@ -428,8 +471,14 @@ mod tests {
         let (red, offset) = condition(&g, &fixed);
         let mut checked = 0;
         for mask in 0..(1usize << n) {
-            let s: Vec<i8> = (0..n).map(|b| if mask >> b & 1 == 1 { 1 } else { -1 }).collect();
-            if fixed.iter().enumerate().any(|(i, f)| f.is_some_and(|v| v != s[i])) {
+            let s: Vec<i8> = (0..n)
+                .map(|b| if mask >> b & 1 == 1 { 1 } else { -1 })
+                .collect();
+            if fixed
+                .iter()
+                .enumerate()
+                .any(|(i, f)| f.is_some_and(|v| v != s[i]))
+            {
                 continue;
             }
             assert!(
@@ -441,7 +490,11 @@ mod tests {
             );
             checked += 1;
         }
-        assert_eq!(checked, 1 << (n - 3), "every consistent state, and only those");
+        assert_eq!(
+            checked,
+            1 << (n - 3),
+            "every consistent state, and only those"
+        );
     }
 
     /// Both ends of the ladder are closed forms, so both are checked as equalities.
@@ -460,7 +513,11 @@ mod tests {
 
         let none = map_ladder(&g, beta, &[], &el).unwrap();
         assert_eq!(none.solves, 1);
-        assert!((none.lower - (-beta * e0)).abs() < 1e-12, "empty lower {}", none.lower);
+        assert!(
+            (none.lower - (-beta * e0)).abs() < 1e-12,
+            "empty lower {}",
+            none.lower
+        );
         assert!(
             (none.upper - (-beta * e0 + n as f64 * LN_2)).abs() < 1e-12,
             "empty upper {}",
@@ -470,8 +527,16 @@ mod tests {
         let all: Vec<usize> = (0..n).collect();
         let full = map_ladder(&g, beta, &all, &el).unwrap();
         assert_eq!(full.solves, 1 << n);
-        assert!((full.lower - log_z).abs() < 1e-9, "full lower {} vs {log_z}", full.lower);
-        assert!((full.upper - log_z).abs() < 1e-9, "full upper {} vs {log_z}", full.upper);
+        assert!(
+            (full.lower - log_z).abs() < 1e-9,
+            "full lower {} vs {log_z}",
+            full.lower
+        );
+        assert!(
+            (full.upper - log_z).abs() < 1e-9,
+            "full upper {} vs {log_z}",
+            full.upper
+        );
     }
 
     /// Every rung brackets the exact `log Z`, and adding a spin can only narrow the bracket.
@@ -563,9 +628,15 @@ mod tests {
             let d = perturb_and_map(&g, beta, &mut r).unwrap();
             count[mask_of(&d.state)] += 1;
         }
-        let emp: Vec<f64> = count.iter().map(|&c| f64::from(c) / f64::from(draws)).collect();
+        let emp: Vec<f64> = count
+            .iter()
+            .map(|&c| f64::from(c) / f64::from(draws))
+            .collect();
         let tv = ising::tv(&emp, &truth);
-        assert!(tv < 0.011, "total variation {tv} from the exact Boltzmann law");
+        assert!(
+            tv < 0.011,
+            "total variation {tv} from the exact Boltzmann law"
+        );
     }
 
     /// The Gumbel-max argmax IS the exponential race, state for state, on the same uniforms.
@@ -633,7 +704,11 @@ mod tests {
             est.stderr
         );
         let want = n as f64 * GUMBEL_VAR;
-        assert!((est.variance - want).abs() < 0.9, "variance {} against {want}", est.variance);
+        assert!(
+            (est.variance - want).abs() < 0.9,
+            "variance {} against {want}",
+            est.variance
+        );
     }
 
     /// The two low-order bounds land on the right sides of the exact `log Z`.
@@ -652,11 +727,24 @@ mod tests {
         let lo = best_single_site(&g, beta, &el).unwrap();
         assert_eq!(lo.summed.len(), 1);
         assert_eq!(lo.solves, 2);
-        assert!(lo.lower <= log_z + 1e-9, "single-spin lower {} above {log_z}", lo.lower);
-        assert!(lo.upper >= log_z - 1e-9, "single-spin upper {} below {log_z}", lo.upper);
+        assert!(
+            lo.lower <= log_z + 1e-9,
+            "single-spin lower {} above {log_z}",
+            lo.lower
+        );
+        assert!(
+            lo.upper >= log_z - 1e-9,
+            "single-spin upper {} below {log_z}",
+            lo.upper
+        );
         // It must also beat the zero-order bound, or the extra spin bought nothing.
         let map_only = map_ladder(&g, beta, &[], &el).unwrap();
-        assert!(lo.lower > map_only.lower, "{} did not improve on {}", lo.lower, map_only.lower);
+        assert!(
+            lo.lower > map_only.lower,
+            "{} did not improve on {}",
+            lo.lower,
+            map_only.lower
+        );
 
         let up = perturbed_map_upper(&g, beta, 4_000, 31, &el).unwrap();
         assert!(
@@ -672,8 +760,10 @@ mod tests {
     fn full_order_perturbation_refuses_a_model_it_cannot_enumerate() {
         let g = ising::ring(ENUMERATION_LIMIT + 1, 1.0, 0.0);
         let mut r = Pcg::new(1, 1);
-        let want =
-            Refused::TooLargeToEnumerate { spins: ENUMERATION_LIMIT + 1, limit: ENUMERATION_LIMIT };
+        let want = Refused::TooLargeToEnumerate {
+            spins: ENUMERATION_LIMIT + 1,
+            limit: ENUMERATION_LIMIT,
+        };
         assert_eq!(perturb_and_map(&g, 1.0, &mut r).unwrap_err(), want);
         assert_eq!(gumbel_log_z(&g, 1.0, 4, 1).unwrap_err(), want);
     }

@@ -167,7 +167,11 @@ impl core::fmt::Display for DimacsError {
                  parses into a valid SMALLER instance whose optimum is not comparable with \
                  anyone else's, so this is refused rather than solved"
             ),
-            DimacsError::TooWide { line, literals, limit } => write!(
+            DimacsError::TooWide {
+                line,
+                literals,
+                limit,
+            } => write!(
                 f,
                 "the clause on line {line} has {literals} literals and expands to 2^{literals} \
                  spin monomials, over the {limit} this will attempt"
@@ -267,7 +271,8 @@ impl Cnf {
                 // An unreadable `top` would silently demote every hard clause to soft, so it is
                 // refused rather than dropped.
                 if let Some(t) = it.next() {
-                    let Some(t) = t.parse::<f64>().ok().filter(|t| *t > 0.0 && t.is_finite()) else {
+                    let Some(t) = t.parse::<f64>().ok().filter(|t| *t > 0.0 && t.is_finite())
+                    else {
                         return Err(DimacsError::Header(line.to_string()));
                     };
                     top = Some(t);
@@ -285,13 +290,19 @@ impl Cnf {
                 Format::Cnf => 1.0,
                 Format::Wcnf | Format::Wcnf2022 => {
                     let Some(tok) = it.next() else {
-                        return Err(DimacsError::Line { line: no + 1, text: line.to_string() });
+                        return Err(DimacsError::Line {
+                            line: no + 1,
+                            text: line.to_string(),
+                        });
                     };
                     if fmt == Format::Wcnf2022 && tok == "h" {
                         f64::INFINITY
                     } else {
                         let Ok(w) = tok.parse::<f64>() else {
-                            return Err(DimacsError::Line { line: no + 1, text: line.to_string() });
+                            return Err(DimacsError::Line {
+                                line: no + 1,
+                                text: line.to_string(),
+                            });
                         };
                         // `!(w > 0.0)` rather than `w <= 0.0`: the difference is NaN, which this
                         // rejects and the other would accept.
@@ -303,7 +314,11 @@ impl Cnf {
                         }
                         // The headered dialect marks hard clauses by weight; hold them the way the
                         // 2022 dialect states them.
-                        if top.is_some_and(|t| w >= t) { f64::INFINITY } else { w }
+                        if top.is_some_and(|t| w >= t) {
+                            f64::INFINITY
+                        } else {
+                            w
+                        }
                     }
                 }
             };
@@ -311,7 +326,10 @@ impl Cnf {
             let mut terminated = false;
             for tok in it {
                 let Ok(l) = tok.parse::<i64>() else {
-                    return Err(DimacsError::Line { line: no + 1, text: line.to_string() });
+                    return Err(DimacsError::Line {
+                        line: no + 1,
+                        text: line.to_string(),
+                    });
                 };
                 if l == 0 {
                     terminated = true;
@@ -320,20 +338,30 @@ impl Cnf {
                 // `l as i32` below truncates silently otherwise, and a header may declare more
                 // variables than an i32 can index.
                 if l > i64::from(i32::MAX) || l < i64::from(i32::MIN) + 1 {
-                    return Err(DimacsError::Literal { line: no + 1, got: l });
+                    return Err(DimacsError::Literal {
+                        line: no + 1,
+                        got: l,
+                    });
                 }
                 let v = l.unsigned_abs() as usize;
                 if fmt == Format::Wcnf2022 {
                     // No header, so the variable count is whatever the literals reach.
                     vars = vars.max(v);
                 } else if v > vars {
-                    return Err(DimacsError::Variable { line: no + 1, got: l, vars });
+                    return Err(DimacsError::Variable {
+                        line: no + 1,
+                        got: l,
+                        vars,
+                    });
                 }
                 #[allow(clippy::cast_possible_truncation)]
                 lits.push(l as i32);
             }
             if !terminated {
-                return Err(DimacsError::Line { line: no + 1, text: line.to_string() });
+                return Err(DimacsError::Line {
+                    line: no + 1,
+                    text: line.to_string(),
+                });
             }
             if lits.len() > MAX_CLAUSE {
                 return Err(DimacsError::TooWide {
@@ -361,14 +389,23 @@ impl Cnf {
         if format != Format::Wcnf2022 && found != declared {
             return Err(DimacsError::Count { declared, found });
         }
-        Ok(Cnf { vars, clauses, top, format })
+        Ok(Cnf {
+            vars,
+            clauses,
+            top,
+            format,
+        })
     }
 
     /// Total weight of the soft clauses, rounded UP, so no sum of them exceeds it.
     #[must_use]
     pub fn soft_weight(&self) -> f64 {
-        let w: Vec<f64> =
-            self.clauses.iter().filter(|c| !c.is_hard()).map(|c| c.weight).collect();
+        let w: Vec<f64> = self
+            .clauses
+            .iter()
+            .filter(|c| !c.is_hard())
+            .map(|c| c.weight)
+            .collect();
         crate::round::sum_up(&w)
     }
 
@@ -394,7 +431,12 @@ impl Cnf {
     /// If `s` is shorter than the variable count.
     #[must_use]
     pub fn cost(&self, s: &[i8]) -> Option<f64> {
-        assert!(s.len() >= self.vars, "a state of {} cannot cover {} variables", s.len(), self.vars);
+        assert!(
+            s.len() >= self.vars,
+            "a state of {} cannot cover {} variables",
+            s.len(),
+            self.vars
+        );
         let mut sum = 0.0;
         for c in &self.clauses {
             if c.violated(s) {
@@ -415,7 +457,12 @@ impl Cnf {
     /// If `s` is shorter than the declared variable count.
     #[must_use]
     pub fn unsatisfied_weight(&self, s: &[i8]) -> f64 {
-        assert!(s.len() >= self.vars, "a state of {} cannot cover {} variables", s.len(), self.vars);
+        assert!(
+            s.len() >= self.vars,
+            "a state of {} cannot cover {} variables",
+            s.len(),
+            self.vars
+        );
         let hard = self.hard_penalty();
         self.clauses
             .iter()
@@ -459,7 +506,8 @@ impl Cnf {
                     offset += term;
                 } else {
                     // Hubo's convention is E = −Σ w_T Π s, so the coefficient flips.
-                    h.add(&vars, -term).expect("deduplicated, in range, and within MAX_CLAUSE");
+                    h.add(&vars, -term)
+                        .expect("deduplicated, in range, and within MAX_CLAUSE");
                 }
             }
         }
@@ -520,8 +568,9 @@ mod tests {
             let cnf = Cnf::parse(src).unwrap_or_else(|e| panic!("{name}: {e}"));
             let (h, off) = cnf.to_hubo();
             for m in 0u32..(1u32 << cnf.vars) {
-                let s: Vec<i8> =
-                    (0..cnf.vars).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let s: Vec<i8> = (0..cnf.vars)
+                    .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 let want = cnf.unsatisfied_weight(&s);
                 let got = h.energy(&s) + off;
                 assert!(
@@ -542,21 +591,33 @@ mod tests {
         let (h, off) = cnf.to_hubo();
         let (mut best_e, mut best_w) = (f64::INFINITY, f64::INFINITY);
         for m in 0u32..(1u32 << cnf.vars) {
-            let s: Vec<i8> = (0..cnf.vars).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let s: Vec<i8> = (0..cnf.vars)
+                .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             best_e = best_e.min(h.energy(&s) + off);
             best_w = best_w.min(cnf.unsatisfied_weight(&s));
         }
-        assert!((best_e - best_w).abs() < 1e-9, "model optimum {best_e}, true optimum {best_w}");
+        assert!(
+            (best_e - best_w).abs() < 1e-9,
+            "model optimum {best_e}, true optimum {best_w}"
+        );
 
         // And the crate's own higher-order solver finds it.
-        let p = crate::hubo::Params { stages: 200, sweeps_per_stage: 20, ..Default::default() };
+        let p = crate::hubo::Params {
+            stages: 200,
+            sweeps_per_stage: 20,
+            ..Default::default()
+        };
         let best = (0..8u64)
             .map(|seed| {
                 let o = crate::hubo::anneal(&h, &p, seed);
                 cnf.unsatisfied_weight(&o.state)
             })
             .fold(f64::INFINITY, f64::min);
-        assert!((best - best_w).abs() < 1e-9, "anneal found {best}, optimum is {best_w}");
+        assert!(
+            (best - best_w).abs() < 1e-9,
+            "anneal found {best}, optimum is {best_w}"
+        );
     }
 
     /// The two dialects are one model: a `p wcnf` file and its headerless 2022 twin agree
@@ -566,26 +627,44 @@ mod tests {
     /// format is that it has neither — so the comparison is of the model, not of the struct.
     #[test]
     fn both_wcnf_formats_parse_to_the_same_model() {
-        let old = Cnf::parse("c old\np wcnf 4 4 20\n20 1 -2 0\n3 -1 3 0\n5 2 -3 4 0\n20 -4 0\n")
-            .unwrap();
+        let old =
+            Cnf::parse("c old\np wcnf 4 4 20\n20 1 -2 0\n3 -1 3 0\n5 2 -3 4 0\n20 -4 0\n").unwrap();
         let new = Cnf::parse("c new\nh 1 -2 0\n3 -1 3 0\n5 2 -3 4 0\nh -4 0\n").unwrap();
 
         assert_eq!(old.format, Format::Wcnf);
         assert_eq!(new.format, Format::Wcnf2022);
-        assert_eq!(old.top, Some(20.0), "the header's own top is kept as provenance");
+        assert_eq!(
+            old.top,
+            Some(20.0),
+            "the header's own top is kept as provenance"
+        );
         assert_eq!(new.top, None, "and the 2022 format has none to keep");
 
-        assert_eq!(new.vars, old.vars, "the largest literal is the variable count");
-        assert_eq!(new.clauses, old.clauses, "hard is hard in both, at infinity");
+        assert_eq!(
+            new.vars, old.vars,
+            "the largest literal is the variable count"
+        );
+        assert_eq!(
+            new.clauses, old.clauses,
+            "hard is hard in both, at infinity"
+        );
         assert!(new.clauses[0].is_hard() && !new.clauses[1].is_hard());
         assert!((new.hard_penalty() - old.hard_penalty()).abs() < 1e-12);
-        assert!((new.hard_penalty() - 9.0).abs() < 1e-12, "1 + (3 + 5), not the file's 20");
+        assert!(
+            (new.hard_penalty() - 9.0).abs() < 1e-12,
+            "1 + (3 + 5), not the file's 20"
+        );
 
         let (ha, oa) = old.to_hubo();
         let (hb, ob) = new.to_hubo();
         for m in 0u32..(1u32 << old.vars) {
-            let s: Vec<i8> = (0..old.vars).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
-            assert!((ha.energy(&s) + oa - (hb.energy(&s) + ob)).abs() < 1e-9, "state {s:?}");
+            let s: Vec<i8> = (0..old.vars)
+                .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
+            assert!(
+                (ha.energy(&s) + oa - (hb.energy(&s) + ob)).abs() < 1e-9,
+                "state {s:?}"
+            );
             assert_eq!(old.cost(&s), new.cost(&s), "state {s:?}");
         }
     }
@@ -608,7 +687,11 @@ mod tests {
 
         let (h, off) = cnf.to_hubo();
         let states: Vec<Vec<i8>> = (0u32..(1u32 << cnf.vars))
-            .map(|m| (0..cnf.vars).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect())
+            .map(|m| {
+                (0..cnf.vars)
+                    .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect()
+            })
             .collect();
         let (mut worst_ok, mut best_bad) = (f64::NEG_INFINITY, f64::INFINITY);
         for s in &states {
@@ -619,7 +702,10 @@ mod tests {
                 best_bad = best_bad.min(e);
             }
         }
-        assert!(worst_ok.is_finite() && best_bad.is_finite(), "both classes must be non-empty");
+        assert!(
+            worst_ok.is_finite() && best_bad.is_finite(),
+            "both classes must be non-empty"
+        );
         assert!(
             worst_ok < best_bad,
             "the worst hard-feasible state costs {worst_ok} and the best infeasible one \
@@ -630,11 +716,21 @@ mod tests {
         let best = states
             .iter()
             .min_by(|a, b| {
-                (h.energy(a) + off).partial_cmp(&(h.energy(b) + off)).expect("finite energies")
+                (h.energy(a) + off)
+                    .partial_cmp(&(h.energy(b) + off))
+                    .expect("finite energies")
             })
             .unwrap();
-        assert_eq!(best, &vec![1i8, 1, 1], "x1 and x2 forced true, x3 free and worth 11");
-        assert_eq!(cnf.cost(best), Some(1600.0), "¬x1 and ¬x2 are paid for, and that is the bill");
+        assert_eq!(
+            best,
+            &vec![1i8, 1, 1],
+            "x1 and x2 forced true, x3 free and worth 11"
+        );
+        assert_eq!(
+            cnf.cost(best),
+            Some(1600.0),
+            "¬x1 and ¬x2 are paid for, and that is the bill"
+        );
     }
 
     /// A `p wcnf` with no `top` field has no hard clauses, however large its weights are.
@@ -667,12 +763,18 @@ mod tests {
     fn degenerate_clauses_are_handled_rather_than_rejected() {
         // `1 -1` is a tautology; `2 2` is `2`; the header counts all three.
         let cnf = Cnf::parse("p cnf 3 3\n1 -1 0\n2 2 0\n-3 0\n").unwrap();
-        assert_eq!(cnf.clauses.len(), 2, "the tautology should be dropped, not stored");
+        assert_eq!(
+            cnf.clauses.len(),
+            2,
+            "the tautology should be dropped, not stored"
+        );
         assert_eq!(cnf.clauses[0].lits, vec![2], "a repeated literal collapses");
 
         let (h, off) = cnf.to_hubo();
         for m in 0u32..8u32 {
-            let s: Vec<i8> = (0..3).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let s: Vec<i8> = (0..3)
+                .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             assert!((h.energy(&s) + off - cnf.unsatisfied_weight(&s)).abs() < 1e-9);
         }
 
@@ -681,7 +783,10 @@ mod tests {
         assert_eq!(e.clauses.len(), 1);
         assert!(e.clauses[0].lits.is_empty());
         let (h, off) = e.to_hubo();
-        assert!((off - 3.0).abs() < 1e-9, "the empty clause's weight is the constant, got {off}");
+        assert!(
+            (off - 3.0).abs() < 1e-9,
+            "the empty clause's weight is the constant, got {off}"
+        );
         assert_eq!(h.terms(), 0, "and it introduces no term");
 
         // An empty HARD clause is an unsatisfiable instance: every assignment has no cost at all.
@@ -702,18 +807,30 @@ mod tests {
     /// The other refusals, each by name.
     #[test]
     fn malformed_input_is_refused_by_name() {
-        assert!(matches!(Cnf::parse(""), Err(DimacsError::Header(_))), "nothing at all");
-        assert!(matches!(Cnf::parse("c only a comment\n"), Err(DimacsError::Header(_))));
+        assert!(
+            matches!(Cnf::parse(""), Err(DimacsError::Header(_))),
+            "nothing at all"
+        );
+        assert!(matches!(
+            Cnf::parse("c only a comment\n"),
+            Err(DimacsError::Header(_))
+        ));
         assert!(
             matches!(Cnf::parse("p qbf 2 1\n1 0\n"), Err(DimacsError::Header(_))),
             "a format this does not read"
         );
         assert!(
-            matches!(Cnf::parse("p cnf 2 1\n1 5 0\n"), Err(DimacsError::Variable { got: 5, .. })),
+            matches!(
+                Cnf::parse("p cnf 2 1\n1 5 0\n"),
+                Err(DimacsError::Variable { got: 5, .. })
+            ),
             "a literal past the declared variable count"
         );
         assert!(
-            matches!(Cnf::parse("p cnf 2 1\n1 2\n"), Err(DimacsError::Line { line: 2, .. })),
+            matches!(
+                Cnf::parse("p cnf 2 1\n1 2\n"),
+                Err(DimacsError::Line { line: 2, .. })
+            ),
             "a clause with no terminating zero"
         );
         let wide: String = (1..=MAX_CLAUSE + 1).map(|v| format!("{v} ")).collect();
@@ -725,25 +842,40 @@ mod tests {
     #[test]
     fn malformed_2022_input_is_refused_by_name() {
         assert!(
-            matches!(Cnf::parse("h 1 0\n3 -2 0\np wcnf 2 2 9\n"), Err(DimacsError::Header(_))),
+            matches!(
+                Cnf::parse("h 1 0\n3 -2 0\np wcnf 2 2 9\n"),
+                Err(DimacsError::Header(_))
+            ),
             "a header after the body has begun"
         );
         assert!(
-            matches!(Cnf::parse("p wcnf 2 1 9\np wcnf 2 1 9\n"), Err(DimacsError::Header(_))),
+            matches!(
+                Cnf::parse("p wcnf 2 1 9\np wcnf 2 1 9\n"),
+                Err(DimacsError::Header(_))
+            ),
             "a second header"
         );
         assert!(
-            matches!(Cnf::parse("p wcnf 2 1 hard\n1 1 0\n"), Err(DimacsError::Header(_))),
+            matches!(
+                Cnf::parse("p wcnf 2 1 hard\n1 1 0\n"),
+                Err(DimacsError::Header(_))
+            ),
             "an unreadable top would silently demote every hard clause"
         );
         assert!(
-            matches!(Cnf::parse("p wcnf 2 1 9\nh 1 0\n"), Err(DimacsError::Line { line: 2, .. })),
+            matches!(
+                Cnf::parse("p wcnf 2 1 9\nh 1 0\n"),
+                Err(DimacsError::Line { line: 2, .. })
+            ),
             "`h` is the 2022 marker and means nothing in a headered file"
         );
         for (why, src) in [
             ("zero", "0.0 1 0\n"),
             ("negative", "-3 1 0\n"),
-            ("nan, which parses as an f64 and poisons every energy", "nan 1 0\n"),
+            (
+                "nan, which parses as an f64 and poisons every energy",
+                "nan 1 0\n",
+            ),
             ("infinite, which only `h` may be", "inf 1 0\n"),
         ] {
             assert!(
@@ -753,15 +885,24 @@ mod tests {
             );
         }
         assert!(
-            matches!(Cnf::parse("h 1 -2\n"), Err(DimacsError::Line { line: 1, .. })),
+            matches!(
+                Cnf::parse("h 1 -2\n"),
+                Err(DimacsError::Line { line: 1, .. })
+            ),
             "a hard clause with no terminating zero"
         );
         assert!(
-            matches!(Cnf::parse("hard 1 0\n"), Err(DimacsError::Line { line: 1, .. })),
+            matches!(
+                Cnf::parse("hard 1 0\n"),
+                Err(DimacsError::Line { line: 1, .. })
+            ),
             "`h` is a whole token, not a prefix"
         );
         assert!(
-            matches!(Cnf::parse("h 4294967297 0\n"), Err(DimacsError::Literal { .. })),
+            matches!(
+                Cnf::parse("h 4294967297 0\n"),
+                Err(DimacsError::Literal { .. })
+            ),
             "a literal that would truncate into an i32 as variable 1"
         );
         // The same hole in the headered dialect, where a huge declared count used to admit it.

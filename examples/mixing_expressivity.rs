@@ -132,8 +132,9 @@ const MIN_RATIO: f64 = 200.0;
 
 /// Mean and spread of `tau_int` over seeds, with the smallest `draws/tau` seen.
 fn tau_over_seeds(g: &Graph, beta: f64) -> (f64, f64, f64) {
-    let taus: Vec<f64> =
-        (0..SEEDS).map(|s| measure(g, beta, DRAWS, 1, 11 + s).0.tau_int).collect();
+    let taus: Vec<f64> = (0..SEEDS)
+        .map(|s| measure(g, beta, DRAWS, 1, 11 + s).0.tau_int)
+        .collect();
     let mean = taus.iter().sum::<f64>() / taus.len() as f64;
     let var = taus.iter().map(|t| (t - mean).powi(2)).sum::<f64>() / taus.len() as f64;
     let worst = taus.iter().copied().fold(0.0f64, f64::max);
@@ -196,7 +197,14 @@ fn main() {
     println!("\nPRICED AT beta {cold} -- what ONE INDEPENDENT DRAW costs\n");
     println!(
         "{:>7} {:>6} {:>7} {:>13} {:>14} {:>11} {:>11} {:>11}",
-        "layers", "width", "edges", "tau_int", "updates/draw", "nJ mixing", "nJ readback", "read share"
+        "layers",
+        "width",
+        "edges",
+        "tau_int",
+        "updates/draw",
+        "nJ mixing",
+        "nJ readback",
+        "read share"
     );
     for (layers, width, edges, m, sd, ratio) in &cold_row {
         let n = layers * width;
@@ -204,8 +212,16 @@ fn main() {
         // An independent draw is the sweeps that separate it from the last one AND the readback
         // that turns the device's state into a sample somebody holds. Pricing only the first was
         // what this column did before, and it is the more flattering of the two halves.
-        let mixing = Ledger { samples: per.round().max(1.0) as u64, reads: 0, writes: 0 };
-        let readback = Ledger { samples: 0, reads: n as u64, writes: 0 };
+        let mixing = Ledger {
+            samples: per.round().max(1.0) as u64,
+            reads: 0,
+            writes: 0,
+        };
+        let readback = Ledger {
+            samples: 0,
+            reads: n as u64,
+            writes: 0,
+        };
         let mj = mixing.joules(&Z1_SPICE).unwrap_or(f64::NAN) * 1e9;
         let rj = readback.joules(&Z1_SPICE).unwrap_or(f64::NAN) * 1e9;
         println!(
@@ -261,7 +277,13 @@ fn main() {
     for beta in [2.5f64, 3.0, 4.0, 8.0] {
         let a = measure(&shallow, beta, DRAWS, 1, 11).0.tau_int;
         let b = measure(&deep, beta, DRAWS, 1, 11).0.tau_int;
-        let ratio = |t: f64| if t.is_finite() { DRAWS as f64 / t.max(1e-9) } else { 0.0 };
+        let ratio = |t: f64| {
+            if t.is_finite() {
+                DRAWS as f64 / t.max(1e-9)
+            } else {
+                0.0
+            }
+        };
         let worst = ratio(a).min(ratio(b));
         beyond.push(a);
         println!(
@@ -283,7 +305,10 @@ fn main() {
     // The numbers in the prose are read off the rows above, so the sentence cannot outlive them:
     // it used to say 26.30 and 65.95 while the table printed 48.91 and 65.95.
     let (first, last) = (cold_row[0], cold_row[cold_row.len() - 1]);
-    let middle: Vec<f64> = cold_row[1..cold_row.len() - 1].iter().map(|r| r.3).collect();
+    let middle: Vec<f64> = cold_row[1..cold_row.len() - 1]
+        .iter()
+        .map(|r| r.3)
+        .collect();
     let mid_lo = middle.iter().copied().fold(f64::INFINITY, f64::min);
     let mid_hi = middle.iter().copied().fold(f64::NEG_INFINITY, f64::max);
     println!(
@@ -301,9 +326,17 @@ fn main() {
          sweep moves through slowly; a deep narrow stack has the barriers the original claim is\n\
          about. Nothing here separates those two mechanisms, and doing so would need a cluster move\n\
          or a mode-resolved statistic rather than a scalar autocorrelation.",
-        first.0, first.1, first.3, last.0, last.1, last.3,
+        first.0,
+        first.1,
+        first.3,
+        last.0,
+        last.1,
+        last.3,
         if last.5 < MIN_RATIO {
-            format!(" -- from chains only {:.0} of their tau long, past the validity condition", last.5)
+            format!(
+                " -- from chains only {:.0} of their tau long, past the validity condition",
+                last.5
+            )
         } else if last.5 < RESOLVED_TAUS {
             " -- a lower bound".to_string()
         } else {

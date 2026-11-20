@@ -47,7 +47,9 @@ pub fn judge_ising_open(
         if !exact.is_finite() {
             return Verdict {
                 ok: false,
-                reason: format!("side {side} parity refused: the transfer-matrix mean was not finite"),
+                reason: format!(
+                    "side {side} parity refused: the transfer-matrix mean was not finite"
+                ),
             };
         }
         let gap = (mean - exact).abs() / n;
@@ -75,7 +77,9 @@ pub fn judge_ising_open(
         if !other.is_finite() {
             return Verdict {
                 ok: false,
-                reason: format!("side {side} parity refused: the second seed's mean was not finite"),
+                reason: format!(
+                    "side {side} parity refused: the second seed's mean was not finite"
+                ),
             };
         }
         let agree = (mean - other).abs() / n;
@@ -88,7 +92,10 @@ pub fn judge_ising_open(
             };
         }
     }
-    Verdict { ok: true, reason: String::new() }
+    Verdict {
+        ok: true,
+        reason: String::new(),
+    }
 }
 
 #[cfg(test)]
@@ -104,7 +111,14 @@ mod tests {
         let exact = -100.0;
         let ok = judge_ising_open(side, exact + 0.01, Some(exact), Some(exact), 0.0, 0.01);
         assert!(ok.ok, "{}", ok.reason);
-        let bad = judge_ising_open(side, exact + PER_SITE * n, Some(exact), Some(exact), 0.0, 0.01);
+        let bad = judge_ising_open(
+            side,
+            exact + PER_SITE * n,
+            Some(exact),
+            Some(exact),
+            0.0,
+            0.01,
+        );
         assert!(!bad.ok, "the 0.05 per-site line is not a pass");
         assert!(bad.reason.contains("transfer"), "{}", bad.reason);
     }
@@ -114,7 +128,14 @@ mod tests {
         let side = 8usize;
         let n = (side * side) as f64;
         let exact = -40.0;
-        let bad = judge_ising_open(side, exact, Some(exact + PER_SITE * n), Some(exact), -1.0, 0.2);
+        let bad = judge_ising_open(
+            side,
+            exact,
+            Some(exact + PER_SITE * n),
+            Some(exact),
+            -1.0,
+            0.2,
+        );
         assert!(!bad.ok);
         assert!(bad.reason.contains("two seeds"), "{}", bad.reason);
     }
@@ -126,14 +147,21 @@ mod tests {
         let tm = ising_open_transfer(16, j, beta).unwrap().mean_energy;
         let onsager = onsager_energy_density(beta, j);
         let gap16 = (tm / 256.0 - onsager).abs();
-        assert!(gap16 < 0.08, "the existing sanity bound still holds, gap16 {gap16}");
+        assert!(
+            gap16 < 0.08,
+            "the existing sanity bound still holds, gap16 {gap16}"
+        );
         assert!(gap16 > 0.0);
         let n32 = (32 * 32) as f64;
         // Exactly the 16x16 gap. The gate is strict, so this is a refusal.
         let mean = (onsager + gap16) * n32;
         let on_the_line = judge_ising_open(32, mean, Some(mean), None, onsager, gap16);
         assert!(!on_the_line.ok, "landing on the 16x16 gap must be refused");
-        assert!(on_the_line.reason.contains("16x16"), "{}", on_the_line.reason);
+        assert!(
+            on_the_line.reason.contains("16x16"),
+            "{}",
+            on_the_line.reason
+        );
         // A looser constant of 0.08 would accept this. The gate must not.
         assert!(gap16 < 0.08);
         let inside = (onsager + gap16 * 0.5) * n32;

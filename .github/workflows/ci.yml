@@ -11,22 +11,24 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: rustfmt, clippy
       # The cross-binding gates below compare SURFACES, so this job needs the toolchains those
       # surfaces are written in -- otherwise they skip, exit 0, and report success having compared
       # four of seven. That is the same shape as check-exports.sh sitting in a job with no Julia:
       # a gate that runs and covers less than it appears to. Measured before fixing: with a
       # CI-like PATH, check-answers.sh compared 5 and silently skipped julia and zig.
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with:
-          version: "1.12"
-      - uses: mlugg/setup-zig@v2
+          version: "1.13"
+      - uses: mlugg/setup-zig@v2.2.1
         with:
-          version: 0.16.0
-      - uses: actions/setup-node@v4
+          version: 0.17.1
+      - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
       - name: Playwright, for the wasm surface
         working-directory: web-tests
         run: npm install && npx playwright install --with-deps chromium
@@ -111,6 +113,8 @@ jobs:
       # ffi.rs's deny-by-default lint, so five of the six crates and all 21 examples had never been
       # linted at all. The three lints this codebase deliberately does not follow are recorded in
       # Cargo.toml's [workspace.lints.clippy] with the reason for each; everything else is denied.
+      - name: rustfmt
+        run: cargo fmt --all -- --check
       - name: Clippy, across the whole workspace
         run: cargo clippy --release --workspace --all-targets -- -D warnings
       # THE GPU PATH IS EXECUTED HERE, not merely compiled.
@@ -292,8 +296,8 @@ jobs:
     env:
       SHARDS: 4
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
       # The RTL gates simulate the emitted Verilog and RETURN EARLY without a simulator. The `test`
       # job installs iverilog and this job did not, so on the first run that finished (a03d9ae,
       # 2026-09-25) twelve RTL and fabric-shell rows -- a q draw repeated, a threshold one bit
@@ -312,8 +316,8 @@ jobs:
   c-abi:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
       - name: Build the library the header describes
         run: cargo build --release
       - name: The header compiles and links against it
@@ -326,11 +330,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: actions/setup-python@v7
         with:
           # The range we CLAIM, not one point in it. requires-python said >=3.9 while CI tested a
           # single version, so the floor was a claim nobody had ever run.
@@ -350,9 +354,10 @@ jobs:
   aarch64-harness:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
+          components: rustfmt, clippy
           targets: aarch64-unknown-linux-gnu
       # c_char is u8 on this target. A dlopen signature written as *const i8
       # compiles on the x86_64 runner and fails on Jetson Thor.
@@ -362,9 +367,10 @@ jobs:
   wasm:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
         with:
+          components: rustfmt, clippy
           targets: wasm32-unknown-unknown
       - name: wasm cdylib builds clean
         run: RUSTFLAGS='-C strip=symbols' cargo build --release --lib --target wasm32-unknown-unknown
@@ -394,11 +400,11 @@ jobs:
   zig:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: mlugg/setup-zig@v2
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: mlugg/setup-zig@v2.2.1
         with:
-          version: 0.16.0
+          version: 0.17.1
       # `zig build test` runs cargo itself and links with an rpath, so there is one command here
       # rather than a hand-written link line that can drift from what a consumer would use.
       - name: Zig tests
@@ -408,11 +414,11 @@ jobs:
   julia:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: julia-actions/setup-julia@v2
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+      - uses: julia-actions/setup-julia@v3
         with:
-          version: "1.12"
+          version: "1.13"
       - name: Build the library the binding loads
         run: cargo build --release
       # Moved here from the `test` job, which has no Julia -- so it printed "skipping", exited 0,
@@ -431,10 +437,10 @@ jobs:
   editor:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "26"
       - name: Install
         working-directory: web-tests
         run: npm install && npx playwright install --with-deps chromium
@@ -446,3 +452,24 @@ jobs:
         env:
           FERROTHERM_REQUIRE_ALL: "1"
         run: scripts/check-pages.sh --selftest && scripts/check-pages.sh
+
+  # The lockfile is a receipt input. An advisory or a license the workspace did not
+  # choose has to fail here, not in a comment. Versions are pinned so the gate does
+  # not float to a newer checker that the tree has not been read against.
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.100.0
+        with:
+          components: rustfmt, clippy
+      - name: Install cargo-audit and cargo-deny
+        run: |
+          cargo install cargo-audit --version 0.23.0 --locked
+          cargo install cargo-deny --version 0.20.2 --locked
+      - name: cargo audit
+        run: cargo audit
+      - name: cargo deny
+        # --workspace: the root package has no dependencies, so without this
+        # flag the gpu, cloud, and silicon graphs are not roots.
+        run: cargo deny --workspace check

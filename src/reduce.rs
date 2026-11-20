@@ -38,7 +38,6 @@
 //! assignments expensive rather than impossible. Use this to find ground states, and read
 //! [`Reduction::penalty`] before sampling from one.
 
-
 use crate::ftp::Program;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -66,7 +65,10 @@ fn add(p: &mut Poly, mono: BTreeSet<usize>, c: f64) {
 }
 
 fn degree(p: &Poly) -> usize {
-    p.keys().map(std::collections::BTreeSet::len).max().unwrap_or(0)
+    p.keys()
+        .map(std::collections::BTreeSet::len)
+        .max()
+        .unwrap_or(0)
 }
 
 /// What a reduction cost, and what it assumed.
@@ -224,7 +226,10 @@ pub fn to_pairwise(p: &Program) -> Result<Reduction, ReduceError> {
 /// Never on a program built by this crate: the ancillas it introduces are in range by construction.
 pub fn to_pairwise_with(p: &Program, penalty: Option<f64>) -> Result<Reduction, ReduceError> {
     if let Some(f) = p.factors.iter().find(|f| f.arity() > MAX_ARITY) {
-        return Err(ReduceError::TooWide { arity: f.arity(), limit: MAX_ARITY });
+        return Err(ReduceError::TooWide {
+            arity: f.arity(),
+            limit: MAX_ARITY,
+        });
     }
 
     // 1. The energy as a binary polynomial. E = -Σ w·∏s - Σ h·s, and s = 2x - 1.
@@ -274,7 +279,8 @@ pub fn to_pairwise_with(p: &Program, penalty: Option<f64>) -> Result<Reduction, 
         let mut rewritten: Poly = BTreeMap::new();
         for (m, c) in &poly {
             if m.len() > 2 && m.contains(&a) && m.contains(&b) {
-                let mut n: BTreeSet<usize> = m.iter().copied().filter(|v| *v != a && *v != b).collect();
+                let mut n: BTreeSet<usize> =
+                    m.iter().copied().filter(|v| *v != a && *v != b).collect();
                 n.insert(y);
                 add(&mut rewritten, n, *c);
             } else {
@@ -291,7 +297,13 @@ pub fn to_pairwise_with(p: &Program, penalty: Option<f64>) -> Result<Reduction, 
 
     // 3. Back to spins. x = (1 + s)/2.
     let (program, offset) = to_program(&poly, next)?;
-    Ok(Reduction { program, ancillas, original_spins: p.spins, penalty, offset })
+    Ok(Reduction {
+        program,
+        ancillas,
+        original_spins: p.spins,
+        penalty,
+        offset,
+    })
 }
 
 /// A monomial as a set, for the maps above.
@@ -361,7 +373,10 @@ fn mono(vs: &[usize]) -> BTreeSet<usize> {
 /// Never on a program built by this crate: the ancillas are in range by construction.
 pub fn to_pairwise_exact(p: &Program) -> Result<Reduction, ReduceError> {
     if let Some(f) = p.factors.iter().find(|f| f.arity() > MAX_ARITY) {
-        return Err(ReduceError::TooWide { arity: f.arity(), limit: MAX_ARITY });
+        return Err(ReduceError::TooWide {
+            arity: f.arity(),
+            limit: MAX_ARITY,
+        });
     }
 
     let mut poly: Poly = BTreeMap::new();
@@ -455,7 +470,11 @@ fn expand_spin_product(poly: &mut Poly, vars: &[usize], c: f64) {
             }
         }
         // 2^taken from the chosen x's, (−1) for each factor that contributed its −1
-        let sign = if (k - taken).is_multiple_of(2) { 1.0 } else { -1.0 };
+        let sign = if (k - taken).is_multiple_of(2) {
+            1.0
+        } else {
+            -1.0
+        };
         add(poly, mono, c * sign * (1u64 << taken) as f64);
     }
 }
@@ -548,7 +567,9 @@ mod tests {
         let n = p.spins;
         let mut delta: Option<f64> = None;
         for mask in 0u32..(1u32 << n) {
-            let s: Vec<i8> = (0..n).map(|i| if mask & (1 << i) != 0 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..n)
+                .map(|i| if mask & (1 << i) != 0 { 1 } else { -1 })
+                .collect();
             let want = energy(&p, &s);
             let got = minimised_over_ancillas(&r, &s);
             let d = got - want;
@@ -573,12 +594,17 @@ mod tests {
             r.program.factors.iter().all(|f| f.arity() <= 2),
             "the point of the pass is that nothing is wider than two"
         );
-        assert_eq!(r.penalty, 0.0, "a penalty-free reduction must not carry one");
+        assert_eq!(
+            r.penalty, 0.0,
+            "a penalty-free reduction must not carry one"
+        );
 
         let n = p.spins;
         let mut delta: Option<f64> = None;
         for mask in 0u32..(1u32 << n) {
-            let s: Vec<i8> = (0..n).map(|i| if mask & (1 << i) != 0 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..n)
+                .map(|i| if mask & (1 << i) != 0 { 1 } else { -1 })
+                .collect();
             let want = energy(&p, &s);
             let got = minimised_over_ancillas(&r, &s);
             let d = got - want;
@@ -619,11 +645,13 @@ mod tests {
         // four cover both branches of Ishikawa's coefficient, which depends on the parity of k.
         for k in 3..=4usize {
             for w in [1.0f64, -1.0, 2.5, -0.75] {
-                let vars: String =
-                    (0..k).map(|i| format!(" {i}")).collect::<Vec<_>>().join("");
+                let vars: String = (0..k).map(|i| format!(" {i}")).collect::<Vec<_>>().join("");
                 let src = format!("ftp 1\nspins {k}\nfactor {w}{vars}\n");
                 let r = agrees_everywhere_exact(&src);
-                assert!(r.ancillas >= 1, "arity {k} weight {w} needed no ancilla at all");
+                assert!(
+                    r.ancillas >= 1,
+                    "arity {k} weight {w} needed no ancilla at all"
+                );
             }
         }
     }
@@ -708,7 +736,10 @@ mod tests {
     /// cap: 1490 ancillas where `to_pairwise` needs 68.
     #[test]
     fn a_program_too_expensive_to_reduce_without_a_penalty_is_refused() {
-        let vars: String = (0..10).map(|i| format!(" {i}")).collect::<Vec<_>>().join("");
+        let vars: String = (0..10)
+            .map(|i| format!(" {i}"))
+            .collect::<Vec<_>>()
+            .join("");
         let src = format!("ftp 1\nspins 10\nfactor 1.0{vars}\n");
         let p = Program::from_ftp(&src).unwrap();
 
@@ -746,7 +777,11 @@ mod tests {
         let free = to_pairwise_exact(&p).unwrap();
 
         let scale = |r: &Reduction| -> f64 {
-            r.program.to_graph().expect("pairwise by construction").flip_gap_max().unwrap_or(0.0)
+            r.program
+                .to_graph()
+                .expect("pairwise by construction")
+                .flip_gap_max()
+                .unwrap_or(0.0)
         };
         let (s_rose, s_free) = (scale(&rose), scale(&free));
         println!(
@@ -754,7 +789,10 @@ mod tests {
             rose.ancillas, rose.penalty, free.ancillas, free.penalty
         );
 
-        assert!(rose.penalty > 0.0, "Rosenberg is the one that needs a penalty");
+        assert!(
+            rose.penalty > 0.0,
+            "Rosenberg is the one that needs a penalty"
+        );
         assert_eq!(free.penalty, 0.0);
         assert!(
             s_free < s_rose,
@@ -788,7 +826,10 @@ mod tests {
         let r = agrees_everywhere(
             "ftp 1\nspins 5\nfactor 1.0 0 1 2\nfactor 1.0 0 1 3\nfactor -1.0 0 1 4\nbias 2 0.5\n",
         );
-        assert_eq!(r.ancillas, 1, "one ancilla for the pair (0,1) serves all three terms");
+        assert_eq!(
+            r.ancillas, 1,
+            "one ancilla for the pair (0,1) serves all three terms"
+        );
     }
 
     #[test]
@@ -807,7 +848,9 @@ mod tests {
         assert_eq!(r.program.spins, 3, "and no spins added");
         // still the same energies
         for mask in 0u32..8 {
-            let s: Vec<i8> = (0..3).map(|i| if mask & (1 << i) != 0 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..3)
+                .map(|i| if mask & (1 << i) != 0 { 1 } else { -1 })
+                .collect();
             assert!((energy(&p, &s) - (energy(&r.program, &s) + r.offset)).abs() < 1e-9);
         }
     }
@@ -822,8 +865,9 @@ mod tests {
 
         let best_original = (0u32..(1 << p.spins))
             .map(|m| {
-                let s: Vec<i8> =
-                    (0..p.spins).map(|i| if m & (1 << i) != 0 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..p.spins)
+                    .map(|i| if m & (1 << i) != 0 { 1 } else { -1 })
+                    .collect();
                 (energy(&p, &s) * 1e9) as i64
             })
             .min()
@@ -842,7 +886,11 @@ mod tests {
             }
         }
         let projected = r.project(&best_state);
-        assert_eq!(projected.len(), p.spins, "the ancillas are not part of the answer");
+        assert_eq!(
+            projected.len(),
+            p.spins,
+            "the ancillas are not part of the answer"
+        );
         assert_eq!(
             (energy(&p, projected) * 1e9) as i64,
             best_original,
@@ -865,11 +913,15 @@ mod tests {
         let dw = Fabric::dwave_advantage2(Z1_SPICE);
         let refusal = dw.check(&p);
         assert!(
-            refusal.iter().any(|u| matches!(u, Unsupported::ArityTooHigh { .. })),
+            refusal
+                .iter()
+                .any(|u| matches!(u, Unsupported::ArityTooHigh { .. })),
             "{refusal:?}"
         );
         assert!(
-            refusal.iter().any(|u| u.to_string().contains("to_pairwise")),
+            refusal
+                .iter()
+                .any(|u| u.to_string().contains("to_pairwise")),
             "the refusal names the remedy: {refusal:?}"
         );
 
@@ -877,7 +929,9 @@ mod tests {
         let r = to_pairwise(&p).unwrap();
         assert!(r.ancillas > 0);
         assert!(
-            !Fabric::unconstrained("sim", Z1_SPICE).check(&r.program).iter()
+            !Fabric::unconstrained("sim", Z1_SPICE)
+                .check(&r.program)
+                .iter()
                 .any(|u| matches!(u, Unsupported::ArityTooHigh { .. })),
             "nothing is wider than two now"
         );
@@ -885,7 +939,11 @@ mod tests {
         // and the CPU backend, which lowers through to_graph, accepts it where it refused before
         let mut cpu = Cpu::default();
         assert!(!cpu.program(&p).is_empty(), "the original does not run");
-        assert!(cpu.program(&r.program).is_empty(), "{:?}", cpu.program(&r.program));
+        assert!(
+            cpu.program(&r.program).is_empty(),
+            "{:?}",
+            cpu.program(&r.program)
+        );
 
         // solved and projected, it is an optimum of the ORIGINAL model
         let best = crate::exact::Elimination::default()
@@ -896,8 +954,9 @@ mod tests {
         let projected = r.project(&best);
         let want = (0u32..(1 << p.spins))
             .map(|m| {
-                let s: Vec<i8> =
-                    (0..p.spins).map(|i| if m & (1 << i) != 0 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..p.spins)
+                    .map(|i| if m & (1 << i) != 0 { 1 } else { -1 })
+                    .collect();
                 (energy(&p, &s) * 1e9) as i64
             })
             .min()
@@ -915,7 +974,10 @@ mod tests {
         let src = format!("ftp 1\nspins 30\nfactor 1.0 {}\n", vars.join(" "));
         let p = Program::from_ftp(&src).unwrap();
         match to_pairwise(&p) {
-            Err(ReduceError::TooWide { arity: 25, limit: 20 }) => {}
+            Err(ReduceError::TooWide {
+                arity: 25,
+                limit: 20,
+            }) => {}
             other => panic!("2^25 monomials should be refused, got {other:?}"),
         }
     }
@@ -926,7 +988,11 @@ mod tests {
         // exceed anything the rest of the model could pay for breaking it.
         let p = Program::from_ftp("ftp 1\nspins 3\nfactor 100.0 0 1 2\n").unwrap();
         let r = to_pairwise(&p).unwrap();
-        assert!(r.penalty > 100.0, "penalty {} against a weight of 100", r.penalty);
+        assert!(
+            r.penalty > 100.0,
+            "penalty {} against a weight of 100",
+            r.penalty
+        );
     }
 
     /// The chosen penalty is the one written: with none the reduction is `to_pairwise`'s exactly,
@@ -952,7 +1018,9 @@ mod tests {
             let mut ground = f64::INFINITY;
             let mut consistent = true;
             for x in 0..m {
-                let s: Vec<i8> = (0..g.n).map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..g.n)
+                    .map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 let e = g.energy(&s) + red.offset;
                 if e < ground - 1e-9 {
                     ground = e;
@@ -960,9 +1028,15 @@ mod tests {
                 }
             }
             if penalty > 1.0 {
-                assert!((ground - best).abs() < 1e-9 && consistent, "penalty {penalty}: ground {ground}, consistent {consistent}");
+                assert!(
+                    (ground - best).abs() < 1e-9 && consistent,
+                    "penalty {penalty}: ground {ground}, consistent {consistent}"
+                );
             } else {
-                assert!(ground < best - 1e-9, "penalty {penalty}: a broken ancilla must win, ground {ground} vs {best}");
+                assert!(
+                    ground < best - 1e-9,
+                    "penalty {penalty}: a broken ancilla must win, ground {ground} vs {best}"
+                );
             }
         }
     }

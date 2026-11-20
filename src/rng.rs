@@ -15,7 +15,10 @@ impl Pcg {
     #[must_use]
     /// A generator on `stream`, started at `seed`. Different streams do not correlate.
     pub fn new(seed: u64, stream: u64) -> Self {
-        let mut r = Pcg { state: 0, inc: (stream << 1) | 1 };
+        let mut r = Pcg {
+            state: 0,
+            inc: (stream << 1) | 1,
+        };
         r.next_u32();
         r.state = r.state.wrapping_add(seed);
         r.next_u32();
@@ -86,7 +89,10 @@ mod tests {
         let tol = 2.0 * f64::from(n).sqrt();
         for (bit, &c) in ones.iter().enumerate() {
             let dev = (f64::from(c) - f64::from(n) / 2.0).abs();
-            assert!(dev < tol, "bit {bit} was set {c} times of {n}, off by {dev:.0} (tol {tol:.0})");
+            assert!(
+                dev < tol,
+                "bit {bit} was set {c} times of {n}, off by {dev:.0} (tol {tol:.0})"
+            );
         }
     }
 

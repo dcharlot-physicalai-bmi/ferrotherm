@@ -103,7 +103,9 @@ fn draw_from(g: &Graph, rows: usize, seed: u64) -> Dataset {
         .map(|_| {
             let u = rng.f64() * acc;
             let m = cdf.partition_point(|&c| c < u).min(p.len() - 1);
-            (0..g.n).map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 }).collect()
+            (0..g.n)
+                .map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 })
+                .collect()
         })
         .collect();
     Dataset { visible: g.n, rows }
@@ -120,17 +122,28 @@ fn corrupt(data: &Dataset, frac: f64, seed: u64) -> Dataset {
         .iter()
         .map(|r| {
             if rng.f64() < frac {
-                (0..r.len()).map(|_| if rng.f64() < 0.5 { 1i8 } else { -1 }).collect()
+                (0..r.len())
+                    .map(|_| if rng.f64() < 0.5 { 1i8 } else { -1 })
+                    .collect()
             } else {
                 r.clone()
             }
         })
         .collect();
-    Dataset { visible: data.visible, rows }
+    Dataset {
+        visible: data.visible,
+        rows,
+    }
 }
 
-const NAMES: [&str; 6] =
-    ["CD-1", "CD-10", "PCD-10", "pseudolikelihood", "min prob flow", "ratio matching"];
+const NAMES: [&str; 6] = [
+    "CD-1",
+    "CD-10",
+    "PCD-10",
+    "pseudolikelihood",
+    "min prob flow",
+    "ratio matching",
+];
 
 /// Ascend until the method's OWN objective stops improving, and report how many epochs that took.
 ///
@@ -160,11 +173,31 @@ fn to_convergence(
     const CHUNK: usize = 250;
     const CAP: usize = 40_000;
     const TOL: f64 = 1e-9;
-    let mut g = fit(structure, data, &FitParams { epochs: 0, lr, l2: 0.0 }).unwrap().graph;
+    let mut g = fit(
+        structure,
+        data,
+        &FitParams {
+            epochs: 0,
+            lr,
+            l2: 0.0,
+        },
+    )
+    .unwrap()
+    .graph;
     let mut prev = objective(&g, data).unwrap();
     let mut used = 0;
     while used < CAP {
-        g = fit(&g, data, &FitParams { epochs: CHUNK, lr, l2: 0.0 }).unwrap().graph;
+        g = fit(
+            &g,
+            data,
+            &FitParams {
+                epochs: CHUNK,
+                lr,
+                l2: 0.0,
+            },
+        )
+        .unwrap()
+        .graph;
         used += CHUNK;
         let now = objective(&g, data).unwrap();
         // A step too large makes this NEGATIVE rather than small, and stopping on it is correct:
@@ -203,7 +236,10 @@ fn fit_cd(structure: &Graph, data: &Dataset, epochs: usize, lr: f64) -> [Graph; 
         persistent: false,
     };
     let cd10 = Params { k: 10, ..cd1 };
-    let pcd = Params { persistent: true, ..cd10 };
+    let pcd = Params {
+        persistent: true,
+        ..cd10
+    };
     [
         train(structure, data, &cd1, 7).unwrap().graph,
         train(structure, data, &cd10, 7).unwrap().graph,
@@ -304,8 +340,9 @@ fn main() {
         let data = draw_from(&t, rows, 3);
         let floor = exact_log_likelihood(&start, &data).unwrap();
         let (ceiling, _) = ceiling_of(&start, &data, &grid);
-        for (k, &(v, lr, used)) in
-            all_methods(&start, &data, &data, cd_epochs, &grid).iter().enumerate()
+        for (k, &(v, lr, used)) in all_methods(&start, &data, &data, cd_epochs, &grid)
+            .iter()
+            .enumerate()
         {
             table[k][si] = pct(v, floor, ceiling);
             steps[k][si] = lr;
@@ -350,12 +387,18 @@ fn main() {
         println!();
     }
     if truncated > 0 {
-        println!("  {truncated} of {} cells won at the grid edge", 6 * scales.len());
+        println!(
+            "  {truncated} of {} cells won at the grid edge",
+            6 * scales.len()
+        );
     }
 
     // The convergence cost, which is the thing a fixed-epoch table hides. Contrastive divergence
     // is not here because it does not converge -- see `to_convergence`.
-    println!("\n{:<20}   epochs to convergence (sampler-free methods only)", "");
+    println!(
+        "\n{:<20}   epochs to convergence (sampler-free methods only)",
+        ""
+    );
     let mut capped = 0;
     for k in 3..6 {
         print!("{:<20}", NAMES[k]);
@@ -392,7 +435,10 @@ fn main() {
         let clean = draw_from(&t, size, 3);
         let floor = exact_log_likelihood(&start, &clean).unwrap();
         let (ceiling, _) = ceiling_of(&start, &clean, &grid);
-        println!("{label} (ceiling {ceiling:.3} nats, range {:.3})\n", ceiling - floor);
+        println!(
+            "{label} (ceiling {ceiling:.3} nats, range {:.3})\n",
+            ceiling - floor
+        );
         print!("{:<20}", "corrupted");
         for f in fracs {
             print!("{:>9.0}%", 100.0 * f);
@@ -401,8 +447,9 @@ fn main() {
         let mut got = vec![vec![0.0f64; fracs.len()]; 6];
         for (fi, &f) in fracs.iter().enumerate() {
             let dirty = corrupt(&clean, f, 41);
-            for (k, &(v, _, _)) in
-                all_methods(&start, &dirty, &clean, cd_epochs, &grid).iter().enumerate()
+            for (k, &(v, _, _)) in all_methods(&start, &dirty, &clean, cd_epochs, &grid)
+                .iter()
+                .enumerate()
             {
                 got[k][fi] = pct(v, floor, ceiling);
             }

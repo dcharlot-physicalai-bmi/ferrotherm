@@ -75,7 +75,10 @@ impl core::fmt::Display for Error {
                 write!(f, "gate names variable {var}, but the circuit has {vars}")
             }
             Error::TooWide { width, limit } => {
-                write!(f, "a {width}-variable gate is wider than the {limit} this builds tables for")
+                write!(
+                    f,
+                    "a {width}-variable gate is wider than the {limit} this builds tables for"
+                )
             }
             Error::Unsatisfiable => write!(f, "a gate no assignment satisfies has no ground state"),
             Error::Reduce(e) => write!(f, "lowering to pairwise failed: {e}"),
@@ -110,7 +113,10 @@ impl Circuit {
     /// An empty circuit with `vars` variables.
     #[must_use]
     pub fn new(vars: usize) -> Circuit {
-        Circuit { vars, gates: Vec::new() }
+        Circuit {
+            vars,
+            gates: Vec::new(),
+        }
     }
 
     /// How many variables the circuit has.
@@ -140,11 +146,17 @@ impl Circuit {
     /// [`MAX_GATE`], and [`Error::Unsatisfiable`] for a relation nothing satisfies.
     pub fn gate(&mut self, vars: &[usize], f: impl Fn(&[bool]) -> bool) -> Result<(), Error> {
         if vars.len() > MAX_GATE {
-            return Err(Error::TooWide { width: vars.len(), limit: MAX_GATE });
+            return Err(Error::TooWide {
+                width: vars.len(),
+                limit: MAX_GATE,
+            });
         }
         for &v in vars {
             if v >= self.vars {
-                return Err(Error::UnknownVar { var: v, vars: self.vars });
+                return Err(Error::UnknownVar {
+                    var: v,
+                    vars: self.vars,
+                });
             }
         }
         let k = vars.len();
@@ -161,7 +173,10 @@ impl Circuit {
         if sat.is_empty() {
             return Err(Error::Unsatisfiable);
         }
-        self.gates.push(GateSpec { vars: vars.to_vec(), sat });
+        self.gates.push(GateSpec {
+            vars: vars.to_vec(),
+            sat,
+        });
         Ok(())
     }
 
@@ -202,7 +217,13 @@ impl Circuit {
     ///
     /// # Errors
     /// As [`Self::gate`].
-    pub fn half_adder(&mut self, a: usize, b: usize, sum: usize, carry: usize) -> Result<(), Error> {
+    pub fn half_adder(
+        &mut self,
+        a: usize,
+        b: usize,
+        sum: usize,
+        carry: usize,
+    ) -> Result<(), Error> {
         self.gate(&[a, b, sum, carry], |v| {
             let t = usize::from(v[0]) + usize::from(v[1]);
             (t % 2 == 1) == v[2] && (t >= 2) == v[3]
@@ -293,7 +314,11 @@ impl Circuit {
             // same completion seen twice, not an ambiguity.
             let mut seen = BTreeSet::new();
             for a in &fits {
-                seen.insert(free.iter().map(|&i| u32::from(a >> i & 1 == 1) << i).sum::<u32>());
+                seen.insert(
+                    free.iter()
+                        .map(|&i| u32::from(a >> i & 1 == 1) << i)
+                        .sum::<u32>(),
+                );
             }
             if seen.len() != 1 {
                 return None;
@@ -303,7 +328,12 @@ impl Circuit {
                 known[g.vars[i]] = Some(a >> i & 1 == 1);
             }
         }
-        Some(known.iter().map(|b| if b.unwrap_or(false) { 1i8 } else { -1 }).collect())
+        Some(
+            known
+                .iter()
+                .map(|b| if b.unwrap_or(false) { 1i8 } else { -1 })
+                .collect(),
+        )
     }
 
     /// The penalty as a program of arbitrary-arity factors, plus the constant that makes a
@@ -369,7 +399,8 @@ impl Circuit {
             match t.len() {
                 1 => p.bias.push((t[0], -c)),
                 _ => p.factors.push(
-                    Factor::new(&t, -c, self.vars).expect("indices were checked when the gate was added"),
+                    Factor::new(&t, -c, self.vars)
+                        .expect("indices were checked when the gate was added"),
                 ),
             }
         }
@@ -393,7 +424,10 @@ impl Circuit {
     pub fn to_graph(&self) -> Result<(Graph, Reduction), Error> {
         let (p, _) = self.to_program()?;
         let red = to_pairwise_exact(&p).map_err(Error::Reduce)?;
-        let g = red.program.to_graph().expect("the reduction returns a pairwise program");
+        let g = red
+            .program
+            .to_graph()
+            .expect("the reduction returns a pairwise program");
         Ok((g, red))
     }
 }
@@ -495,7 +529,12 @@ pub fn multiplier(bits: usize) -> Result<Multiplier, Error> {
         c.gate(&[z], |v| !v[0])?;
         product.push(z);
     }
-    Ok(Multiplier { circuit: c, a, b, product })
+    Ok(Multiplier {
+        circuit: c,
+        a,
+        b,
+        product,
+    })
 }
 
 /// Read a little-endian bit field out of a spin state.
@@ -535,7 +574,9 @@ mod tests {
 
     fn states(n: usize) -> impl Iterator<Item = Vec<i8>> {
         (0u32..(1u32 << n)).map(move |m| {
-            (0..n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect()
+            (0..n)
+                .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect()
         })
     }
 
@@ -613,7 +654,12 @@ mod tests {
     fn a_multiplier_computes_products_exhaustively() {
         for bits in 1..=4usize {
             let m = multiplier(bits).unwrap();
-            assert_eq!(m.product.len(), 2 * bits, "{bits}-bit product must be {} wide", 2 * bits);
+            assert_eq!(
+                m.product.len(),
+                2 * bits,
+                "{bits}-bit product must be {} wide",
+                2 * bits
+            );
             for x in 0..(1u64 << bits) {
                 for y in 0..(1u64 << bits) {
                     let mut fixed: Vec<(usize, bool)> = Vec::new();
@@ -623,9 +669,19 @@ mod tests {
                     for (i, &v) in m.b.iter().enumerate() {
                         fixed.push((v, y >> i & 1 == 1));
                     }
-                    let s = m.circuit.forward(&fixed).expect("a clamped multiplier is determined");
-                    assert!(m.circuit.satisfied(&s), "{bits}-bit {x}*{y}: forward state violates a gate");
-                    assert_eq!(read(&m.product, &s), x * y, "{bits}-bit multiplier: {x} * {y}");
+                    let s = m
+                        .circuit
+                        .forward(&fixed)
+                        .expect("a clamped multiplier is determined");
+                    assert!(
+                        m.circuit.satisfied(&s),
+                        "{bits}-bit {x}*{y}: forward state violates a gate"
+                    );
+                    assert_eq!(
+                        read(&m.product, &s),
+                        x * y,
+                        "{bits}-bit multiplier: {x} * {y}"
+                    );
                 }
             }
         }
@@ -643,7 +699,10 @@ mod tests {
         let bits = 2usize;
         let m = multiplier(bits).unwrap();
         let n = m.circuit.vars();
-        assert!(n <= 20, "the circuit must stay enumerable for this to be exhaustive: {n} spins");
+        assert!(
+            n <= 20,
+            "the circuit must stay enumerable for this to be exhaustive: {n} spins"
+        );
         let (p, offset) = m.circuit.to_program().unwrap();
 
         for target in 0..(1u64 << (2 * bits)) {
@@ -666,7 +725,10 @@ mod tests {
             }
             got.sort_unstable();
             got.dedup();
-            assert_eq!(got, want, "clamping the product to {target} must give exactly its factors");
+            assert_eq!(
+                got, want,
+                "clamping the product to {target} must give exactly its factors"
+            );
         }
     }
 
@@ -678,7 +740,10 @@ mod tests {
         let mut c = Circuit::new(5);
         c.full_adder(0, 1, 2, 3, 4).unwrap();
         let (g, red) = c.to_graph().unwrap();
-        assert!(red.ancillas > 0, "a five-variable gate must need ancillas, or this tests nothing");
+        assert!(
+            red.ancillas > 0,
+            "a five-variable gate must need ancillas, or this tests nothing"
+        );
         assert_eq!(red.original_spins, 5);
 
         // Minimise over the FULL lowered space, then project: for each original assignment, the
@@ -692,11 +757,16 @@ mod tests {
         let ground: Vec<usize> = (0..32).filter(|&k| best[k] - floor < 1e-9).collect();
         let sat: Vec<usize> = (0..32)
             .filter(|&k| {
-                let s: Vec<i8> = (0..5).map(|i| if k >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+                let s: Vec<i8> = (0..5)
+                    .map(|i| if k >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 c.satisfied(&s)
             })
             .collect();
-        assert_eq!(ground, sat, "the lowered graph's ground states are not the gate's truth table");
+        assert_eq!(
+            ground, sat,
+            "the lowered graph's ground states are not the gate's truth table"
+        );
     }
 
     /// Refusals are by name, and an unsatisfiable gate is refused rather than encoded as a penalty
@@ -709,7 +779,10 @@ mod tests {
         let wide: Vec<usize> = (0..MAX_GATE + 1).map(|_| 0).collect();
         assert_eq!(
             c.gate(&wide, |_| true),
-            Err(Error::TooWide { width: MAX_GATE + 1, limit: MAX_GATE })
+            Err(Error::TooWide {
+                width: MAX_GATE + 1,
+                limit: MAX_GATE
+            })
         );
         assert_eq!(c.gates(), 0, "no refused gate may have been recorded");
     }

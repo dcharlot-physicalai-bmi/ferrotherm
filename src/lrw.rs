@@ -90,7 +90,12 @@ mod tests {
             let (pm, pp) = probs(f, sigma, dt, dx);
             let mean = pp * dx - pm * dx;
             let second = (pp + pm) * dx * dx;
-            assert!((mean - dt * f).abs() < 1e-14, "E[Delta] {} vs {}", mean, dt * f);
+            assert!(
+                (mean - dt * f).abs() < 1e-14,
+                "E[Delta] {} vs {}",
+                mean,
+                dt * f
+            );
             assert!(
                 (second - dt * sigma * sigma).abs() < 1e-13,
                 "E[Delta^2] {} vs {}",
@@ -116,7 +121,16 @@ mod tests {
         let (mut sum, mut sum2) = (0.0, 0.0);
         for _ in 0..n_paths {
             let mut x = [0.0f64];
-            integrate(&mut x, 0.0, dt, &[dx], n_steps, |_, _, _| c, |_, _, _| sigma, &mut rng);
+            integrate(
+                &mut x,
+                0.0,
+                dt,
+                &[dx],
+                n_steps,
+                |_, _, _| c,
+                |_, _, _| sigma,
+                &mut rng,
+            );
             sum += x[0];
             sum2 += x[0] * x[0];
         }
@@ -125,8 +139,14 @@ mod tests {
         let want_mean = n_steps as f64 * dt * c;
         let want_var = n_steps as f64 * (dt * sigma * sigma - dt * dt * c * c);
         let se_mean = (want_var / n_paths as f64).sqrt();
-        assert!((mean - want_mean).abs() < 4.0 * se_mean, "mean {mean} vs {want_mean}");
-        assert!((var - want_var).abs() / want_var < 0.1, "var {var} vs {want_var}");
+        assert!(
+            (mean - want_mean).abs() < 4.0 * se_mean,
+            "mean {mean} vs {want_mean}"
+        );
+        assert!(
+            (var - want_var).abs() / want_var < 0.1,
+            "var {var} vs {want_var}"
+        );
     }
 
     /// The stability mechanism: dx = -x^3 dt + sqrt(2) dW at dt = 0.1. Euler-Maruyama is
@@ -142,10 +162,22 @@ mod tests {
         let mut x = [x0];
         let mut max_abs: f64 = 0.0;
         for _ in 0..100_000 {
-            integrate(&mut x, 0.0, dt, &[dx], 1, |x, _, _| -x[0].powi(3), |_, _, _| sigma, &mut rng);
+            integrate(
+                &mut x,
+                0.0,
+                dt,
+                &[dx],
+                1,
+                |x, _, _| -x[0].powi(3),
+                |_, _, _| sigma,
+                &mut rng,
+            );
             max_abs = max_abs.max(x[0].abs());
         }
-        assert!(max_abs <= x0 + dx + 1e-12, "walk escaped: max |x| = {max_abs}");
+        assert!(
+            max_abs <= x0 + dx + 1e-12,
+            "walk escaped: max |x| = {max_abs}"
+        );
         // EM from the same start: |x_{k+1}| = |x_k| * |1 - dt x_k^2| grows without bound
         let mut rng2 = Pcg::new(0xC3B1C, 4);
         let mut xe = x0;
@@ -160,7 +192,10 @@ mod tests {
                 break;
             }
         }
-        assert!(diverged, "EM did not diverge from x0 = {x0} (reached {xe}); contrast unearned");
+        assert!(
+            diverged,
+            "EM did not diverge from x0 = {x0} (reached {xe}); contrast unearned"
+        );
     }
 
     /// OU stationary check: the walk's stationary mean must solve A x = b (weak order 1).
@@ -175,15 +210,29 @@ mod tests {
         let dx = dt.sqrt() * sigma;
         let mut rng = Pcg::new(0x0057A7, 6);
         let mut x = [0.0f64, 0.0];
-        integrate(&mut x, 0.0, dt, &[dx, dx], 200_000, // burn-in
+        integrate(
+            &mut x,
+            0.0,
+            dt,
+            &[dx, dx],
+            200_000, // burn-in
             |x, _, i| b[i] - (a[i][0] * x[0] + a[i][1] * x[1]),
-            |_, _, _| sigma, &mut rng);
+            |_, _, _| sigma,
+            &mut rng,
+        );
         let (mut m0, mut m1) = (0.0, 0.0);
         let n = 2_000_000usize;
         for _ in 0..n {
-            integrate(&mut x, 0.0, dt, &[dx, dx], 1,
+            integrate(
+                &mut x,
+                0.0,
+                dt,
+                &[dx, dx],
+                1,
                 |x, _, i| b[i] - (a[i][0] * x[0] + a[i][1] * x[1]),
-                |_, _, _| sigma, &mut rng);
+                |_, _, _| sigma,
+                &mut rng,
+            );
             m0 += x[0];
             m1 += x[1];
         }

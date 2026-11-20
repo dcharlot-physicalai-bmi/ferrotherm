@@ -170,7 +170,11 @@ impl Balance {
 
 /// `ln(1 + e^x)`, without overflowing for large `x` or losing the small-`x` end.
 fn softplus(x: f64) -> f64 {
-    if x > 0.0 { x + (-x).exp().ln_1p() } else { x.exp().ln_1p() }
+    if x > 0.0 {
+        x + (-x).exp().ln_1p()
+    } else {
+        x.exp().ln_1p()
+    }
 }
 
 /// A single-flip sampler whose proposal is weighted by the energy change.
@@ -216,7 +220,9 @@ impl<'g> Informed<'g> {
     #[must_use]
     pub fn new(g: &'g Graph, beta: f64, seed: u64) -> Informed<'g> {
         let mut rng = Pcg::new(seed, 0x1F0D);
-        let s: Vec<i8> = (0..g.n).map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 }).collect();
+        let s: Vec<i8> = (0..g.n)
+            .map(|_| if rng.f64() < 0.5 { -1i8 } else { 1 })
+            .collect();
         Self::from_state(g, beta, s, rng)
     }
 
@@ -453,7 +459,11 @@ impl<'g> Informed<'g> {
     /// nearly uniform — which is the regime where it has nothing to offer over plain Gibbs.
     #[must_use]
     pub fn acceptance(&self) -> f64 {
-        if self.steps == 0 { 0.0 } else { self.accepted as f64 / self.steps as f64 }
+        if self.steps == 0 {
+            0.0
+        } else {
+            self.accepted as f64 / self.steps as f64
+        }
     }
 
     /// Steps taken.
@@ -549,9 +559,15 @@ mod tests {
             // bound, since the site is drawn from it and the acceptance from `total`.
             worst = worst.max((it.fenwick_total() - fresh).abs() / fresh.max(1.0));
         }
-        assert!(worst < 1e-9, "incremental state drifted from a recomputation by {worst:e}");
+        assert!(
+            worst < 1e-9,
+            "incremental state drifted from a recomputation by {worst:e}"
+        );
         // And the refresh must actually be reachable within a run, or the guard is decoration.
-        assert!(it.taken() < REFRESH, "the loop must stop short of the refresh to test the drift");
+        assert!(
+            it.taken() < REFRESH,
+            "the loop must stop short of the refresh to test the drift"
+        );
     }
 
     /// THE TREE DRAWS THE SAME SITE THE SCAN DID, and the scan is the definition: the smallest
@@ -589,11 +605,17 @@ mod tests {
                 if want != got {
                     disagreements += 1;
                 }
-                assert_eq!(got, k, "the midpoint of site {k}'s mass must select site {k}");
+                assert_eq!(
+                    got, k,
+                    "the midpoint of site {k}'s mass must select site {k}"
+                );
             }
             prefix += wk;
         }
-        assert_eq!(disagreements, 0, "tree and scan disagreed on {disagreements} midpoints");
+        assert_eq!(
+            disagreements, 0,
+            "tree and scan disagreed on {disagreements} midpoints"
+        );
         // Past every prefix the scan clamps to the last site; so must the tree.
         assert_eq!(it.select(prefix * 2.0), g.n - 1);
         // And the distribution the tree induces IS w/total: many uniform targets, counted per site,
@@ -613,7 +635,10 @@ mod tests {
                 chi2 += (f64::from(c) - expect).powi(2) / expect;
             }
         }
-        assert!(chi2 < 3.0 * g.n as f64, "selection is not proportional to the weights: chi2 {chi2:.1}");
+        assert!(
+            chi2 < 3.0 * g.n as f64,
+            "selection is not proportional to the weights: chi2 {chi2:.1}"
+        );
     }
 
     /// A WIDE DYNAMIC RANGE IN THE FIELDS MUST NOT STALL THE SAMPLER, which is the defect this
@@ -641,7 +666,10 @@ mod tests {
 
         let mut it = Informed::new(&g, 3.0, 5);
         it.steps(20_000);
-        assert!(it.acceptance() > 0.0, "the chain stalled: no proposal was ever accepted");
+        assert!(
+            it.acceptance() > 0.0,
+            "the chain stalled: no proposal was ever accepted"
+        );
         // The pinned sites must hold, and the free ones must actually have moved.
         assert_eq!(it.s[0], 1, "the +5000 pin must hold");
         assert_eq!(it.s[9], -1, "and the -5000 pin must hold");
@@ -650,7 +678,11 @@ mod tests {
             it.steps(g.n);
             seen.insert(it.s[4..7].to_vec());
         }
-        assert!(seen.len() > 1, "the unpinned interior never moved: {} distinct states", seen.len());
+        assert!(
+            seen.len() > 1,
+            "the unpinned interior never moved: {} distinct states",
+            seen.len()
+        );
     }
 
     /// A model with no couplings and no fields has no energy scale, and the shift divides by it.
@@ -660,7 +692,10 @@ mod tests {
         let g = GraphBuilder::new(6).build();
         let mut it = Informed::new(&g, 1.0, 5);
         it.steps(2_000);
-        assert!(it.acceptance() > 0.9, "a flat landscape accepts nearly everything");
+        assert!(
+            it.acceptance() > 0.9,
+            "a flat landscape accepts nearly everything"
+        );
         assert!(it.energy().abs() < 1e-12, "and every state has zero energy");
     }
 
@@ -690,6 +725,9 @@ mod tests {
             it.w
         );
         let share = it.w[3] / it.total;
-        assert!(share > 0.9, "and it must dominate the proposal, not merely lead it: {share:.4}");
+        assert!(
+            share > 0.9,
+            "and it must dominate the proposal, not merely lead it: {share:.4}"
+        );
     }
 }

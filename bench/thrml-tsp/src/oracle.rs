@@ -37,7 +37,9 @@ pub struct LatticeEnergy {
 /// `L = 0` or `L > 16`. A non-finite coupling or temperature.
 pub fn ising_open_transfer(l: usize, j: f64, beta: f64) -> Result<LatticeEnergy, String> {
     if l == 0 || l > ISING_TM_MAX_SIDE {
-        return Err(format!("Ising transfer matrix is exact for side 1..={ISING_TM_MAX_SIDE}, got {l}"));
+        return Err(format!(
+            "Ising transfer matrix is exact for side 1..={ISING_TM_MAX_SIDE}, got {l}"
+        ));
     }
     if !j.is_finite() || !beta.is_finite() {
         return Err("Ising transfer matrix refuses a non-finite J or beta".into());
@@ -91,7 +93,12 @@ fn ising_advance(log_w: &[f64], mean_e: &[f64], l: usize, k: f64, j: f64) -> (Ve
                 if i > 0 {
                     bonds += snew * ising_spin(m2, i - 1);
                 }
-                let (nl, ne) = log_sum_mean(nxt_l[m2], nxt_e[m2], cur_l[mask] + k * bonds, cur_e[mask] - j * bonds);
+                let (nl, ne) = log_sum_mean(
+                    nxt_l[m2],
+                    nxt_e[m2],
+                    cur_l[mask] + k * bonds,
+                    cur_e[mask] - j * bonds,
+                );
                 nxt_l[m2] = nl;
                 nxt_e[m2] = ne;
             }
@@ -117,7 +124,8 @@ pub fn potts_open_transfer(l: usize, q: usize, j: f64, beta: f64) -> Result<Latt
     if !j.is_finite() || !beta.is_finite() {
         return Err("Potts transfer matrix refuses a non-finite J or beta".into());
     }
-    let nstate = q.checked_pow(u32::try_from(l).map_err(|_| "side does not fit u32".to_string())?)
+    let nstate = q
+        .checked_pow(u32::try_from(l).map_err(|_| "side does not fit u32".to_string())?)
         .filter(|n| *n <= 1 << 16)
         .ok_or_else(|| format!("Potts transfer matrix refuses q^L = {q}^{l}"))?;
     let mut log_w = vec![0.0; nstate];
@@ -155,7 +163,14 @@ fn potts_horiz(state: usize, l: usize, q: usize) -> f64 {
     bonds
 }
 
-fn potts_advance(log_w: &[f64], mean_e: &[f64], l: usize, q: usize, j: f64, beta: f64) -> (Vec<f64>, Vec<f64>) {
+fn potts_advance(
+    log_w: &[f64],
+    mean_e: &[f64],
+    l: usize,
+    q: usize,
+    j: f64,
+    beta: f64,
+) -> (Vec<f64>, Vec<f64>) {
     let n = log_w.len();
     let mut cur_l = log_w.to_vec();
     let mut cur_e = mean_e.to_vec();
@@ -216,7 +231,10 @@ fn collapse(log_w: &[f64], mean_e: &[f64]) -> Result<LatticeEnergy, String> {
     if !acc_l.is_finite() || !acc_e.is_finite() {
         return Err("transfer matrix produced a non-finite partition function".into());
     }
-    Ok(LatticeEnergy { log_z: acc_l, mean_energy: acc_e })
+    Ok(LatticeEnergy {
+        log_z: acc_l,
+        mean_energy: acc_e,
+    })
 }
 
 /// Mean energy of a long heat-bath chain on the finite open grid.
@@ -255,7 +273,8 @@ pub fn ising_enumerated_mean(l: usize, j: f64, beta: f64) -> Option<f64> {
 pub fn ising_kac_ward_energy(l: usize, j: f64, beta: f64) -> Result<f64, String> {
     let g = grid2d(l, l, j);
     let sol = pfaffian::solve(&g, beta).map_err(|e| format!("Kac-Ward {l}x{l}: {e:?}"))?;
-    sol.energy.ok_or_else(|| "Kac-Ward did not return an internal energy".into())
+    sol.energy
+        .ok_or_else(|| "Kac-Ward did not return an internal energy".into())
 }
 
 /// Every state of an open Potts grid, streamed. `3^16` is about 43 million states.
@@ -266,7 +285,9 @@ pub fn potts_open_brute_mean(l: usize, q: usize, j: f64, beta: f64) -> Result<f6
         return Err("brute Potts needs q >= 2 and a side".into());
     }
     let n = l * l;
-    let states = q.checked_pow(u32::try_from(n).map_err(|_| "n".to_string())?).ok_or("state count overflow")?;
+    let states = q
+        .checked_pow(u32::try_from(n).map_err(|_| "n".to_string())?)
+        .ok_or("state count overflow")?;
     let mut edges = Vec::new();
     for y in 0..l {
         for x in 0..l {
@@ -344,13 +365,28 @@ mod tests {
         let beta = 0.3;
         let tm4 = ising_open_transfer(4, j, beta).unwrap();
         let en = ising_enumerated_mean(4, j, beta).unwrap();
-        assert!((tm4.mean_energy - en).abs() < 1e-8, "tm {} enum {}", tm4.mean_energy, en);
+        assert!(
+            (tm4.mean_energy - en).abs() < 1e-8,
+            "tm {} enum {}",
+            tm4.mean_energy,
+            en
+        );
         let tm2 = ising_open_transfer(2, j, beta).unwrap();
         let en2 = ising_enumerated_mean(2, j, beta).unwrap();
-        assert!((tm2.mean_energy - en2).abs() < 1e-8, "2x2 tm {} enum {}", tm2.mean_energy, en2);
+        assert!(
+            (tm2.mean_energy - en2).abs() < 1e-8,
+            "2x2 tm {} enum {}",
+            tm2.mean_energy,
+            en2
+        );
         let tm8 = ising_open_transfer(8, j, beta).unwrap();
         let kw = ising_kac_ward_energy(8, j, beta).unwrap();
-        assert!((tm8.mean_energy - kw).abs() < 1e-6, "tm {} kac-ward {}", tm8.mean_energy, kw);
+        assert!(
+            (tm8.mean_energy - kw).abs() < 1e-6,
+            "tm {} kac-ward {}",
+            tm8.mean_energy,
+            kw
+        );
         assert!(ising_open_transfer(32, j, beta).is_err());
     }
 
@@ -361,7 +397,10 @@ mod tests {
         let tm16 = ising_open_transfer(16, j, beta).unwrap();
         let onsager = onsager_energy_density(beta, j);
         let per_site = tm16.mean_energy / 256.0;
-        assert!(per_site < 0.0, "a ferromagnet below infinite temperature has negative energy");
+        assert!(
+            per_site < 0.0,
+            "a ferromagnet below infinite temperature has negative energy"
+        );
         let gap16 = (per_site - onsager).abs();
         assert!(gap16 < 0.08, "16x16 {per_site} onsager {onsager}");
         for side in [32usize, 64] {
@@ -382,7 +421,10 @@ mod tests {
             let set2 = smp2.collect(&plan, None);
             let mean2 = set2.energies().iter().sum::<f64>() / set2.energies().len() as f64;
             let agree = (mean - mean2).abs() / (side * side) as f64;
-            assert!(agree < 0.05, "{side} reference chains differ by {agree} per site");
+            assert!(
+                agree < 0.05,
+                "{side} reference chains differ by {agree} per site"
+            );
         }
     }
 
@@ -392,13 +434,29 @@ mod tests {
         let beta = 0.5;
         let tm = potts_open_transfer(3, 3, j, beta).unwrap();
         let en = potts_enumerated_mean(3, 3, j, beta).unwrap();
-        assert!((tm.mean_energy - en).abs() < 1e-7, "q=3 3x3 tm {} enum {}", tm.mean_energy, en);
+        assert!(
+            (tm.mean_energy - en).abs() < 1e-7,
+            "q=3 3x3 tm {} enum {}",
+            tm.mean_energy,
+            en
+        );
         let tm4 = potts_open_transfer(2, 4, j, beta).unwrap();
         let en4 = potts_enumerated_mean(2, 4, j, beta).unwrap();
-        assert!((tm4.mean_energy - en4).abs() < 1e-8, "q=4 2x2 tm {} enum {}", tm4.mean_energy, en4);
+        assert!(
+            (tm4.mean_energy - en4).abs() < 1e-8,
+            "q=4 2x2 tm {} enum {}",
+            tm4.mean_energy,
+            en4
+        );
         let big = potts_open_transfer(8, 3, j, beta).unwrap();
-        assert!(big.mean_energy < 0.0, "ferromagnetic Potts energy is negative");
-        assert!(potts_open_transfer(8, 5, j, beta).is_err(), "5^8 does not fit the vector");
+        assert!(
+            big.mean_energy < 0.0,
+            "ferromagnetic Potts energy is negative"
+        );
+        assert!(
+            potts_open_transfer(8, 5, j, beta).is_err(),
+            "5^8 does not fit the vector"
+        );
         assert!(beta < potts::critical_beta(3));
         assert!(beta < potts::critical_beta(4));
     }
@@ -493,14 +551,22 @@ mod tests {
         let tm = ising_open_transfer(8, j, beta).unwrap();
         let chain = ising_reference_chain(8, j, beta, 3);
         let gap = (chain - tm.mean_energy).abs() / 64.0;
-        assert!(gap < 0.05, "reference {chain} transfer {} per-site gap {gap}", tm.mean_energy);
+        assert!(
+            gap < 0.05,
+            "reference {chain} transfer {} per-site gap {gap}",
+            tm.mean_energy
+        );
     }
 
     #[test]
     fn scaled_grids_are_the_two_colours_thrml_block_gibbs_uses() {
         for side in [4usize, 8, 16, 32, 64] {
             let g = grid2d(side, side, 1.0);
-            assert_eq!(g.classes.len(), 2, "{side} a grid is 2-coloured, which is THRML's checkerboard");
+            assert_eq!(
+                g.classes.len(),
+                2,
+                "{side} a grid is 2-coloured, which is THRML's checkerboard"
+            );
             let mut colour = vec![0usize; g.n];
             for (c, class) in g.classes.iter().enumerate() {
                 for &i in class {

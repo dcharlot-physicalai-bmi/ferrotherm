@@ -89,18 +89,29 @@ impl core::fmt::Display for Invalid {
                 "{have} sample(s): the U-statistic averages over ORDERED PAIRS of distinct draws \
                  and there are none, so the unbiased statistic the test uses does not exist"
             ),
-            Invalid::WrongWidth { sample, found, spins } => write!(
+            Invalid::WrongWidth {
+                sample,
+                found,
+                spins,
+            } => write!(
                 f,
                 "sample {sample} has {found} spins and the model has {spins}; a Stein score is one \
                  number per site of the model, and there is no site to attach the extras to"
             ),
-            Invalid::NotASpin { sample, site, value } => write!(
+            Invalid::NotASpin {
+                sample,
+                site,
+                value,
+            } => write!(
                 f,
                 "sample {sample} site {site} holds {value}, and this operator is built from single \
                  flips of a two-state variable: only -1 and +1 have a flip"
             ),
             Invalid::Beta(b) => {
-                write!(f, "beta is {b}; the score is exp(-beta * dE) and needs a finite exponent")
+                write!(
+                    f,
+                    "beta is {b}; the score is exp(-beta * dE) and needs a finite exponent"
+                )
             }
             Invalid::Bandwidth(w) => write!(
                 f,
@@ -115,7 +126,10 @@ impl core::fmt::Display for Invalid {
                  `Graph::flip_gap_max` for the instance's own energy scale"
             ),
             Invalid::Level(l) => {
-                write!(f, "test level {l} is not in (0, 1), so it names no rejection region")
+                write!(
+                    f,
+                    "test level {l} is not in (0, 1), so it names no rejection region"
+                )
             }
             Invalid::NoBootstraps => write!(
                 f,
@@ -143,7 +157,12 @@ pub struct Options {
 impl Default for Options {
     /// The paper's kernel at unit bandwidth, 500 replicates, a 5% test, fixed seed.
     fn default() -> Self {
-        Options { bandwidth: 1.0, bootstraps: 500, level: 0.05, seed: 0x5731 }
+        Options {
+            bandwidth: 1.0,
+            bootstraps: 500,
+            level: 0.05,
+            seed: 0x5731,
+        }
     }
 }
 
@@ -185,8 +204,7 @@ fn stein_kernel(x: &[i8], y: &[i8], sx: &[f64], sy: &[f64], u: f64) -> f64 {
         let k_y = k_x;
         // k(flip_i x, flip_i y): both moved, the agreement at i is what it was.
         let k_both = k;
-        acc += sx[i] * sy[i] * k - sx[i] * (k - k_y) - sy[i] * (k - k_x)
-            + (k - k_x - k_y + k_both);
+        acc += sx[i] * sy[i] * k - sx[i] * (k - k_y) - sy[i] * (k - k_x) + (k - k_x - k_y + k_both);
     }
     acc
 }
@@ -202,7 +220,9 @@ fn checked_scores(
         return Err(Invalid::Empty);
     }
     if samples.len() < 2 {
-        return Err(Invalid::TooFew { have: samples.len() });
+        return Err(Invalid::TooFew {
+            have: samples.len(),
+        });
     }
     if !beta.is_finite() {
         return Err(Invalid::Beta(beta));
@@ -213,11 +233,19 @@ fn checked_scores(
     let mut out = Vec::with_capacity(samples.len());
     for (a, s) in samples.iter().enumerate() {
         if s.len() != g.n {
-            return Err(Invalid::WrongWidth { sample: a, found: s.len(), spins: g.n });
+            return Err(Invalid::WrongWidth {
+                sample: a,
+                found: s.len(),
+                spins: g.n,
+            });
         }
         for (i, &v) in s.iter().enumerate() {
             if v != 1 && v != -1 {
-                return Err(Invalid::NotASpin { sample: a, site: i, value: v });
+                return Err(Invalid::NotASpin {
+                    sample: a,
+                    site: i,
+                    value: v,
+                });
             }
         }
         let sc = difference_score(g, beta, s);
@@ -372,9 +400,8 @@ pub fn goodness_of_fit(
     let over = reps.iter().filter(|&&r| r >= stat.u).count();
     let p_value = (1 + over) as f64 / (opt.bootstraps + 1) as f64;
     reps.sort_by(f64::total_cmp);
-    let rank = (((1.0 - opt.level) * opt.bootstraps as f64).ceil() as usize)
-        .clamp(1, opt.bootstraps)
-        - 1;
+    let rank =
+        (((1.0 - opt.level) * opt.bootstraps as f64).ceil() as usize).clamp(1, opt.bootstraps) - 1;
     Ok(Fit {
         ksd: stat,
         p_value,
@@ -409,7 +436,11 @@ mod tests {
     /// Every state of an `n`-spin model, in the bit order `ising::exact_boltzmann` indexes by.
     fn all_states(n: usize) -> Vec<Vec<i8>> {
         (0..1usize << n)
-            .map(|mask| (0..n).map(|b| if mask >> b & 1 == 1 { 1i8 } else { -1 }).collect())
+            .map(|mask| {
+                (0..n)
+                    .map(|b| if mask >> b & 1 == 1 { 1i8 } else { -1 })
+                    .collect()
+            })
             .collect()
     }
 
@@ -434,7 +465,9 @@ mod tests {
                     let mid = usize::midpoint(lo, hi);
                     if cdf[mid] < x { lo = mid + 1 } else { hi = mid }
                 }
-                (0..g.n).map(|b| if lo >> b & 1 == 1 { 1i8 } else { -1 }).collect()
+                (0..g.n)
+                    .map(|b| if lo >> b & 1 == 1 { 1i8 } else { -1 })
+                    .collect()
             })
             .collect()
     }
@@ -445,8 +478,10 @@ mod tests {
     fn population(g: &Graph, beta_model: f64, beta_q: f64, bandwidth: f64) -> f64 {
         let q = ising::exact_boltzmann(g, beta_q);
         let states = all_states(g.n);
-        let sc: Vec<Vec<f64>> =
-            states.iter().map(|s| difference_score(g, beta_model, s)).collect();
+        let sc: Vec<Vec<f64>> = states
+            .iter()
+            .map(|s| difference_score(g, beta_model, s))
+            .collect();
         let u = (-bandwidth / g.n as f64).exp();
         let mut acc = 0.0;
         for a in 0..states.len() {
@@ -500,7 +535,10 @@ mod tests {
                 let sc = difference_score(&g, beta, s)[i];
                 acc += p[mask] * (sc * f[mask] - (f[mask] - f[mask ^ (1 << i)]));
             }
-            assert!(acc.abs() < 1e-12 * scale.max(1.0), "site {i} left a residual of {acc}");
+            assert!(
+                acc.abs() < 1e-12 * scale.max(1.0),
+                "site {i} left a residual of {acc}"
+            );
         }
     }
 
@@ -514,7 +552,10 @@ mod tests {
         for &beta in &[0.3, 0.75, 1.4] {
             for &bw in &[0.5, 1.0, 3.0] {
                 let d = population(&g, beta, beta, bw);
-                assert!(d.abs() < 1e-9, "beta={beta} bandwidth={bw} gave {d}, not zero");
+                assert!(
+                    d.abs() < 1e-9,
+                    "beta={beta} bandwidth={bw} gave {d}, not zero"
+                );
             }
         }
     }
@@ -532,8 +573,14 @@ mod tests {
             let mut nearer = 0.0;
             for r in ratios {
                 let d = population(&g, beta, beta * r, 1.0);
-                assert!(d > 1e-4, "beta*{r} gave {d}, which is not distinguishable from zero");
-                assert!(d > nearer, "further from the truth came out closer: {d} <= {nearer}");
+                assert!(
+                    d > 1e-4,
+                    "beta*{r} gave {d}, which is not distinguishable from zero"
+                );
+                assert!(
+                    d > nearer,
+                    "further from the truth came out closer: {d} <= {nearer}"
+                );
                 nearer = d;
             }
         }
@@ -544,13 +591,19 @@ mod tests {
     fn the_stein_kernel_is_symmetric() {
         let g = glass(10, 5);
         let states = exact_draws(&g, 0.8, 12, 4);
-        let sc: Vec<Vec<f64>> = states.iter().map(|s| difference_score(&g, 0.8, s)).collect();
+        let sc: Vec<Vec<f64>> = states
+            .iter()
+            .map(|s| difference_score(&g, 0.8, s))
+            .collect();
         let u = (-1.0f64 / g.n as f64).exp();
         for a in 0..states.len() {
             for b in 0..states.len() {
                 let ab = stein_kernel(&states[a], &states[b], &sc[a], &sc[b], u);
                 let ba = stein_kernel(&states[b], &states[a], &sc[b], &sc[a], u);
-                assert!((ab - ba).abs() < 1e-9 * ab.abs().max(1.0), "{a},{b}: {ab} vs {ba}");
+                assert!(
+                    (ab - ba).abs() < 1e-9 * ab.abs().max(1.0),
+                    "{a},{b}: {ab} vs {ba}"
+                );
             }
         }
     }
@@ -581,8 +634,14 @@ mod tests {
                 let mut fy = y.clone();
                 fy[i] = -fy[i];
                 let incremental = if x[i] == y[i] { k * u } else { k / u };
-                assert!((incremental - fresh(&fx, &y)).abs() < 1e-12, "flip x at {i}");
-                assert!((incremental - fresh(&x, &fy)).abs() < 1e-12, "flip y at {i}");
+                assert!(
+                    (incremental - fresh(&fx, &y)).abs() < 1e-12,
+                    "flip x at {i}"
+                );
+                assert!(
+                    (incremental - fresh(&x, &fy)).abs() < 1e-12,
+                    "flip y at {i}"
+                );
                 assert!((k - fresh(&fx, &fy)).abs() < 1e-12, "flipping both at {i}");
             }
         }
@@ -627,18 +686,39 @@ mod tests {
     fn exact_draws_pass_and_a_wrong_beta_is_rejected() {
         let g = glass(10, 41);
         let beta = 0.8;
-        let opt = Options { bootstraps: 400, ..Options::default() };
+        let opt = Options {
+            bootstraps: 400,
+            ..Options::default()
+        };
 
         let good = exact_draws(&g, beta, 200, 2024);
         let fit = goodness_of_fit(&g, beta, &good, &opt).unwrap();
-        assert!(!fit.rejected(), "exact draws rejected at p = {}", fit.p_value);
-        assert!(fit.ksd.u <= fit.threshold, "u = {} above {}", fit.ksd.u, fit.threshold);
+        assert!(
+            !fit.rejected(),
+            "exact draws rejected at p = {}",
+            fit.p_value
+        );
+        assert!(
+            fit.ksd.u <= fit.threshold,
+            "u = {} above {}",
+            fit.ksd.u,
+            fit.threshold
+        );
 
         for &wrong in &[0.4, 1.6] {
             let bad = exact_draws(&g, wrong, 200, 2024);
             let fit = goodness_of_fit(&g, beta, &bad, &opt).unwrap();
-            assert!(fit.rejected(), "beta {wrong} against {beta} passed at p = {}", fit.p_value);
-            assert!(fit.ksd.u > fit.threshold, "u = {} below {}", fit.ksd.u, fit.threshold);
+            assert!(
+                fit.rejected(),
+                "beta {wrong} against {beta} passed at p = {}",
+                fit.p_value
+            );
+            assert!(
+                fit.ksd.u > fit.threshold,
+                "u = {} below {}",
+                fit.ksd.u,
+                fit.threshold
+            );
             assert!(
                 fit.p_value <= 2.0 / (opt.bootstraps + 1) as f64,
                 "p = {} is not decisive",
@@ -655,7 +735,10 @@ mod tests {
     fn the_threshold_is_read_off_the_data_not_off_a_constant() {
         let g = glass(10, 41);
         let beta = 0.8;
-        let opt = Options { bootstraps: 200, ..Options::default() };
+        let opt = Options {
+            bootstraps: 200,
+            ..Options::default()
+        };
         let thresholds: Vec<f64> = (0..20)
             .map(|r| {
                 let s = exact_draws(&g, beta, 120, 5000 + r);
@@ -664,8 +747,14 @@ mod tests {
             .collect();
         let lo = thresholds.iter().copied().fold(f64::INFINITY, f64::min);
         let hi = thresholds.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        assert!(hi > lo * 1.2, "thresholds {lo} .. {hi} barely moved; is this really resampled?");
-        assert!(lo > 0.0, "a threshold at or below zero rejects half the correct models");
+        assert!(
+            hi > lo * 1.2,
+            "thresholds {lo} .. {hi} barely moved; is this really resampled?"
+        );
+        assert!(
+            lo > 0.0,
+            "a threshold at or below zero rejects half the correct models"
+        );
     }
 
     /// Under the null the test rejects at about the rate it was asked to.
@@ -678,15 +767,25 @@ mod tests {
     fn the_null_rejection_rate_matches_the_level() {
         let g = glass(9, 61);
         let beta = 0.7;
-        let opt = Options { bootstraps: 300, level: 0.2, ..Options::default() };
+        let opt = Options {
+            bootstraps: 300,
+            level: 0.2,
+            ..Options::default()
+        };
         let rejects = (0..40)
             .filter(|&r| {
                 let s = exact_draws(&g, beta, 100, 31_000 + r);
                 goodness_of_fit(&g, beta, &s, &opt).unwrap().rejected()
             })
             .count();
-        assert!(rejects <= 18, "{rejects} of 40 exact data sets rejected at level 0.2");
-        assert!(rejects >= 2, "{rejects} of 40: a test that never fires has no threshold");
+        assert!(
+            rejects <= 18,
+            "{rejects} of 40 exact data sets rejected at level 0.2"
+        );
+        assert!(
+            rejects >= 2,
+            "{rejects} of 40: a test that never fires has no threshold"
+        );
     }
 
     /// Power grows as the model moves away from the law the samples came from.
@@ -694,12 +793,18 @@ mod tests {
     fn power_grows_with_the_error_in_beta() {
         let g = glass(10, 41);
         let beta = 0.8;
-        let opt = Options { bootstraps: 300, ..Options::default() };
+        let opt = Options {
+            bootstraps: 300,
+            ..Options::default()
+        };
         let s = exact_draws(&g, beta, 150, 808);
         let mut last = f64::NEG_INFINITY;
         for &r in &[1.0, 1.15, 1.35, 1.6] {
             let u = goodness_of_fit(&g, beta * r, &s, &opt).unwrap().ksd.u;
-            assert!(u > last, "the statistic fell going from the truth outward at ratio {r}");
+            assert!(
+                u > last,
+                "the statistic fell going from the truth outward at ratio {r}"
+            );
             last = u;
         }
     }
@@ -713,7 +818,10 @@ mod tests {
         assert_eq!(ksd(&g, 0.5, &s[..1], 1.0), Err(Invalid::TooFew { have: 1 }));
         // `Beta(NaN)` never equals itself, so this one is matched rather than compared.
         assert!(matches!(ksd(&g, f64::NAN, &s, 1.0), Err(Invalid::Beta(b)) if b.is_nan()));
-        assert_eq!(ksd(&g, f64::INFINITY, &s, 1.0), Err(Invalid::Beta(f64::INFINITY)));
+        assert_eq!(
+            ksd(&g, f64::INFINITY, &s, 1.0),
+            Err(Invalid::Beta(f64::INFINITY))
+        );
         assert_eq!(ksd(&g, 0.5, &s, 0.0), Err(Invalid::Bandwidth(0.0)));
         assert_eq!(ksd(&g, 0.5, &s, -1.0), Err(Invalid::Bandwidth(-1.0)));
 
@@ -721,27 +829,54 @@ mod tests {
         short[2].pop();
         assert_eq!(
             ksd(&g, 0.5, &short, 1.0),
-            Err(Invalid::WrongWidth { sample: 2, found: 5, spins: 6 })
+            Err(Invalid::WrongWidth {
+                sample: 2,
+                found: 5,
+                spins: 6
+            })
         );
 
         let mut zero = s.clone();
         zero[1][3] = 0;
         assert_eq!(
             ksd(&g, 0.5, &zero, 1.0),
-            Err(Invalid::NotASpin { sample: 1, site: 3, value: 0 })
+            Err(Invalid::NotASpin {
+                sample: 1,
+                site: 3,
+                value: 0
+            })
         );
 
         // 1e9 * a flip gap of order one is far past exp()'s range, and an infinite score would
         // otherwise propagate a NaN statistic that compares false against every threshold.
-        assert!(matches!(ksd(&g, 1e9, &s, 1.0), Err(Invalid::ScoreOverflow { .. })));
+        assert!(matches!(
+            ksd(&g, 1e9, &s, 1.0),
+            Err(Invalid::ScoreOverflow { .. })
+        ));
 
-        let bad_level = Options { level: 0.0, ..Options::default() };
-        assert_eq!(goodness_of_fit(&g, 0.5, &s, &bad_level), Err(Invalid::Level(0.0)));
-        let none = Options { bootstraps: 0, ..Options::default() };
-        assert_eq!(goodness_of_fit(&g, 0.5, &s, &none), Err(Invalid::NoBootstraps));
+        let bad_level = Options {
+            level: 0.0,
+            ..Options::default()
+        };
+        assert_eq!(
+            goodness_of_fit(&g, 0.5, &s, &bad_level),
+            Err(Invalid::Level(0.0))
+        );
+        let none = Options {
+            bootstraps: 0,
+            ..Options::default()
+        };
+        assert_eq!(
+            goodness_of_fit(&g, 0.5, &s, &none),
+            Err(Invalid::NoBootstraps)
+        );
 
         // Every message says what was sent and what the model expects.
-        assert!(Invalid::TooFew { have: 1 }.to_string().contains("ORDERED PAIRS"));
+        assert!(
+            Invalid::TooFew { have: 1 }
+                .to_string()
+                .contains("ORDERED PAIRS")
+        );
     }
 
     /// Same seed, same verdict.
@@ -749,12 +884,18 @@ mod tests {
     fn the_verdict_is_reproducible_from_its_seed() {
         let g = glass(9, 71);
         let s = exact_draws(&g, 0.6, 60, 12);
-        let opt = Options { bootstraps: 120, ..Options::default() };
+        let opt = Options {
+            bootstraps: 120,
+            ..Options::default()
+        };
         let a = goodness_of_fit(&g, 0.6, &s, &opt).unwrap();
         let b = goodness_of_fit(&g, 0.6, &s, &opt).unwrap();
         assert_eq!(a, b);
         let c = goodness_of_fit(&g, 0.6, &s, &Options { seed: 99, ..opt }).unwrap();
-        assert_eq!(a.ksd, c.ksd, "the statistic does not depend on the bootstrap seed");
+        assert_eq!(
+            a.ksd, c.ksd,
+            "the statistic does not depend on the bootstrap seed"
+        );
     }
 
     // There is deliberately no test comparing this to a Gibbs chain, or to any other sampler.

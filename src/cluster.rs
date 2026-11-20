@@ -176,7 +176,10 @@ pub fn gauge(g: &Graph) -> Result<Vec<i8>, Frustrated> {
                     parent[j] = i;
                     queue.push_back(j);
                 } else if sigma[j] != want {
-                    return Err(Frustrated { cycle: cycle_through(&parent, i, j), ghost: None });
+                    return Err(Frustrated {
+                        cycle: cycle_through(&parent, i, j),
+                        ghost: None,
+                    });
                 }
             }
         }
@@ -645,7 +648,10 @@ struct Uf {
 
 impl Uf {
     fn new(n: usize) -> Uf {
-        Uf { parent: (0..n).collect(), size: vec![1; n] }
+        Uf {
+            parent: (0..n).collect(),
+            size: vec![1; n],
+        }
     }
     fn find(&mut self, mut v: usize) -> usize {
         while self.parent[v] != v {
@@ -672,7 +678,9 @@ mod tests {
     use super::*;
 
     fn coupling(g: &Graph, i: usize, j: usize) -> Option<f64> {
-        (g.offset[i]..g.offset[i + 1]).find(|&k| g.nbr[k] as usize == j).map(|k| g.w[k])
+        (g.offset[i]..g.offset[i + 1])
+            .find(|&k| g.nbr[k] as usize == j)
+            .map(|k| g.w[k])
     }
 
     /// The product of the couplings around a cycle, which is what balance is about.
@@ -697,7 +705,10 @@ mod tests {
         let disguise: Vec<i8> = (0..base.n).map(|_| rng.spin(0.5)).collect();
         let disguised = apply_gauge(&base, &disguise);
 
-        assert!(disguised.w.iter().any(|&w| w < 0.0), "the disguise did nothing");
+        assert!(
+            disguised.w.iter().any(|&w| w < 0.0),
+            "the disguise did nothing"
+        );
 
         let sigma = gauge(&disguised).expect("a relabelled ferromagnet is balanced");
         let regauged = apply_gauge(&disguised, &sigma);
@@ -713,9 +724,16 @@ mod tests {
         for n in [5usize, 7, 9] {
             let g = crate::ising::ring(n, -1.0, 0.0);
             let err = gauge(&g).expect_err("an odd AF ring cannot be gauged ferromagnetic");
-            assert!(err.cycle.len() >= 3, "a cycle needs three vertices: {:?}", err.cycle);
+            assert!(
+                err.cycle.len() >= 3,
+                "a cycle needs three vertices: {:?}",
+                err.cycle
+            );
             let prod = cycle_product(&g, &err.cycle);
-            assert!(prod < 0.0, "the witness cycle must have a negative product, got {prod}");
+            assert!(
+                prod < 0.0,
+                "the witness cycle must have a negative product, got {prod}"
+            );
         }
     }
 
@@ -742,11 +760,23 @@ mod tests {
         let c = &err.cycle;
         assert!(c.len() >= 3, "a cycle needs three vertices");
         let unique: std::collections::BTreeSet<_> = c.iter().collect();
-        assert_eq!(unique.len(), c.len(), "a cycle does not repeat a vertex: {c:?}");
+        assert_eq!(
+            unique.len(),
+            c.len(),
+            "a cycle does not repeat a vertex: {c:?}"
+        );
         for w in c.windows(2) {
-            assert!(coupling(&g, w[0], w[1]).is_some(), "{}-{} is not an edge", w[0], w[1]);
+            assert!(
+                coupling(&g, w[0], w[1]).is_some(),
+                "{}-{} is not an edge",
+                w[0],
+                w[1]
+            );
         }
-        assert!(coupling(&g, *c.last().unwrap(), c[0]).is_some(), "the cycle does not close");
+        assert!(
+            coupling(&g, *c.last().unwrap(), c[0]).is_some(),
+            "the cycle does not close"
+        );
         assert!(cycle_product(&g, c) < 0.0);
     }
 
@@ -760,7 +790,9 @@ mod tests {
         let sigma: Vec<i8> = (0..g.n).map(|i| if i % 3 == 0 { -1 } else { 1 }).collect();
         let gauged = apply_gauge(&g, &sigma);
         for m in 0u64..(1u64 << g.n) {
-            let s: Vec<i8> = (0..g.n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let s: Vec<i8> = (0..g.n)
+                .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             let mapped: Vec<i8> = s.iter().zip(&sigma).map(|(&v, &sg)| v * sg).collect();
             assert!(
                 (g.energy(&mapped) - gauged.energy(&s)).abs() < 1e-12,
@@ -809,11 +841,7 @@ mod tests {
                 let mut c = Sampler::new(&g, beta, 11).expect("balanced and unbiased");
                 let set = c.collect(&crate::samples::Plan::new(500, 6000, 4), update, None);
                 let cert = set.certificate(&g).expect("collect returns a chain");
-                crate::certify::assert_boltzmann(
-                    &cert,
-                    beta,
-                    &format!("{name} under {update:?}"),
-                );
+                crate::certify::assert_boltzmann(&cert, beta, &format!("{name} under {update:?}"));
             }
         }
     }
@@ -853,7 +881,10 @@ mod tests {
         for _ in 0..20 {
             biggest = biggest.max(c.sweep_with(Update::SwendsenWang, None).largest);
         }
-        assert!(biggest < g.n / 4, "at beta 0.01 clusters should be tiny; got {biggest}");
+        assert!(
+            biggest < g.n / 4,
+            "at beta 0.01 clusters should be tiny; got {biggest}"
+        );
     }
 
     /// The ledger is billed the spins the sweep updated, and NOTHING for the bonds it examined or
@@ -883,9 +914,16 @@ mod tests {
                 bonds += st.bonds_tested;
                 flipped += st.flipped;
             }
-            assert_eq!((l.samples, l.reads, l.writes), (visited, 0, 0), "{update:?}");
+            assert_eq!(
+                (l.samples, l.reads, l.writes),
+                (visited, 0, 0),
+                "{update:?}"
+            );
             assert!(bonds > 0, "{update:?}: bonds were tested and not measured");
-            assert!(flipped > 0, "{update:?}: at beta 0.44 something must have flipped");
+            assert!(
+                flipped > 0,
+                "{update:?}: at beta 0.44 something must have flipped"
+            );
         }
     }
 
@@ -905,10 +943,25 @@ mod tests {
         let mut lg = crate::ledger::Ledger::default();
         let mut lc = crate::ledger::Ledger::default();
         let gs = crate::gibbs::Sampler::new(&g, 0.44, 5).collect(&plan, Some(&mut lg));
-        let cs = Sampler::new(&g, 0.44, 5).unwrap().collect(&plan, Update::SwendsenWang, Some(&mut lc));
-        assert_eq!(gs.states().len(), cs.states().len(), "the fixture must keep equal draws");
-        assert_eq!(lc.reads, lg.reads, "cluster reads {} vs Gibbs reads {}", lc.reads, lg.reads);
-        assert_eq!(lc.reads, 30 * g.n as u64, "one read per node per kept state, no more");
+        let cs =
+            Sampler::new(&g, 0.44, 5)
+                .unwrap()
+                .collect(&plan, Update::SwendsenWang, Some(&mut lc));
+        assert_eq!(
+            gs.states().len(),
+            cs.states().len(),
+            "the fixture must keep equal draws"
+        );
+        assert_eq!(
+            lc.reads, lg.reads,
+            "cluster reads {} vs Gibbs reads {}",
+            lc.reads, lg.reads
+        );
+        assert_eq!(
+            lc.reads,
+            30 * g.n as u64,
+            "one read per node per kept state, no more"
+        );
         assert_eq!(lc.writes, 0, "a cluster chain reprograms nothing");
         assert!(lc.samples > 0, "and its updates are still charged");
     }
@@ -922,7 +975,10 @@ mod tests {
         let g = crate::ising::lattice2d(6, 1.0);
         let mut sw = Sampler::new(&g, 0.44, 2).unwrap();
         for _ in 0..5 {
-            assert_eq!(sw.sweep_with(Update::SwendsenWang, None).visited, g.n as u64);
+            assert_eq!(
+                sw.sweep_with(Update::SwendsenWang, None).visited,
+                g.n as u64
+            );
         }
         for k in [1usize, 4, 9] {
             let mut c = Sampler::new(&g, 0.44, 2).unwrap().with_wolff_steps(k);
@@ -953,7 +1009,10 @@ mod tests {
                     "beta {beta}, step {step}: reported {} flips and made {moved}",
                     st.flipped
                 );
-                assert!(st.flipped > 0, "beta {beta}, step {step}: a Wolff step declined to move");
+                assert!(
+                    st.flipped > 0,
+                    "beta {beta}, step {step}: a Wolff step declined to move"
+                );
             }
         }
     }
@@ -1015,8 +1074,13 @@ mod tests {
             b.couple(i, (i + 1 - 3) % 6 + 3, 1.0);
         }
         let g = b.build();
-        let k = (g.offset[0]..g.offset[1]).find(|&k| g.nbr[k] == 2).expect("edge 0-2 was kept");
-        assert_eq!(g.w[k], 0.0, "the two couplings must cancel to a stored zero");
+        let k = (g.offset[0]..g.offset[1])
+            .find(|&k| g.nbr[k] == 2)
+            .expect("edge 0-2 was kept");
+        assert_eq!(
+            g.w[k], 0.0,
+            "the two couplings must cancel to a stored zero"
+        );
 
         let sigma = gauge(&g).expect("a zero coupling cannot frustrate anything");
         let regauged = apply_gauge(&g, &sigma);
@@ -1069,7 +1133,9 @@ mod tests {
         let beta = 0.4;
         let (mut z, mut mz) = (0.0f64, 0.0f64);
         for mask in 0u64..(1u64 << g.n) {
-            let st: Vec<i8> = (0..g.n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let st: Vec<i8> = (0..g.n)
+                .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             let w = (-beta * g.energy(&st)).exp();
             z += w;
             mz += w * st.iter().map(|&x| f64::from(x)).sum::<f64>() / g.n as f64;
@@ -1078,7 +1144,10 @@ mod tests {
         // The guard is on the FIXTURE, not the result: dropping the ghost sends `<m>` to zero by
         // symmetry, so the fixture only earns its keep if the true value is far from zero compared
         // with the 0.01 tolerance below. It is 0.337 here, a margin of about thirty.
-        assert!(exact > 0.2, "the fixture's field is too weak to distinguish: {exact}");
+        assert!(
+            exact > 0.2,
+            "the fixture's field is too weak to distinguish: {exact}"
+        );
 
         for update in [Update::SwendsenWang, Update::Wolff] {
             let mut c = Sampler::new(&g, beta, 21).unwrap();
@@ -1116,10 +1185,23 @@ mod tests {
         let Err(f) = Sampler::new(&g, 0.4, 1) else {
             panic!("mixed-sign fields are not balanced and must be refused")
         };
-        assert_eq!(f.ghost, Some(g.n), "the ghost must be named, not left to be inferred");
-        assert!(f.cycle.contains(&g.n), "the witness must run through the ghost: {:?}", f.cycle);
-        let prod = f.product(&g).expect("the witness is a cycle of g plus the ghost");
-        assert!(prod < 0.0, "the witness product must be negative, got {prod}");
+        assert_eq!(
+            f.ghost,
+            Some(g.n),
+            "the ghost must be named, not left to be inferred"
+        );
+        assert!(
+            f.cycle.contains(&g.n),
+            "the witness must run through the ghost: {:?}",
+            f.cycle
+        );
+        let prod = f
+            .product(&g)
+            .expect("the witness is a cycle of g plus the ghost");
+        assert!(
+            prod < 0.0,
+            "the witness product must be negative, got {prod}"
+        );
     }
 
     /// A frustrated model is refused with its cycle.

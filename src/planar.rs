@@ -104,7 +104,10 @@ impl Embedding {
                     let b = self.adj[a][i];
                     face.push((a, b));
                     // Position of `a` in `b`'s rotation, stepped one backwards.
-                    let j = self.adj[b].iter().position(|&x| x == a).expect("the reverse dart");
+                    let j = self.adj[b]
+                        .iter()
+                        .position(|&x| x == a)
+                        .expect("the reverse dart");
                     let deg = self.adj[b].len();
                     i = (j + deg - 1) % deg;
                     a = b;
@@ -293,7 +296,10 @@ pub fn from_rotation(adj: Vec<Vec<usize>>) -> Option<Embedding> {
 pub fn embed(g: &Graph) -> Option<Embedding> {
     let n = g.n;
     if n == 0 {
-        return Some(Embedding { n: 0, adj: Vec::new() });
+        return Some(Embedding {
+            n: 0,
+            adj: Vec::new(),
+        });
     }
     // Simple undirected adjacency; the Graph CSR may hold both directions and may repeat.
     let mut nbr: Vec<Vec<usize>> = vec![Vec::new(); n];
@@ -360,7 +366,10 @@ pub fn why(g: &Graph) -> Option<Refusal> {
     if !biconnected(&nbr) {
         return Some(Refusal::NotBiconnected);
     }
-    Demoucron::new(nbr).run().is_none().then_some(Refusal::NotPlanar)
+    Demoucron::new(nbr)
+        .run()
+        .is_none()
+        .then_some(Refusal::NotPlanar)
 }
 
 /// Why an embedding was refused.
@@ -455,7 +464,10 @@ fn connected(nbr: &[Vec<usize>]) -> bool {
 
 /// A tree embeds with any rotation, and every dart is on the single face.
 fn tree_embedding(nbr: &[Vec<usize>]) -> Embedding {
-    Embedding { n: nbr.len(), adj: nbr.to_vec() }
+    Embedding {
+        n: nbr.len(),
+        adj: nbr.to_vec(),
+    }
 }
 
 /// Demoucron's path-addition planarity test, carrying the embedding as it goes.
@@ -635,8 +647,14 @@ impl Demoucron {
     /// Split face `f` along `path`, whose endpoints are both on it.
     fn split_face(&mut self, f: usize, path: &[usize]) {
         let cycle = self.faces[f].clone();
-        let a = cycle.iter().position(|&x| x == path[0]).expect("endpoint on the face");
-        let b = cycle.iter().position(|&x| x == path[path.len() - 1]).expect("endpoint on the face");
+        let a = cycle
+            .iter()
+            .position(|&x| x == path[0])
+            .expect("endpoint on the face");
+        let b = cycle
+            .iter()
+            .position(|&x| x == path[path.len() - 1])
+            .expect("endpoint on the face");
         // Two arcs of the face between the endpoints; the path plus each arc is a new face.
         let mut arc1 = Vec::new();
         let mut i = a;
@@ -869,8 +887,9 @@ mod tests {
         for v in 0..e.len() {
             let mut got = e.rotation(v).to_vec();
             got.sort_unstable();
-            let mut want: Vec<usize> =
-                (g.offset[v]..g.offset[v + 1]).map(|k| g.nbr[k] as usize).collect();
+            let mut want: Vec<usize> = (g.offset[v]..g.offset[v + 1])
+                .map(|k| g.nbr[k] as usize)
+                .collect();
             want.sort_unstable();
             want.dedup();
             assert_eq!(got, want, "vertex {v}");
@@ -887,12 +906,22 @@ mod tests {
             let e = torus_grid(w, h).expect("3 or more each way");
             assert_eq!(e.len(), w * h);
             assert_eq!(e.edges(), 2 * w * h, "a 4-regular graph on {w}x{h}");
-            assert_eq!(e.faces().len(), w * h, "every face of a toroidal grid is a square");
+            assert_eq!(
+                e.faces().len(),
+                w * h,
+                "every face of a toroidal grid is a square"
+            );
             assert_eq!(e.euler(), 0, "{w}x{h}: the torus has chi = 0");
             assert_eq!(e.genus(), Some(1));
-            assert!(!e.is_consistent(), "it is a valid embedding, and NOT a planar one");
+            assert!(
+                !e.is_consistent(),
+                "it is a valid embedding, and NOT a planar one"
+            );
             // Every dart on exactly one face, which is what makes the dual well defined.
-            assert_eq!(e.faces().iter().map(std::vec::Vec::len).sum::<usize>(), 2 * e.edges());
+            assert_eq!(
+                e.faces().iter().map(std::vec::Vec::len).sum::<usize>(),
+                2 * e.edges()
+            );
         }
         // Below 3 the periodic grid has doubled edges, and an embedding of a multigraph is a
         // different object from an embedding of its underlying simple graph.
@@ -913,16 +942,22 @@ mod tests {
                     gb.couple(i, ((y + 1) % h) * w + x, 1.0);
                 }
             }
-            let e = torus_grid_of(&gb.build())
-                .unwrap_or_else(|| panic!("{w}x{h} is a toroidal grid"));
+            let e =
+                torus_grid_of(&gb.build()).unwrap_or_else(|| panic!("{w}x{h} is a toroidal grid"));
             assert_eq!(e.euler(), 0);
             assert_eq!(e.len(), w * h);
         }
         // A square periodic lattice is the same object by another constructor.
         assert!(torus_grid_of(&lattice2d(6, 1.0)).is_some());
         // And things that are not: an open grid, and a graph of the right degree that is not a grid.
-        assert!(torus_grid_of(&grid2d(6, 6, 1.0)).is_none(), "open boundaries are not a torus");
-        assert!(torus_grid_of(&ring(12, 1.0, 0.0)).is_none(), "degree 2, not 4");
+        assert!(
+            torus_grid_of(&grid2d(6, 6, 1.0)).is_none(),
+            "open boundaries are not a torus"
+        );
+        assert!(
+            torus_grid_of(&ring(12, 1.0, 0.0)).is_none(),
+            "degree 2, not 4"
+        );
     }
 
     /// A rotation system supplied from outside is validated, not trusted.
@@ -957,9 +992,17 @@ mod tests {
         gb.couple(2, 3, 1.0);
         let g = gb.build();
         assert!(embed(&g).is_none(), "two components plus isolated vertices");
-        assert_eq!(why(&g), Some(Refusal::Disconnected), "and it says which of the three it is");
+        assert_eq!(
+            why(&g),
+            Some(Refusal::Disconnected),
+            "and it says which of the three it is"
+        );
 
-        assert!(embed(&GraphBuilder::new(0).build()).unwrap().is_consistent());
+        assert!(
+            embed(&GraphBuilder::new(0).build())
+                .unwrap()
+                .is_consistent()
+        );
 
         // A tree has no cycle to start from and is planar with a single face.
         let mut gb = GraphBuilder::new(5);
@@ -991,7 +1034,10 @@ mod tests {
         use crate::rng::Pcg;
         for seed in 0..40u64 {
             let mut rng = Pcg::new(seed, 0x091A_4A00);
-            let (w, h) = (3 + (rng.next_u32() % 4) as usize, 3 + (rng.next_u32() % 4) as usize);
+            let (w, h) = (
+                3 + (rng.next_u32() % 4) as usize,
+                3 + (rng.next_u32() % 4) as usize,
+            );
             // A grid with some edges deleted is still planar, and its face count is not known in
             // advance -- so Euler is the only check available, which is the point.
             let mut gb = GraphBuilder::new(w * h);
@@ -1014,7 +1060,10 @@ mod tests {
                 continue;
             }
             match embed(&g) {
-                Some(e) => assert!(e.is_consistent(), "seed {seed}: {w}x{h} embedding fails Euler"),
+                Some(e) => assert!(
+                    e.is_consistent(),
+                    "seed {seed}: {w}x{h} embedding fails Euler"
+                ),
                 // Deleting edges can disconnect the grid or leave a cut vertex, and both are
                 // documented refusals. What must NOT happen is a refusal reported as NotPlanar:
                 // every one of these is planar by construction, so that would be a wrong answer.

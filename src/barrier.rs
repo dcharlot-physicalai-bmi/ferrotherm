@@ -80,13 +80,21 @@ impl SpinBarrier {
     /// nowhere rather than dividing by zero.
     #[must_use]
     pub fn new(n: usize) -> Self {
-        SpinBarrier { count: AtomicUsize::new(0), n: n.max(1), spin: SPIN }
+        SpinBarrier {
+            count: AtomicUsize::new(0),
+            n: n.max(1),
+            spin: SPIN,
+        }
     }
 
     /// The same with an explicit spin budget, for measuring one against another.
     #[must_use]
     pub fn with_spin(n: usize, spin: usize) -> Self {
-        SpinBarrier { count: AtomicUsize::new(0), n: n.max(1), spin }
+        SpinBarrier {
+            count: AtomicUsize::new(0),
+            n: n.max(1),
+            spin,
+        }
     }
 
     /// How many threads this barrier is for.
@@ -124,7 +132,8 @@ mod tests {
     fn nothing_crosses_a_crossing() {
         for threads in [2usize, 4, 8] {
             let rounds = 500usize;
-            let slots: Vec<AtomicUsize> = (0..threads).map(|_| AtomicUsize::new(usize::MAX)).collect();
+            let slots: Vec<AtomicUsize> =
+                (0..threads).map(|_| AtomicUsize::new(usize::MAX)).collect();
             let barrier = SpinBarrier::new(threads);
             let bad = AtomicUsize::new(0);
             std::thread::scope(|s| {
@@ -146,7 +155,11 @@ mod tests {
                     });
                 }
             });
-            assert_eq!(bad.load(Ordering::Relaxed), 0, "{threads} threads saw the wrong round");
+            assert_eq!(
+                bad.load(Ordering::Relaxed),
+                0,
+                "{threads} threads saw the wrong round"
+            );
         }
     }
 
