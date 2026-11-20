@@ -463,7 +463,6 @@ impl Gpu {
         let groups = [bind(&b0, &b1), bind(&b1, &b0)];
         let energy_group = bind(&b0, &b1);
         let groups_x = (nwords_total as u32).div_ceil(WORKGROUP);
-        let energy_x = (side as u32).div_ceil(8);
         let read_bonds = dev.create_buffer(&wgpu::BufferDescriptor {
             label: Some("read-bonds"),
             size: bond_bytes as u64,
@@ -498,7 +497,7 @@ impl Gpu {
                     Step::Energy { .. } => {
                         pass.set_pipeline(&energy_pipe);
                         pass.set_bind_group(0, &energy_group, &[off]);
-                        pass.dispatch_workgroups(energy_x, energy_x, 1);
+                        pass.dispatch_workgroups(groups_x, 1, 1);
                     }
                 }
             }

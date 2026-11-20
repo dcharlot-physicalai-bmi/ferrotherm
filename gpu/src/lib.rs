@@ -550,6 +550,31 @@ pub(crate) mod tests {
     /// Same std-only lock the meter uses for the same shape of reason.
     pub(crate) static ADAPTER: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// The packed checkerboard has to be a valid compute shader before any device sees it.
+    /// A barrier in non-uniform control flow parses and then fails this, which is the failure
+    /// a missing adapter would otherwise hide.
+    #[test]
+    fn the_packed_checkerboard_shader_validates_without_a_device() {
+        let src = ferrotherm::grid::packed_checkerboard_shader();
+        let module = wgpu::naga::front::wgsl::parse_str(src).unwrap_or_else(|err| {
+            panic!("packed checkerboard shader did not parse: {err}");
+        });
+        let mut validator = wgpu::naga::valid::Validator::new(
+            wgpu::naga::valid::ValidationFlags::all(),
+            wgpu::naga::valid::Capabilities::default(),
+        );
+        if let Err(err) = validator.validate(&module) {
+            panic!("packed checkerboard shader is not valid: {err:?}");
+        }
+        let names: Vec<_> = module
+            .entry_points
+            .iter()
+            .map(|e| e.name.as_str())
+            .collect();
+        assert!(names.contains(&"sweep"), "{names:?}");
+        assert!(names.contains(&"energy"), "{names:?}");
+    }
+
     /// Skip rather than fail where there is no adapter. A headless runner having no driver is not
     /// a defect in this crate, and a red suite that means "this machine has no GPU" trains people
     /// to ignore it.

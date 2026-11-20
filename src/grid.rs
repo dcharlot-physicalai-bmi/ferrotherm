@@ -127,6 +127,28 @@ impl core::fmt::Display for GridError {
 
 impl core::error::Error for GridError {}
 
+/// Loads, stores and draws one sweep issues. Not a joule figure.
+///
+/// `bytes_read` counts a neighbour word once per load, so a plane read from three rows is three
+/// times its size. `energy_bytes` is the packed bond sum on top of a sweep, and zero of that
+/// traffic is an unpack into bytes. `rng_words_full` is what a non-sparse sweep draws; a sparse
+/// sweep draws fewer, and the profile's `rng_words` is that count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SweepLoad {
+    /// Spin bytes loaded during the sweep.
+    pub bytes_read: u64,
+    /// Spin bytes stored during the sweep.
+    pub bytes_written: u64,
+    /// Extra bytes to produce one energy from the state the sweep just wrote.
+    pub energy_bytes: u64,
+    /// 64-bit words drawn when the sparse early-exit is off.
+    pub rng_words_full: u64,
+    /// Sites updated. One sweep updates each site once.
+    pub updates: u64,
+    /// Open-grid bonds in one energy.
+    pub bonds: u64,
+}
+
 /// Time and draw counts for one or more sweeps.
 ///
 /// `rng_ns`, `field_ns` and `memory_ns` are zero unless [`OpenIsing::set_profile`] is on. With
@@ -168,11 +190,14 @@ pub struct OpenIsing {
     levers: Levers,
     threads: usize,
     threads_used: usize,
-    /// Row-major `+1`/`−1`. Source of truth when `simd` is off. Unpacked from `bits` on read
+    /// Row-major `+1`/`−1`. Source of truth when `simd` is off. Unpacked from `planes` on read
     /// when a packed sweep has run.
     spins: Vec<i8>,
-    /// `bits[colour][row]` packs that colour's sites in the row. Empty unless `simd`.
-    bits: Vec<Vec<Vec<u64>>>,
+    /// Contiguous bit planes. Empty unless `simd`. Index is `y * stride + word`.
+    /// Bit 1 is `+1` and bit 0 is `−1`, 64 sites of one colour to a word.
+    planes: [Vec<u64>; 2],
+    /// Words per row of `planes`. Zero unless `simd`.
+    stride: usize,
     packed_dirty: bool,
     thresh: [u32; 9],
     /// Neighbour-spin sums kept for the i8 incremental path. Empty when that path is off.
@@ -224,10 +249,17 @@ impl OpenIsing {
         }
         let n = side * side;
         let spins = vec![-1i8; n];
-        let bits = if levers.simd {
-            pack_all(&spins, side)
+        // All `−1` is the zero word. An even side has the same site count on every row.
+        let stride = if levers.simd {
+            (side / 2).div_ceil(SIMD_LANES)
         } else {
-            Vec::new()
+            0
+        };
+        let planes = if levers.simd {
+            let words = side * stride;
+            [vec![0u64; words], vec![0u64; words]]
+        } else {
+            [Vec::new(), Vec::new()]
         };
         let mut fields = Vec::new();
         if levers.incremental && !levers.simd {
@@ -248,7 +280,8 @@ impl OpenIsing {
             threads,
             threads_used: 1,
             spins,
-            bits,
+            planes,
+            stride,
             packed_dirty: false,
             thresh: threshold_table(j, beta),
             fields,
@@ -286,44 +319,44 @@ impl OpenIsing {
         &self.spins
     }
 
-    /// `E = −J Σ_{⟨ij⟩} s_i s_j` over the open grid. The same sum as [`crate::graph::Graph::energy`].
+    /// `E = −J Σ_{⟨ij⟩} s_i s_j` over the open grid. The same sum as [`crate::graph::Graph::energy`]
+    /// when `J` is an integer: a packed sweep evaluates `−J` times the integer bond sum, which is
+    /// that sum exactly for every `|bond sum|` that fits in the `f64` mantissa.
     #[must_use]
     pub fn energy(&mut self) -> f64 {
-        self.sync_spins();
-        grid_energy(&self.spins, self.side, self.j)
+        if self.packed_dirty {
+            -self.j
+                * packed_bond_sum(&self.planes[0], &self.planes[1], self.side, self.stride) as f64
+        } else {
+            self.sync_spins();
+            grid_energy(&self.spins, self.side, self.j)
+        }
     }
 
     /// One chromatic sweep. Colour `(x + y) % 2 == 0` first, then the other colour.
     pub fn sweep(&mut self) -> SweepProfile {
-        let wall = std::time::Instant::now();
-        let sweep = self.sweep_idx;
-        let mut prof = SweepProfile::default();
-        let threads = if self.levers.parallel {
-            threads_for_side(self.side, self.threads)
-        } else {
-            1
-        };
-        self.threads_used = threads;
-        if self.levers.simd {
-            self.sweep_simd(sweep, threads, &mut prof);
-            self.packed_dirty = true;
-        } else if self.levers.incremental {
-            self.sweep_fields(sweep, threads, &mut prof);
-        } else {
-            self.sweep_scalar(sweep, threads, &mut prof);
-        }
-        prof.sweeps = 1;
-        prof.wall_ns = wall.elapsed().as_nanos();
-        prof.threads_used = threads;
-        self.sweep_idx += 1;
-        prof
+        self.sweeps(1)
     }
 
     /// `n` sweeps. The returned profile sums them.
+    ///
+    /// A simd grid spawns its threads once for the whole batch. The row streams are keyed by
+    /// `(seed, sweep, colour, row)` either way, so one sweep at a time is the same spins.
     pub fn sweeps(&mut self, n: usize) -> SweepProfile {
+        if n == 0 {
+            return SweepProfile::default();
+        }
+        if self.levers.simd {
+            let wall = std::time::Instant::now();
+            let mut prof = self.drive_simd(n, std::ptr::null_mut(), 0, 1, 0);
+            prof.sweeps = n as u64;
+            prof.wall_ns = wall.elapsed().as_nanos();
+            prof.threads_used = self.threads_used;
+            return prof;
+        }
         let mut total = SweepProfile::default();
         for _ in 0..n {
-            let one = self.sweep();
+            let one = self.sweep_unpacked();
             total.sweeps += one.sweeps;
             total.wall_ns += one.wall_ns;
             total.add(&one);
@@ -335,10 +368,20 @@ impl OpenIsing {
     /// Burn `warmup` sweeps, then keep `draws` energies spaced by `thin` sweeps.
     ///
     /// The state at the end of burn-in is not kept. That is the same window as
-    /// [`crate::gibbs::Sampler::collect`].
+    /// [`crate::gibbs::Sampler::collect`]. A simd grid keeps one thread batch for the whole
+    /// window and reads the bond sum off the bit planes, so a kept sample does not unpack.
     pub fn energies(&mut self, warmup: usize, draws: usize, thin: usize) -> Vec<f64> {
-        self.sweeps(warmup);
         let thin = thin.max(1);
+        if self.levers.simd {
+            let n = warmup + draws * thin;
+            let mut out = vec![0.0; draws];
+            if n == 0 {
+                return out;
+            }
+            self.drive_simd(n, out.as_mut_ptr(), warmup, thin, draws);
+            return out;
+        }
+        self.sweeps(warmup);
         let mut out = Vec::with_capacity(draws);
         for _ in 0..draws {
             self.sweeps(thin);
@@ -347,11 +390,71 @@ impl OpenIsing {
         out
     }
 
+    /// Issued traffic of one sweep, and of one energy on top of it.
+    ///
+    /// `rng_words_full` is the non-sparse simd draw count. A sparse sweep stops early; its
+    /// profile carries the words it actually drew. Byte counts are loads and stores the sweep
+    /// issues, including a neighbour plane read more than once. They are not resident set and
+    /// not joules.
+    #[must_use]
+    pub fn sweep_load(&self) -> SweepLoad {
+        let updates = (self.side * self.side) as u64;
+        let bonds = if self.side == 0 {
+            0
+        } else {
+            (2 * self.side * (self.side - 1)) as u64
+        };
+        if self.levers.simd {
+            let (bytes_read, bytes_written) = issued_spin_bytes(self.side, self.stride);
+            SweepLoad {
+                bytes_read,
+                bytes_written,
+                energy_bytes: issued_energy_bytes(self.side, self.stride),
+                rng_words_full: (self.side as u64) * (self.stride as u64) * 32 * 2,
+                updates,
+                bonds,
+            }
+        } else {
+            // One neighbour byte per direction and one store. A sparse sweep draws fewer
+            // words than `rng_words_full`; the profile records the words it actually used.
+            SweepLoad {
+                bytes_read: updates * 4,
+                bytes_written: updates,
+                energy_bytes: updates * 3,
+                rng_words_full: updates,
+                updates,
+                bonds,
+            }
+        }
+    }
+
     fn sync_spins(&mut self) {
         if self.packed_dirty {
-            unpack_all(&self.bits, &mut self.spins, self.side);
+            unpack_simd(&self.planes, &mut self.spins, self.side, self.stride);
             self.packed_dirty = false;
         }
+    }
+
+    fn sweep_unpacked(&mut self) -> SweepProfile {
+        let wall = std::time::Instant::now();
+        let sweep = self.sweep_idx;
+        let mut prof = SweepProfile::default();
+        let threads = if self.levers.parallel {
+            threads_for_side(self.side, self.threads)
+        } else {
+            1
+        };
+        self.threads_used = threads;
+        if self.levers.incremental {
+            self.sweep_fields(sweep, threads, &mut prof);
+        } else {
+            self.sweep_scalar(sweep, threads, &mut prof);
+        }
+        prof.sweeps = 1;
+        prof.wall_ns = wall.elapsed().as_nanos();
+        prof.threads_used = threads;
+        self.sweep_idx += 1;
+        prof
     }
 
     fn sweep_scalar(&mut self, sweep: u64, threads: usize, prof: &mut SweepProfile) {
@@ -473,52 +576,177 @@ impl OpenIsing {
         }
     }
 
-    fn sweep_simd(&mut self, sweep: u64, threads: usize, prof: &mut SweepProfile) {
-        for color in 0..2 {
-            let side = self.side;
-            let seed = self.seed;
-            let thresh = self.thresh;
-            let sparse = self.levers.sparse_rng;
-            let tiled = self.levers.tiled;
-            let profile = self.profile;
-            let fast_field = self.levers.incremental;
-            let write_ptr = self.bits[color].as_mut_ptr() as usize;
-            let read_ptr = self.bits[color ^ 1].as_ptr() as usize;
-            let band = if threads == 1 {
-                side
-            } else {
-                side.div_ceil(threads)
-            };
-            let acc = std::thread::scope(|scope| {
-                let mut joins = Vec::new();
-                for t in 0..threads {
-                    let y0 = t * band;
-                    if y0 >= side {
-                        break;
+    /// `n` simd sweeps. `energy_out` is null, or `draws` slots filled on the sample schedule
+    /// `(warmup, thin)` — the same one [`Self::energies`] uses.
+    ///
+    /// Threads are spawned once. Every worker waits at both colour boundaries, including a
+    /// worker whose row band is empty, so the next colour never reads a spin this colour is
+    /// still writing. A kept sample is the integer bond sum of those stable planes.
+    fn drive_simd(
+        &mut self,
+        n: usize,
+        energy_out: *mut f64,
+        warmup: usize,
+        thin: usize,
+        draws: usize,
+    ) -> SweepProfile {
+        let threads = if self.levers.parallel {
+            threads_for_side(self.side, self.threads)
+        } else {
+            1
+        };
+        self.threads_used = threads;
+        let side = self.side;
+        let stride = self.stride;
+        let seed = self.seed;
+        let thresh = self.thresh;
+        let sel = thresh_select(&thresh);
+        let sparse = self.levers.sparse_rng;
+        let tiled = self.levers.tiled;
+        let profile = self.profile;
+        let fast_field = self.levers.incremental;
+        let j = self.j;
+        let start = self.sweep_idx;
+        let p0 = self.planes[0].as_mut_ptr() as usize;
+        let p1 = self.planes[1].as_mut_ptr() as usize;
+        // The address is Send. Only the worker that owns a sample slot writes it, after every
+        // worker has finished that sweep's stores.
+        let energy_addr = energy_out as usize;
+        let partials: Vec<std::sync::atomic::AtomicI64> = (0..threads)
+            .map(|_| std::sync::atomic::AtomicI64::new(0))
+            .collect();
+        let prof = if threads == 1 {
+            let mut local = SweepProfile::default();
+            let mut scratch = SimdScratch::new();
+            for s in 0..n {
+                let sweep = start + s as u64;
+                for color in 0..2 {
+                    let (write, read) = if color == 0 { (p0, p1) } else { (p1, p0) };
+                    // SAFETY: one thread owns both planes for this call. `stride` words per row
+                    // were allocated in `try_new` and are not resized here.
+                    unsafe {
+                        simd_rows(
+                            write as *mut u64,
+                            read as *const u64,
+                            stride,
+                            side,
+                            &thresh,
+                            &sel,
+                            seed,
+                            sweep,
+                            color,
+                            0,
+                            side,
+                            tiled,
+                            sparse,
+                            fast_field,
+                            profile,
+                            &mut scratch,
+                            &mut local,
+                        );
                     }
-                    let y1 = (y0 + band).min(side);
+                }
+                record_sample(
+                    s,
+                    warmup,
+                    thin,
+                    draws,
+                    energy_addr,
+                    j,
+                    p0,
+                    p1,
+                    side,
+                    stride,
+                    0,
+                    side,
+                );
+            }
+            local
+        } else {
+            let barrier = crate::barrier::SpinBarrier::new(threads);
+            std::thread::scope(|scope| {
+                let mut joins = Vec::with_capacity(threads);
+                for ti in 0..threads {
+                    let barrier = &barrier;
+                    let partials = &partials;
                     joins.push(scope.spawn(move || {
                         let mut local = SweepProfile::default();
-                        // SAFETY: `y0..y1` are disjoint. Each thread writes only `write_ptr.add(y)`
-                        // for y in that range, and reads the other colour, which this phase does
-                        // not write. The outer `bits` vector is not resized.
-                        unsafe {
-                            simd_rows(
-                                write_ptr as *mut Vec<u64>,
-                                read_ptr as *const Vec<u64>,
-                                side,
-                                &thresh,
-                                seed,
-                                sweep,
-                                color,
-                                y0,
-                                y1,
-                                tiled,
-                                sparse,
-                                fast_field,
-                                profile,
-                                &mut local,
-                            );
+                        let mut scratch = SimdScratch::new();
+                        let (y0, y1) = row_band(side, threads, ti);
+                        for s in 0..n {
+                            let sweep = start + s as u64;
+                            for color in 0..2 {
+                                if y0 < y1 {
+                                    let (write, read) =
+                                        if color == 0 { (p0, p1) } else { (p1, p0) };
+                                    // SAFETY: `row_band` hands each worker a disjoint row range.
+                                    // This colour's plane is written only inside that range; the
+                                    // other colour is only read. Both planes stay at `side * stride`
+                                    // words. The barrier below is what makes the read true for the
+                                    // next colour: every worker, including one with an empty band,
+                                    // arrives before any worker starts the other colour.
+                                    unsafe {
+                                        simd_rows(
+                                            write as *mut u64,
+                                            read as *const u64,
+                                            stride,
+                                            side,
+                                            &thresh,
+                                            &sel,
+                                            seed,
+                                            sweep,
+                                            color,
+                                            y0,
+                                            y1,
+                                            tiled,
+                                            sparse,
+                                            fast_field,
+                                            profile,
+                                            &mut scratch,
+                                            &mut local,
+                                        );
+                                    }
+                                }
+                                barrier.wait();
+                            }
+                            if sample_slot(s, warmup, thin, draws).is_some() {
+                                let partial = if y0 < y1 {
+                                    // SAFETY: the colour-1 barrier has returned, so every write of
+                                    // this sweep is visible and no worker has started the next one.
+                                    unsafe {
+                                        bond_rows(
+                                            std::slice::from_raw_parts(
+                                                p0 as *const u64,
+                                                side * stride,
+                                            ),
+                                            std::slice::from_raw_parts(
+                                                p1 as *const u64,
+                                                side * stride,
+                                            ),
+                                            side,
+                                            stride,
+                                            y0,
+                                            y1,
+                                        )
+                                    }
+                                } else {
+                                    0
+                                };
+                                partials[ti].store(partial, std::sync::atomic::Ordering::Release);
+                                barrier.wait();
+                                if ti == 0 {
+                                    let mut total = 0i64;
+                                    for part in partials {
+                                        total += part.load(std::sync::atomic::Ordering::Acquire);
+                                    }
+                                    let slot = sample_slot(s, warmup, thin, draws).expect("slot");
+                                    // SAFETY: `energy_addr` has `draws` slots and `slot < draws`.
+                                    unsafe {
+                                        *(energy_addr as *mut f64).add(slot) = -j * total as f64;
+                                    }
+                                }
+                                barrier.wait();
+                            }
                         }
                         local
                     }));
@@ -528,9 +756,11 @@ impl OpenIsing {
                     acc.add(&jn.join().expect("grid simd worker"));
                 }
                 acc
-            });
-            prof.add(&acc);
-        }
+            })
+        };
+        self.sweep_idx = start + n as u64;
+        self.packed_dirty = true;
+        prof
     }
 }
 
@@ -909,11 +1139,226 @@ fn field_planes(
     acc
 }
 
-unsafe fn simd_rows(
-    write: *mut Vec<u64>,
-    read: *const Vec<u64>,
+struct SimdScratch {
+    left: Vec<u64>,
+    right: Vec<u64>,
+    left_p: Vec<u64>,
+    right_p: Vec<u64>,
+    up_b: Vec<u64>,
+    up_p: Vec<u64>,
+    dn_b: Vec<u64>,
+    dn_p: Vec<u64>,
+    accs: Vec<[u64; 4]>,
+}
+
+impl SimdScratch {
+    fn new() -> Self {
+        Self {
+            left: Vec::new(),
+            right: Vec::new(),
+            left_p: Vec::new(),
+            right_p: Vec::new(),
+            up_b: Vec::new(),
+            up_p: Vec::new(),
+            dn_b: Vec::new(),
+            dn_p: Vec::new(),
+            accs: Vec::new(),
+        }
+    }
+
+    fn ensure(&mut self, n: usize) {
+        if self.left.len() < n {
+            self.left.resize(n, 0);
+            self.right.resize(n, 0);
+            self.left_p.resize(n, 0);
+            self.right_p.resize(n, 0);
+            self.up_b.resize(n, 0);
+            self.up_p.resize(n, 0);
+            self.dn_b.resize(n, 0);
+            self.dn_p.resize(n, 0);
+            self.accs.resize(n, [0; 4]);
+        }
+    }
+}
+
+/// Issued spin-plane traffic of one simd sweep. A neighbour word that is read twice is counted
+/// twice. `stride` is words per row.
+fn issued_spin_bytes(side: usize, stride: usize) -> (u64, u64) {
+    let mut read = 0u64;
+    let write = (side * stride * 8 * 2) as u64;
+    if stride == 0 {
+        return (0, 0);
+    }
+    for color in 0..2 {
+        for y in 0..side {
+            let nbits = row_sites(side, y, color);
+            let missing_left = (y + color).is_multiple_of(2);
+            let nwords = nbits.div_ceil(SIMD_LANES);
+            for w in 0..nwords {
+                let lo = (w * SIMD_LANES) as isize;
+                if missing_left {
+                    read += touch_extract(lo - 1, nbits, stride);
+                    read += touch_extract(lo, nbits, stride);
+                } else {
+                    read += touch_extract(lo, nbits, stride);
+                    read += touch_extract(lo + 1, nbits, stride);
+                }
+                if y > 0 {
+                    read += touch_extract(lo, nbits, stride);
+                }
+                if y + 1 < side {
+                    read += touch_extract(lo, nbits, stride);
+                }
+            }
+        }
+    }
+    (read, write)
+}
+
+fn touch_extract(start: isize, nbits: usize, words: usize) -> u64 {
+    if nbits == 0 || words == 0 || start >= nbits as isize {
+        return 0;
+    }
+    if start < 0 {
+        let last = 63.min(nbits - 1);
+        return ((last / 64) as u64 + 1) * 8;
+    }
+    let wi = start as usize / 64;
+    if wi >= words {
+        return 0;
+    }
+    let mut n = 1u64;
+    if !(start as usize).is_multiple_of(64) && wi + 1 < words {
+        n += 1;
+    }
+    n * 8
+}
+
+/// Bytes the packed bond sum reads. The planes are not written.
+fn issued_energy_bytes(side: usize, stride: usize) -> u64 {
+    if side == 0 || stride == 0 {
+        return 0;
+    }
+    let mut read = 0u64;
+    let nbits = side / 2;
+    let nwords = nbits.div_ceil(SIMD_LANES);
+    for y in 0..side {
+        let missing_left = y.is_multiple_of(2);
+        for w in 0..nwords {
+            let lo = (w * SIMD_LANES) as isize;
+            read += touch_extract(lo, nbits, stride);
+            if missing_left {
+                read += touch_extract(lo - 1, nbits, stride);
+                read += touch_extract(lo, nbits, stride);
+            } else {
+                read += touch_extract(lo, nbits, stride);
+                read += touch_extract(lo + 1, nbits, stride);
+            }
+        }
+        if y + 1 < side {
+            for _color in 0..2 {
+                for w in 0..nwords {
+                    let lo = (w * SIMD_LANES) as isize;
+                    read += touch_extract(lo, nbits, stride);
+                    read += touch_extract(lo, nbits, stride);
+                }
+            }
+        }
+    }
+    read
+}
+
+fn row_band(side: usize, threads: usize, ti: usize) -> (usize, usize) {
+    let band = if threads <= 1 {
+        side
+    } else {
+        side.div_ceil(threads)
+    };
+    let y0 = ti * band;
+    if y0 >= side {
+        (side, side)
+    } else {
+        (y0, (y0 + band).min(side))
+    }
+}
+
+fn sample_slot(s: usize, warmup: usize, thin: usize, draws: usize) -> Option<usize> {
+    let done = s + 1;
+    if thin == 0 || done <= warmup || !(done - warmup).is_multiple_of(thin) {
+        return None;
+    }
+    let slot = (done - warmup) / thin - 1;
+    if slot < draws { Some(slot) } else { None }
+}
+
+fn record_sample(
+    s: usize,
+    warmup: usize,
+    thin: usize,
+    draws: usize,
+    energy_addr: usize,
+    j: f64,
+    p0: usize,
+    p1: usize,
     side: usize,
-    thresh: &[u32; 9],
+    stride: usize,
+    y0: usize,
+    y1: usize,
+) {
+    let Some(slot) = sample_slot(s, warmup, thin, draws) else {
+        return;
+    };
+    if energy_addr == 0 {
+        return;
+    }
+    // SAFETY: the caller has finished both colours of sweep `s` and passes the two planes
+    // allocated for `side * stride` words. `slot` is inside the `draws` buffer.
+    unsafe {
+        let total = bond_rows(
+            std::slice::from_raw_parts(p0 as *const u64, side * stride),
+            std::slice::from_raw_parts(p1 as *const u64, side * stride),
+            side,
+            stride,
+            y0,
+            y1,
+        );
+        *(energy_addr as *mut f64).add(slot) = -j * total as f64;
+    }
+}
+
+fn thresh_select(thresh: &[u32; 9]) -> [u16; 32] {
+    let mut sel = [0u16; 32];
+    for b in 0..32 {
+        let mut bits = 0u16;
+        for (i, &t) in thresh.iter().enumerate() {
+            if (t >> b) & 1 == 1 {
+                bits |= 1u16 << i;
+            }
+        }
+        sel[b] = bits;
+    }
+    sel
+}
+
+/// Popcount field when every valid lane has all four neighbours. `2 * count - 4`.
+fn field_all_present(up: u64, down: u64, left: u64, right: u64) -> [u64; 4] {
+    let c = sum4(up, down, left, right);
+    let mut acc = [0, c[0], c[1], c[2]];
+    sub_from_plane(&mut acc, 2, u64::MAX);
+    acc
+}
+
+/// # Safety
+///
+/// `write` and `read` each address `side * stride` initialised words, `stride` per row. This call
+/// writes only rows `y0..y1` of `write` and does not read those addresses. `read` is not written.
+unsafe fn simd_rows(
+    write: *mut u64,
+    read: *const u64,
+    stride: usize,
+    side: usize,
+    _thresh: &[u32; 9],
+    sel: &[u16; 32],
     seed: u64,
     sweep: u64,
     color: usize,
@@ -923,6 +1368,7 @@ unsafe fn simd_rows(
     sparse: bool,
     fast_field: bool,
     profile: bool,
+    scratch: &mut SimdScratch,
     prof: &mut SweepProfile,
 ) {
     let step = if tiled { TILE_ROWS } else { (y1 - y0).max(1) };
@@ -930,15 +1376,7 @@ unsafe fn simd_rows(
         .map(|y| row_sites(side, y, color).div_ceil(SIMD_LANES))
         .max()
         .unwrap_or(0);
-    let mut left = vec![0u64; widest];
-    let mut right = vec![0u64; widest];
-    let mut left_p = vec![0u64; widest];
-    let mut right_p = vec![0u64; widest];
-    let mut up_b = vec![0u64; widest];
-    let mut up_p = vec![0u64; widest];
-    let mut dn_b = vec![0u64; widest];
-    let mut dn_p = vec![0u64; widest];
-    let mut accs = vec![[0u64; 4]; widest];
+    scratch.ensure(widest);
     let mut y_base = y0;
     while y_base < y1 {
         let y_hi = (y_base + step).min(y1);
@@ -955,43 +1393,67 @@ unsafe fn simd_rows(
                 } else {
                     (1u64 << keep) - 1
                 };
-                let same = unsafe { &*read.add(y) };
+                let same = unsafe { std::slice::from_raw_parts(read.add(y * stride), stride) };
                 let h = horizontal(same, nbits, lo, valid, missing_left);
-                left[w] = h.left;
-                right[w] = h.right;
-                left_p[w] = h.left_present;
-                right_p[w] = h.right_present;
+                scratch.left[w] = h.left;
+                scratch.right[w] = h.right;
+                scratch.left_p[w] = h.left_present;
+                scratch.right_p[w] = h.right_present;
                 let up_row = if y > 0 {
-                    Some(unsafe { &*read.add(y - 1) }.as_slice())
+                    Some(unsafe { std::slice::from_raw_parts(read.add((y - 1) * stride), stride) })
                 } else {
                     None
                 };
                 let (ub, up) = vertical(up_row, lo, nbits, valid);
-                up_b[w] = ub;
-                up_p[w] = up;
+                scratch.up_b[w] = ub;
+                scratch.up_p[w] = up;
                 let down_row = if y + 1 < side {
-                    Some(unsafe { &*read.add(y + 1) }.as_slice())
+                    Some(unsafe { std::slice::from_raw_parts(read.add((y + 1) * stride), stride) })
                 } else {
                     None
                 };
                 let (db, dp) = vertical(down_row, lo, nbits, valid);
-                dn_b[w] = db;
-                dn_p[w] = dp;
+                scratch.dn_b[w] = db;
+                scratch.dn_p[w] = dp;
             }
             stop_clock(&mut tmem, &mut prof.memory_ns);
             let mut tfield = clock(profile);
             for w in 0..nwords {
-                accs[w] = if fast_field {
+                let covered =
+                    scratch.up_p[w] & scratch.dn_p[w] & scratch.left_p[w] & scratch.right_p[w];
+                let valid = {
+                    let lo = w * SIMD_LANES;
+                    let keep = (nbits - lo).min(SIMD_LANES);
+                    if keep == 64 {
+                        u64::MAX
+                    } else {
+                        (1u64 << keep) - 1
+                    }
+                };
+                scratch.accs[w] = if fast_field && covered == valid {
+                    field_all_present(
+                        scratch.up_b[w],
+                        scratch.dn_b[w],
+                        scratch.left[w],
+                        scratch.right[w],
+                    )
+                } else if fast_field {
                     field_planes(
-                        up_b[w], up_p[w], dn_b[w], dn_p[w], left[w], left_p[w], right[w],
-                        right_p[w],
+                        scratch.up_b[w],
+                        scratch.up_p[w],
+                        scratch.dn_b[w],
+                        scratch.dn_p[w],
+                        scratch.left[w],
+                        scratch.left_p[w],
+                        scratch.right[w],
+                        scratch.right_p[w],
                     )
                 } else {
                     let mut acc = [0u64; 4];
-                    add_trit(&mut acc, up_b[w], up_p[w]);
-                    add_trit(&mut acc, dn_b[w], dn_p[w]);
-                    add_trit(&mut acc, left[w], left_p[w]);
-                    add_trit(&mut acc, right[w], right_p[w]);
+                    add_trit(&mut acc, scratch.up_b[w], scratch.up_p[w]);
+                    add_trit(&mut acc, scratch.dn_b[w], scratch.dn_p[w]);
+                    add_trit(&mut acc, scratch.left[w], scratch.left_p[w]);
+                    add_trit(&mut acc, scratch.right[w], scratch.right_p[w]);
                     acc
                 };
             }
@@ -1007,17 +1469,18 @@ unsafe fn simd_rows(
                     (1u64 << keep) - 1
                 };
                 let up = decide_word(
-                    &accs[w],
+                    &scratch.accs[w],
                     valid,
-                    thresh,
+                    sel,
                     &mut rng,
                     sparse,
                     &mut prof.rng_words,
                 );
-                let idx = lo / SIMD_LANES;
-                let row = unsafe { &mut *write.add(y) };
-                let cur = row[idx];
-                row[idx] = (cur & !valid) | (up & valid);
+                let slot = unsafe { write.add(y * stride + w) };
+                let cur = unsafe { *slot };
+                unsafe {
+                    *slot = (cur & !valid) | (up & valid);
+                }
             }
             stop_clock(&mut trng, &mut prof.rng_ns);
         }
@@ -1028,7 +1491,7 @@ unsafe fn simd_rows(
 fn decide_word(
     acc: &[u64; 4],
     valid: u64,
-    thresh: &[u32; 9],
+    sel: &[u16; 32],
     rng: &mut Pcg,
     sparse: bool,
     words: &mut u64,
@@ -1048,11 +1511,34 @@ fn decide_word(
         if open == 0 {
             continue;
         }
+        let bits = sel[b];
         let mut tbit = 0u64;
-        for (i, m) in masks.iter().enumerate() {
-            if (thresh[i] >> b) & 1 == 1 {
-                tbit |= *m;
-            }
+        if bits & 1 != 0 {
+            tbit |= masks[0];
+        }
+        if bits & 2 != 0 {
+            tbit |= masks[1];
+        }
+        if bits & 4 != 0 {
+            tbit |= masks[2];
+        }
+        if bits & 8 != 0 {
+            tbit |= masks[3];
+        }
+        if bits & 16 != 0 {
+            tbit |= masks[4];
+        }
+        if bits & 32 != 0 {
+            tbit |= masks[5];
+        }
+        if bits & 64 != 0 {
+            tbit |= masks[6];
+        }
+        if bits & 128 != 0 {
+            tbit |= masks[7];
+        }
+        if bits & 256 != 0 {
+            tbit |= masks[8];
         }
         let diff = (rand ^ tbit) & open;
         up |= diff & !rand;
@@ -1205,18 +1691,113 @@ fn pack_row(spins: &[i8], side: usize, y: usize, color: usize) -> Vec<u64> {
     words
 }
 
-fn unpack_all(bits: &[Vec<Vec<u64>>], spins: &mut [i8], side: usize) {
+fn unpack_simd(planes: &[Vec<u64>; 2], spins: &mut [i8], side: usize, stride: usize) {
     for color in 0..2 {
         for y in 0..side {
             let nbits = row_sites(side, y, color);
+            let row = &planes[color][y * stride..(y + 1) * stride];
             for k in 0..nbits {
                 let x = x_of(y, color, k);
-                let words = &bits[color][y];
-                let bit = (words[k / 64] >> (k % 64)) & 1;
+                let bit = (row[k / 64] >> (k % 64)) & 1;
                 spins[y * side + x] = if bit == 1 { 1 } else { -1 };
             }
         }
     }
+}
+
+fn plane_row(plane: &[u64], stride: usize, y: usize) -> &[u64] {
+    let i = y * stride;
+    &plane[i..i + stride]
+}
+
+fn mask_keep(keep: usize) -> u64 {
+    if keep >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << keep) - 1
+    }
+}
+
+fn agree_aligned(a: &[u64], b: &[u64], nbits: usize) -> i64 {
+    let mut sum = 0i64;
+    let nwords = nbits.div_ceil(SIMD_LANES);
+    for w in 0..nwords {
+        let lo = w * SIMD_LANES;
+        if lo >= nbits {
+            break;
+        }
+        let keep = (nbits - lo).min(SIMD_LANES);
+        let valid = mask_keep(keep);
+        let aw = extract64(a, lo as isize, nbits);
+        let bw = extract64(b, lo as isize, nbits);
+        let xor = (aw ^ bw) & valid;
+        sum += valid.count_ones() as i64 - 2 * xor.count_ones() as i64;
+    }
+    sum
+}
+
+fn horizontal_color0(row0: &[u64], row1: &[u64], side: usize, y: usize) -> i64 {
+    let nbits = row_sites(side, y, 0);
+    let missing_left = y.is_multiple_of(2);
+    let nwords = nbits.div_ceil(SIMD_LANES);
+    let mut sum = 0i64;
+    for w in 0..nwords {
+        let lo = w * SIMD_LANES;
+        let keep = (nbits - lo).min(SIMD_LANES);
+        if keep == 0 {
+            break;
+        }
+        let valid = mask_keep(keep);
+        let h = horizontal(row1, nbits, lo, valid, missing_left);
+        let mine = extract64(row0, lo as isize, nbits);
+        // Every horizontal bond has one colour-0 end. The left neighbour and the right
+        // neighbour are different bonds; taking only the right one drops half of them.
+        let both_r = valid & h.right_present;
+        let xor_r = (mine ^ h.right) & both_r;
+        sum += both_r.count_ones() as i64 - 2 * xor_r.count_ones() as i64;
+        let both_l = valid & h.left_present;
+        let xor_l = (mine ^ h.left) & both_l;
+        sum += both_l.count_ones() as i64 - 2 * xor_l.count_ones() as i64;
+    }
+    sum
+}
+
+/// Integer sum of `s_i s_j` over the open grid. Vertical bonds between `y` and `y + 1` are
+/// charged to row `y`, and every horizontal bond is charged to colour 0's right neighbour,
+/// so a split across rows neither drops nor double-counts a bond.
+fn bond_rows(
+    color0: &[u64],
+    color1: &[u64],
+    side: usize,
+    stride: usize,
+    y0: usize,
+    y1: usize,
+) -> i64 {
+    let mut sum = 0i64;
+    for y in y0..y1 {
+        sum += horizontal_color0(
+            plane_row(color0, stride, y),
+            plane_row(color1, stride, y),
+            side,
+            y,
+        );
+        if y + 1 < side {
+            for color in 0..2 {
+                let (a, b) = if color == 0 {
+                    (color0, color1)
+                } else {
+                    (color1, color0)
+                };
+                let nbits = row_sites(side, y, color);
+                sum += agree_aligned(plane_row(a, stride, y), plane_row(b, stride, y + 1), nbits);
+            }
+        }
+    }
+    sum
+}
+
+fn packed_bond_sum(color0: &[u64], color1: &[u64], side: usize, stride: usize) -> i64 {
+    bond_rows(color0, color1, side, stride, 0, side)
 }
 
 /// Bit-sliced neighbour sums for one colour, read off `spins` packed the way the sweep packs them.
@@ -1317,6 +1898,85 @@ pub fn packed_seed(seed: u64) -> u32 {
     (seed as u32) ^ ((seed >> 32) as u32)
 }
 
+/// One packed word, from the other colour's words. The field is [`packed_field`] and the draw is
+/// [`packed_hash`]: a lane's bit does not change which uniform it is compared with.
+fn update_packed_word(
+    other: &[u32],
+    mut word: u32,
+    side: usize,
+    nw: usize,
+    half: usize,
+    color: usize,
+    y: usize,
+    w: usize,
+    thresh: &[u32; 9],
+    seed32: u32,
+    sweep: u32,
+) -> u32 {
+    let k0 = w * 32;
+    let parity = (y + color) & 1;
+    let row = other[y * nw + w];
+    let prev = if w > 0 { other[y * nw + w - 1] } else { 0 };
+    let next = if w + 1 < nw { other[y * nw + w + 1] } else { 0 };
+    let upw = if y > 0 { other[(y - 1) * nw + w] } else { 0 };
+    let dnw = if y + 1 < side {
+        other[(y + 1) * nw + w]
+    } else {
+        0
+    };
+    for b in 0..32 {
+        let k = k0 + b;
+        if k >= half {
+            break;
+        }
+        let mut field = 0i32;
+        if y > 0 {
+            field += pm_bit(upw, b);
+        }
+        if y + 1 < side {
+            field += pm_bit(dnw, b);
+        }
+        if parity == 0 {
+            field += pm_bit(row, b);
+            if k > 0 {
+                field += row_pm(prev, row, next, k - 1, k0);
+            }
+        } else {
+            field += pm_bit(row, b);
+            if k + 1 < half {
+                field += row_pm(prev, row, next, k + 1, k0);
+            }
+        }
+        let x = 2 * k + parity;
+        let site = (y * side + x) as u32;
+        let draw = packed_hash(seed32, site, sweep);
+        let mask = 1u32 << b;
+        if draw < thresh[(field + 4) as usize] {
+            word |= mask;
+        } else {
+            word &= !mask;
+        }
+    }
+    word
+}
+
+fn pm_bit(word: u32, b: usize) -> i32 {
+    if (word >> b) & 1 == 1 { 1 } else { -1 }
+}
+
+/// Spin at bit-index `k` of a row whose word `w` starts at `k0`. `k` is `k0 - 1` or `k0 + 32`
+/// at a word boundary and inside the word otherwise.
+fn row_pm(prev: u32, word: u32, next: u32, k: usize, k0: usize) -> i32 {
+    let bit = if k + 1 == k0 {
+        (prev >> 31) & 1
+    } else if k >= k0 + 32 {
+        next & 1
+    } else {
+        (word >> (k - k0)) & 1
+    };
+    if bit == 1 { 1 } else { -1 }
+}
+
 /// Checkerboard Gibbs on spins packed into `u32` words, one bit per site of that colour.
 ///
 /// Even side only. Bit 1 is `+1` and bit 0 is `−1`. Sites of one colour do not share an edge, so
@@ -1365,25 +2025,19 @@ pub fn sweep_packed_cpu(
         for color in 0..2 {
             for y in 0..side {
                 for w in 0..nw {
-                    let mut word = plane[color][y * nw + w];
-                    let k0 = w * 32;
-                    for b in 0..32 {
-                        let k = k0 + b;
-                        if k >= half {
-                            break;
-                        }
-                        let x = 2 * k + ((y + color) & 1);
-                        let field = packed_field(&plane, side, nw, color, x, y);
-                        let site = (y * side + x) as u32;
-                        let draw = packed_hash(seed32, site, sweep);
-                        let up = draw < thresh[(field + 4) as usize];
-                        let mask = 1u32 << b;
-                        if up {
-                            word |= mask;
-                        } else {
-                            word &= !mask;
-                        }
-                    }
+                    let word = update_packed_word(
+                        &plane[color ^ 1],
+                        plane[color][y * nw + w],
+                        side,
+                        nw,
+                        half,
+                        color,
+                        y,
+                        w,
+                        &thresh,
+                        seed32,
+                        sweep,
+                    );
                     plane[color][y * nw + w] = word;
                 }
             }
@@ -1446,6 +2100,7 @@ fn unpack_planes(plane: &[Vec<u32>; 2], spins: &mut [i8], side: usize, nw: usize
     }
 }
 
+#[cfg(test)]
 fn packed_spin(words: &[u32], side: usize, nw: usize, color: usize, x: usize, y: usize) -> i32 {
     if y >= side || x >= side {
         return 0;
@@ -1459,6 +2114,7 @@ fn packed_spin(words: &[u32], side: usize, nw: usize, color: usize, x: usize, y:
     if (word >> (k % 32)) & 1 == 1 { 1 } else { -1 }
 }
 
+#[cfg(test)]
 fn packed_field(
     plane: &[Vec<u32>; 2],
     side: usize,
@@ -1513,6 +2169,9 @@ struct Params {
 @group(0) @binding(4) var<storage, read_write> bonds: array<atomic<i32>>;
 
 var<workgroup> scratch: array<i32, 64>;
+// Halo rows of the other colour. 64 threads cover 64/nwords rows; the worst
+// aligned tile is one row of 64 words plus a row above and a row below.
+var<workgroup> tile: array<u32, 192>;
 
 fn packed_hash(seed: u32, site: u32, sweep: u32) -> u32 {
   var x = seed + site * 0x9E3779B9u + sweep * 0x85EBCA6Bu;
@@ -1524,59 +2183,111 @@ fn packed_hash(seed: u32, site: u32, sweep: u32) -> u32 {
   return x;
 }
 
-fn spin_at(x: i32, y: i32) -> i32 {
-  if (y < 0 || x < 0 || u32(y) >= p.side || u32(x) >= p.side) {
-    return 0;
+fn pm_bit(word: u32, b: u32) -> i32 {
+  if (((word >> b) & 1u) == 1u) { return 1; }
+  return -1;
+}
+
+// k is k0-1 (top bit of prev) or k0+32 (bottom bit of next) or inside this word.
+fn row_pm(prev: u32, word: u32, nextw: u32, k: u32, k0: u32) -> i32 {
+  var bit: u32;
+  if (k + 1u == k0) {
+    bit = (prev >> 31u) & 1u;
+  } else if (k >= k0 + 32u) {
+    bit = nextw & 1u;
+  } else {
+    bit = (word >> (k - k0)) & 1u;
   }
-  let parity = (u32(y) + (p.color ^ 1u)) & 1u;
-  if ((u32(x) & 1u) != parity) {
-    return 0;
-  }
-  let k = (u32(x) - parity) / 2u;
-  let word = other[u32(y) * p.nwords + (k / 32u)];
-  let bit = (word >> (k % 32u)) & 1u;
   if (bit == 1u) { return 1; }
   return -1;
 }
 
-fn site_spin(x: u32, y: u32) -> i32 {
-  let color = (x + y) & 1u;
-  let k = x / 2u;
-  var word: u32;
-  if (color == 0u) {
-    word = mine[y * p.nwords + (k / 32u)];
-  } else {
-    word = other[y * p.nwords + (k / 32u)];
-  }
-  let bit = (word >> (k % 32u)) & 1u;
-  if (bit == 1u) { return 1; }
+fn prod_bits(a: u32, b: u32, bit: u32) -> i32 {
+  let same = ((a >> bit) & 1u) == ((b >> bit) & 1u);
+  if (same) { return 1; }
   return -1;
 }
 
 // One colour of the whole grid is one dispatch. A sweep is two dispatches, and the
 // whole chain is those dispatches in one submission: a workgroup cannot barrier
 // against another workgroup, so the colour barrier cannot move inside one dispatch.
+// Neighbour words are loaded once per word, and when the row count divides the
+// workgroup they are staged in tile so the halo is not refetched per lane.
 @compute @workgroup_size(64)
-fn sweep(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn sweep(
+  @builtin(global_invocation_id) gid: vec3<u32>,
+  @builtin(local_invocation_index) lid: u32,
+  @builtin(workgroup_id) wid: vec3<u32>,
+) {
   if (p.pad0 == 2u) {
     atomicAdd(&bonds[0], 0);
   }
   let word_i = gid.x;
   let total = p.side * p.nwords;
+  let aligned = p.nwords > 0u && (64u % p.nwords) == 0u;
+  var use_tile = false;
+  var origin: u32 = 0u;
+  if (aligned) {
+    let rows = 64u / p.nwords;
+    let y_base = wid.x * rows;
+    if (y_base < p.side) {
+      origin = y_base;
+      if (y_base > 0u) { origin = y_base - 1u; }
+      var y_end = y_base + rows;
+      if (y_end < p.side) { y_end = y_end + 1u; }
+      y_end = min(p.side, y_end);
+      let span = (y_end - origin) * p.nwords;
+      if (span <= 192u) {
+        use_tile = true;
+        for (var i: u32 = lid; i < span; i = i + 64u) {
+          let yy = origin + (i / p.nwords);
+          let ww = i % p.nwords;
+          tile[i] = other[yy * p.nwords + ww];
+        }
+      }
+    }
+  }
+  if (aligned) {
+    workgroupBarrier();
+  }
   if (word_i >= total) { return; }
   let y = word_i / p.nwords;
   let w = word_i % p.nwords;
+  var row: u32;
+  var prev: u32 = 0u;
+  var nextw: u32 = 0u;
+  var upw: u32 = 0u;
+  var dnw: u32 = 0u;
+  if (use_tile) {
+    row = tile[(y - origin) * p.nwords + w];
+    if (w > 0u) { prev = tile[(y - origin) * p.nwords + w - 1u]; }
+    if (w + 1u < p.nwords) { nextw = tile[(y - origin) * p.nwords + w + 1u]; }
+    if (y > 0u) { upw = tile[(y - 1u - origin) * p.nwords + w]; }
+    if (y + 1u < p.side) { dnw = tile[(y + 1u - origin) * p.nwords + w]; }
+  } else {
+    row = other[y * p.nwords + w];
+    if (w > 0u) { prev = other[y * p.nwords + w - 1u]; }
+    if (w + 1u < p.nwords) { nextw = other[y * p.nwords + w + 1u]; }
+    if (y > 0u) { upw = other[(y - 1u) * p.nwords + w]; }
+    if (y + 1u < p.side) { dnw = other[(y + 1u) * p.nwords + w]; }
+  }
   var word = mine[word_i];
   let k0 = w * 32u;
+  let parity = (y + p.color) & 1u;
   for (var b: u32 = 0u; b < 32u; b = b + 1u) {
     let k = k0 + b;
     if (k >= p.half) { break; }
-    let x = 2u * k + ((y + p.color) & 1u);
     var f: i32 = 0;
-    f = f + spin_at(i32(x), i32(y) - 1);
-    f = f + spin_at(i32(x), i32(y) + 1);
-    f = f + spin_at(i32(x) - 1, i32(y));
-    f = f + spin_at(i32(x) + 1, i32(y));
+    if (y > 0u) { f = f + pm_bit(upw, b); }
+    if (y + 1u < p.side) { f = f + pm_bit(dnw, b); }
+    if (parity == 0u) {
+      f = f + pm_bit(row, b);
+      if (k > 0u) { f = f + row_pm(prev, row, nextw, k - 1u, k0); }
+    } else {
+      f = f + pm_bit(row, b);
+      if (k + 1u < p.half) { f = f + row_pm(prev, row, nextw, k + 1u, k0); }
+    }
+    let x = 2u * k + parity;
     let site = y * p.side + x;
     let draw = packed_hash(p.seed, site, p.sweep);
     let up = draw < thresh[u32(f + 4)];
@@ -1586,24 +2297,62 @@ fn sweep(@builtin(global_invocation_id) gid: vec3<u32>) {
   mine[word_i] = word;
 }
 
+fn bond_prod(a: u32, bbit_up: i32, bit: u32) -> i32 {
+  let a_up = ((a >> bit) & 1u) == 1u;
+  if (a_up == (bbit_up == 1)) { return 1; }
+  return -1;
+}
+
+// Colour-0 word (y, w). mine is colour 0 and other is colour 1, which is how the
+// energy bind group is built. Left and right of colour 0 cover every horizontal
+// bond once. Both colours as the lower end of a vertical bond cover every vertical
+// bond once.
+fn bond_word(y: u32, w: u32) -> i32 {
+  var sum: i32 = 0;
+  let k0 = w * 32u;
+  let row0 = mine[y * p.nwords + w];
+  var prev1: u32 = 0u;
+  var row1: u32 = other[y * p.nwords + w];
+  var next1: u32 = 0u;
+  if (w > 0u) { prev1 = other[y * p.nwords + w - 1u]; }
+  if (w + 1u < p.nwords) { next1 = other[y * p.nwords + w + 1u]; }
+  let parity = y & 1u;
+  for (var b: u32 = 0u; b < 32u; b = b + 1u) {
+    let k = k0 + b;
+    if (k >= p.half) { break; }
+    if (parity == 0u) {
+      sum = sum + bond_prod(row0, pm_bit(row1, b), b);
+      if (k > 0u) { sum = sum + bond_prod(row0, row_pm(prev1, row1, next1, k - 1u, k0), b); }
+    } else {
+      sum = sum + bond_prod(row0, pm_bit(row1, b), b);
+      if (k + 1u < p.half) { sum = sum + bond_prod(row0, row_pm(prev1, row1, next1, k + 1u, k0), b); }
+    }
+  }
+  if (y + 1u < p.side) {
+    let up0 = mine[(y + 1u) * p.nwords + w];
+    let up1 = other[(y + 1u) * p.nwords + w];
+    let low1 = other[y * p.nwords + w];
+    for (var b: u32 = 0u; b < 32u; b = b + 1u) {
+      let k = k0 + b;
+      if (k >= p.half) { break; }
+      sum = sum + prod_bits(row0, up1, b);
+      sum = sum + prod_bits(low1, up0, b);
+    }
+  }
+  return sum;
+}
+
 // Bond sum of the open grid, one atomic per workgroup per kept sample.
 // The CPU mirror is grid_energy: E = -J * this sum.
-@compute @workgroup_size(8, 8)
+@compute @workgroup_size(64)
 fn energy(
   @builtin(global_invocation_id) gid: vec3<u32>,
   @builtin(local_invocation_index) lid: u32,
 ) {
   var contrib: i32 = 0;
-  let x = gid.x;
-  let y = gid.y;
-  if (x < p.side && y < p.side) {
-    let s = site_spin(x, y);
-    if (x + 1u < p.side) {
-      contrib = contrib + s * site_spin(x + 1u, y);
-    }
-    if (y + 1u < p.side) {
-      contrib = contrib + s * site_spin(x, y + 1u);
-    }
+  let total = p.side * p.nwords;
+  if (gid.x < total) {
+    contrib = bond_word(gid.x / p.nwords, gid.x % p.nwords);
   }
   scratch[lid] = contrib;
   workgroupBarrier();
@@ -2116,6 +2865,143 @@ mod tests {
         assert!(err.contains("even"), "{err}");
     }
 
+    fn integer_bonds(spins: &[i8], side: usize) -> i64 {
+        let mut sum = 0i64;
+        for y in 0..side {
+            for x in 0..side {
+                let s = i64::from(spins[y * side + x]);
+                if x + 1 < side {
+                    sum += s * i64::from(spins[y * side + x + 1]);
+                }
+                if y + 1 < side {
+                    sum += s * i64::from(spins[(y + 1) * side + x]);
+                }
+            }
+        }
+        sum
+    }
+
+    /// The energy shader's per-word sum. `c0` is colour 0, `c1` is colour 1.
+    fn shader_bond_sum(c0: &[u32], c1: &[u32], side: usize, nw: usize) -> i64 {
+        let half = side / 2;
+        let mut sum = 0i64;
+        for y in 0..side {
+            for w in 0..nw {
+                let k0 = w * 32;
+                let row0 = c0[y * nw + w];
+                let row1 = c1[y * nw + w];
+                let prev1 = if w > 0 { c1[y * nw + w - 1] } else { 0 };
+                let next1 = if w + 1 < nw { c1[y * nw + w + 1] } else { 0 };
+                for b in 0..32 {
+                    let k = k0 + b;
+                    if k >= half {
+                        break;
+                    }
+                    let mine = i64::from(pm_bit(row0, b));
+                    if y.is_multiple_of(2) {
+                        sum += mine * i64::from(pm_bit(row1, b));
+                        if k > 0 {
+                            sum += mine * i64::from(row_pm(prev1, row1, next1, k - 1, k0));
+                        }
+                    } else {
+                        sum += mine * i64::from(pm_bit(row1, b));
+                        if k + 1 < half {
+                            sum += mine * i64::from(row_pm(prev1, row1, next1, k + 1, k0));
+                        }
+                    }
+                }
+                if y + 1 < side {
+                    let up0 = c0[(y + 1) * nw + w];
+                    let up1 = c1[(y + 1) * nw + w];
+                    for b in 0..32 {
+                        let k = k0 + b;
+                        if k >= half {
+                            break;
+                        }
+                        sum += i64::from(pm_bit(row0, b) * pm_bit(up1, b));
+                        sum += i64::from(pm_bit(row1, b) * pm_bit(up0, b));
+                    }
+                }
+            }
+        }
+        sum
+    }
+
+    #[test]
+    fn the_shader_bond_word_matches_the_integer_lattice_sum() {
+        for side in [2usize, 8, 18, 32, 64, 96] {
+            let mut spins = vec![0i8; side * side];
+            for (i, s) in spins.iter_mut().enumerate() {
+                *s = if (i * 5 + 1).is_multiple_of(2) { 1 } else { -1 };
+            }
+            let half = side / 2;
+            let nw = half.div_ceil(32);
+            let mut plane = [vec![0u32; side * nw], vec![0u32; side * nw]];
+            pack_planes(&mut plane, &spins, side, nw);
+            assert_eq!(
+                shader_bond_sum(&plane[0], &plane[1], side, nw),
+                integer_bonds(&spins, side),
+                "side {side}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_preloaded_word_matches_the_scalar_field_on_edges_and_interiors() {
+        for side in [2usize, 4, 8, 18, 32, 64, 96] {
+            let mut spins = vec![0i8; side * side];
+            for (i, s) in spins.iter_mut().enumerate() {
+                *s = if (i * 17 + side).is_multiple_of(3) {
+                    1
+                } else {
+                    -1
+                };
+            }
+            let half = side / 2;
+            let nw = half.div_ceil(32);
+            let mut plane = [vec![0u32; side * nw], vec![0u32; side * nw]];
+            pack_planes(&mut plane, &spins, side, nw);
+            let thresh = threshold_table(1.0, 0.4);
+            for color in 0..2 {
+                for y in 0..side {
+                    for w in 0..nw {
+                        let mut scalar = plane[color][y * nw + w];
+                        let k0 = w * 32;
+                        for b in 0..32 {
+                            let k = k0 + b;
+                            if k >= half {
+                                break;
+                            }
+                            let x = 2 * k + ((y + color) & 1);
+                            let field = packed_field(&plane, side, nw, color, x, y);
+                            let draw = packed_hash(packed_seed(9), (y * side + x) as u32, 3);
+                            let mask = 1u32 << b;
+                            if draw < thresh[(field + 4) as usize] {
+                                scalar |= mask;
+                            } else {
+                                scalar &= !mask;
+                            }
+                        }
+                        let got = update_packed_word(
+                            &plane[color ^ 1],
+                            plane[color][y * nw + w],
+                            side,
+                            nw,
+                            half,
+                            color,
+                            y,
+                            w,
+                            &thresh,
+                            packed_seed(9),
+                            3,
+                        );
+                        assert_eq!(got, scalar, "side {side} color {color} y {y} w {w}");
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn packed_fields_match_the_scalar_neighbour_sum_including_edges() {
         for side in [2usize, 4, 8, 18] {
@@ -2289,6 +3175,67 @@ mod tests {
             panic!("zero threads was accepted");
         };
         assert!(err.message.contains('0'), "{}", err.message);
+    }
+
+    #[test]
+    fn an_all_present_field_is_the_popcount_and_a_large_grid_matches_the_trit_adder() {
+        // Every lane of four present neighbours, including the sign.
+        let mut lane = 0u64;
+        for bits in 0..16u64 {
+            let up = (bits & 1) << lane;
+            let down = ((bits >> 1) & 1) << lane;
+            let left = ((bits >> 2) & 1) << lane;
+            let right = ((bits >> 3) & 1) << lane;
+            let fast = field_all_present(up, down, left, right);
+            let slow = field_planes(up, !0, down, !0, left, !0, right, !0);
+            let count = (bits & 1) + ((bits >> 1) & 1) + ((bits >> 2) & 1) + ((bits >> 3) & 1);
+            assert_eq!(lane_i4(&fast, lane as usize), 2 * count as i32 - 4);
+            assert_eq!(lane_i4(&fast, lane as usize), lane_i4(&slow, lane as usize));
+            lane = (lane + 1) % 64;
+        }
+        // Side 512 has interior words, which is the only place the all-present field runs.
+        let mut fast = OpenIsing::try_new(512, 1.0, 0.35, 9, Levers::COMBINED, 4).unwrap();
+        let mut trit = OpenIsing::try_new(
+            512,
+            1.0,
+            0.35,
+            9,
+            Levers {
+                simd: true,
+                ..Levers::SCALAR
+            },
+            1,
+        )
+        .unwrap();
+        fast.sweeps(4);
+        trit.sweeps(4);
+        assert_eq!(fast.spins(), trit.spins());
+    }
+
+    #[test]
+    fn a_batched_sweep_matches_one_at_a_time_and_the_bond_sum_is_the_energy() {
+        for side in [8usize, 18, 64] {
+            let mut batch = OpenIsing::try_new(side, 1.0, 0.3, 11, Levers::COMBINED, 4).unwrap();
+            let mut one = OpenIsing::try_new(side, 1.0, 0.3, 11, Levers::COMBINED, 1).unwrap();
+            let got = batch.energies(3, 4, 2);
+            one.sweeps(3);
+            let mut expect = Vec::new();
+            for _ in 0..4 {
+                one.sweeps(2);
+                expect.push(grid_energy(one.spins(), side, 1.0));
+            }
+            assert_eq!(got, expect, "side {side}");
+            assert_eq!(batch.spins(), one.spins(), "side {side} state");
+            assert_eq!(batch.energy(), expect[3]);
+        }
+        let mut g = OpenIsing::try_new(32, 1.0, 0.3, 1, Levers::COMBINED, 2).unwrap();
+        g.set_profile(true);
+        let prof = g.sweeps(2);
+        let load = g.sweep_load();
+        assert_eq!(prof.rng_words, load.rng_words_full * 2);
+        assert!(load.bytes_read > load.bytes_written);
+        assert_eq!(load.updates, 32 * 32);
+        assert_eq!(load.bonds, 2 * 32 * 31);
     }
 
     #[test]
