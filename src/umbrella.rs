@@ -142,11 +142,17 @@ impl core::fmt::Display for Invalid {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Invalid::NoWindows => write!(f, "WHAM needs at least one window, got none"),
-            Invalid::Mismatched { windows, histograms } => {
+            Invalid::Mismatched {
+                windows,
+                histograms,
+            } => {
                 write!(f, "{windows} windows of bias but {histograms} histograms")
             }
             Invalid::Ragged { window, len, bins } => {
-                write!(f, "window {window} covers {len} bins, not the {bins} the coordinate has")
+                write!(
+                    f,
+                    "window {window} covers {len} bins, not the {bins} the coordinate has"
+                )
             }
             Invalid::EmptyWindow(w) => write!(f, "window {w} recorded no visits"),
             Invalid::NotFinite { window, bin } => {
@@ -157,7 +163,10 @@ impl core::fmt::Display for Invalid {
                 "a free energy is divided by beta, which must be finite and positive, not {b}"
             ),
             Invalid::TooLarge { n, cap } => {
-                write!(f, "enumerating {n} spins means 2^{n} states, past a cap of 2^{cap}")
+                write!(
+                    f,
+                    "enumerating {n} spins means 2^{n} states, past a cap of 2^{cap}"
+                )
             }
         }
     }
@@ -218,7 +227,10 @@ impl Magnetisation {
     pub fn bin(&self, m: i64) -> usize {
         let n = self.n as i64;
         assert!(m >= -n && m <= n, "magnetisation {m} is outside -{n}..={n}");
-        assert!((m + n) % 2 == 0, "magnetisation {m} has the wrong parity for {n} spins");
+        assert!(
+            (m + n) % 2 == 0,
+            "magnetisation {m} has the wrong parity for {n} spins"
+        );
         ((m + n) / 2) as usize
     }
 }
@@ -260,7 +272,9 @@ impl Window {
     /// The restraint evaluated at every bin of `coord`, which is the form [`solve`] takes.
     #[must_use]
     pub fn on_grid(&self, coord: &Magnetisation) -> Vec<f64> {
-        (0..coord.bins()).map(|b| self.bias(coord.value(b))).collect()
+        (0..coord.bins())
+            .map(|b| self.bias(coord.value(b)))
+            .collect()
     }
 }
 
@@ -280,7 +294,9 @@ pub fn ladder(coord: &Magnetisation, count: usize, k: f64) -> Vec<Window> {
     if count == 1 {
         return vec![Window::new(k, 0.0)];
     }
-    (0..count).map(|w| Window::new(k, -n + 2.0 * n * w as f64 / (count - 1) as f64)).collect()
+    (0..count)
+        .map(|w| Window::new(k, -n + 2.0 * n * w as f64 / (count - 1) as f64))
+        .collect()
 }
 
 // ---- profiles ----------------------------------------------------------------------------------
@@ -312,11 +328,19 @@ impl Profile {
     #[must_use]
     pub fn new(coord: Vec<f64>, log_w: &[f64], beta: f64) -> Self {
         assert_eq!(coord.len(), log_w.len(), "one log-weight per bin");
-        assert!(beta.is_finite() && beta > 0.0, "beta must be finite and positive, got {beta}");
+        assert!(
+            beta.is_finite() && beta > 0.0,
+            "beta must be finite and positive, got {beta}"
+        );
         let norm = log_sum_exp(log_w);
         let log_p: Vec<f64> = log_w.iter().map(|x| x - norm).collect();
         let free_energy = log_p.iter().map(|x| -x / beta).collect();
-        Profile { coord, log_p, free_energy, beta }
+        Profile {
+            coord,
+            log_p,
+            free_energy,
+            beta,
+        }
     }
 
     /// `F(m)` with its mean over the reachable bins removed.
@@ -326,7 +350,12 @@ impl Profile {
     /// are. Bins that were never reached stay `+inf` and are left out of the mean.
     #[must_use]
     pub fn centred(&self) -> Vec<f64> {
-        let finite: Vec<f64> = self.free_energy.iter().copied().filter(|x| x.is_finite()).collect();
+        let finite: Vec<f64> = self
+            .free_energy
+            .iter()
+            .copied()
+            .filter(|x| x.is_finite())
+            .collect();
         if finite.is_empty() {
             return self.free_energy.clone();
         }
@@ -387,7 +416,10 @@ pub fn exact_profile(g: &Graph, beta: f64) -> Result<Enumerated, Invalid> {
         return Err(Invalid::BadBeta(beta));
     }
     if g.n > MAX_ENUM {
-        return Err(Invalid::TooLarge { n: g.n, cap: MAX_ENUM });
+        return Err(Invalid::TooLarge {
+            n: g.n,
+            cap: MAX_ENUM,
+        });
     }
     let coord = Magnetisation::new(g.n);
     let bins = coord.bins();
@@ -411,7 +443,9 @@ pub fn exact_profile(g: &Graph, beta: f64) -> Result<Enumerated, Invalid> {
     // A lower bound on every bin, summed downward, is a lower bound on their total.
     let z_lo = crate::round::sum_down(&bin_lo);
     let z_hi = crate::round::sum_up(&bin_hi);
-    let log_w: Vec<f64> = (0..bins).map(|b| (0.5 * (bin_lo[b] + bin_hi[b])).ln()).collect();
+    let log_w: Vec<f64> = (0..bins)
+        .map(|b| (0.5 * (bin_lo[b] + bin_hi[b])).ln())
+        .collect();
     Ok(Enumerated {
         profile: Profile::new(coord.values(), &log_w, beta),
         // `ln` rounds too, in an unknown direction; one ulp outward keeps each end on its own side.
@@ -449,7 +483,10 @@ impl<'g> Walk<'g> {
     /// by the seed rather than by index — a block of contiguous up-spins is a domain wall, and
     /// starting every window inside one biases the burn-in the same way in every window.
     fn new(g: &'g Graph, beta: f64, m0: f64, seed: u64) -> Self {
-        assert!(beta.is_finite() && beta > 0.0, "beta must be finite and positive, got {beta}");
+        assert!(
+            beta.is_finite() && beta > 0.0,
+            "beta must be finite and positive, got {beta}"
+        );
         let n = g.n;
         let mut rng = Pcg::new(seed, 0x_11B4);
         let up = (((m0 + n as f64) / 2.0).round() as i64).clamp(0, n as i64) as usize;
@@ -463,7 +500,14 @@ impl<'g> Walk<'g> {
             s[i] = 1;
         }
         let m = s.iter().map(|&v| i64::from(v)).sum();
-        Walk { g, beta, coord: Magnetisation::new(n), s, m, rng }
+        Walk {
+            g,
+            beta,
+            coord: Magnetisation::new(n),
+            s,
+            m,
+            rng,
+        }
     }
 
     /// One proposed flip, accepted with `min(1, exp(−beta (dE + dV)))`; `bias[b]` is the bias energy
@@ -508,7 +552,14 @@ impl<'g> Umbrella<'g> {
         let walk = Walk::new(g, beta, window.m0, seed);
         let bias = window.on_grid(&walk.coord);
         let bins = bias.len();
-        Umbrella { walk, window, bias, hist: vec![0; bins], proposed: 0, accepted: 0 }
+        Umbrella {
+            walk,
+            window,
+            bias,
+            hist: vec![0; bins],
+            proposed: 0,
+            accepted: 0,
+        }
     }
 
     /// `steps` proposals whose visits are NOT recorded, to forget the starting state.
@@ -549,7 +600,11 @@ impl<'g> Umbrella<'g> {
     /// Fraction of proposals accepted, or zero before any were made.
     #[must_use]
     pub fn acceptance(&self) -> f64 {
-        if self.proposed == 0 { 0.0 } else { self.accepted as f64 / self.proposed as f64 }
+        if self.proposed == 0 {
+            0.0
+        } else {
+            self.accepted as f64 / self.proposed as f64
+        }
     }
 
     /// The current spin state.
@@ -636,15 +691,26 @@ pub fn solve(
         return Err(Invalid::NoWindows);
     }
     if hist.len() != nw {
-        return Err(Invalid::Mismatched { windows: nw, histograms: hist.len() });
+        return Err(Invalid::Mismatched {
+            windows: nw,
+            histograms: hist.len(),
+        });
     }
     let bins = coord.len();
     for w in 0..nw {
         if bias[w].len() != bins {
-            return Err(Invalid::Ragged { window: w, len: bias[w].len(), bins });
+            return Err(Invalid::Ragged {
+                window: w,
+                len: bias[w].len(),
+                bins,
+            });
         }
         if hist[w].len() != bins {
-            return Err(Invalid::Ragged { window: w, len: hist[w].len(), bins });
+            return Err(Invalid::Ragged {
+                window: w,
+                len: hist[w].len(),
+                bins,
+            });
         }
         for (b, v) in bias[w].iter().enumerate() {
             if !v.is_finite() {
@@ -665,7 +731,11 @@ pub fn solve(
     let ln_num: Vec<f64> = (0..bins)
         .map(|b| {
             let c: u64 = hist.iter().map(|h| h[b]).sum();
-            if c == 0 { f64::NEG_INFINITY } else { (c as f64).ln() }
+            if c == 0 {
+                f64::NEG_INFINITY
+            } else {
+                (c as f64).ln()
+            }
         })
         .collect();
 
@@ -783,7 +853,14 @@ pub fn run(
     seed: u64,
 ) -> Result<Wham, Invalid> {
     let hist = sample(g, beta, windows, burn, steps, seed);
-    stitch(beta, &Magnetisation::new(g.n), windows, &hist, TOL, MAX_ITERS)
+    stitch(
+        beta,
+        &Magnetisation::new(g.n),
+        windows,
+        &hist,
+        TOL,
+        MAX_ITERS,
+    )
 }
 
 // ---- metadynamics ------------------------------------------------------------------------------
@@ -824,14 +901,22 @@ impl Hills {
             sigma.is_finite() && sigma > 0.0,
             "a hill width must be finite and positive, got {sigma}"
         );
-        assert!(stride > 0, "a stride of zero deposits without ever proposing a move");
+        assert!(
+            stride > 0,
+            "a stride of zero deposits without ever proposing a move"
+        );
         if let Some(gamma) = bias_factor {
             assert!(
                 gamma.is_finite() && gamma > 1.0,
                 "a bias factor must be finite and above one, got {gamma}"
             );
         }
-        Hills { height, sigma, stride, bias_factor }
+        Hills {
+            height,
+            sigma,
+            stride,
+            bias_factor,
+        }
     }
 
     /// What the converged bias must be multiplied by to become `−F`: `gamma/(gamma − 1)`, or one
@@ -861,7 +946,13 @@ impl<'g> Meta<'g> {
     pub fn new(g: &'g Graph, beta: f64, hills: Hills, seed: u64) -> Self {
         let walk = Walk::new(g, beta, 0.0, seed);
         let bins = walk.coord.bins();
-        Meta { walk, hills, bias: vec![0.0; bins], steps: 0, deposited: 0 }
+        Meta {
+            walk,
+            hills,
+            bias: vec![0.0; bins],
+            steps: 0,
+            deposited: 0,
+        }
     }
 
     /// `steps` proposals, depositing a hill every [`Hills::stride`] of them.
@@ -946,7 +1037,10 @@ mod tests {
     /// and a test that looked only at `argmin F` would pass it.
     fn worst(a: &[f64], b: &[f64]) -> f64 {
         assert_eq!(a.len(), b.len(), "profiles must be over the same bins");
-        a.iter().zip(b.iter()).map(|(x, y)| (x - y).abs()).fold(0.0f64, f64::max)
+        a.iter()
+            .zip(b.iter())
+            .map(|(x, y)| (x - y).abs())
+            .fold(0.0f64, f64::max)
     }
 
     /// Histograms whose empirical distribution IS the biased distribution of each window, to the
@@ -967,10 +1061,13 @@ mod tests {
             .iter()
             .map(|w| {
                 let bias = w.on_grid(coord);
-                let lw: Vec<f64> =
-                    (0..coord.bins()).map(|b| exact.log_p[b] - beta * bias[b]).collect();
+                let lw: Vec<f64> = (0..coord.bins())
+                    .map(|b| exact.log_p[b] - beta * bias[b])
+                    .collect();
                 let top = lw.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-                lw.iter().map(|x| ((x - top).exp() * scale).round() as u64).collect()
+                lw.iter()
+                    .map(|x| ((x - top).exp() * scale).round() as u64)
+                    .collect()
             })
             .collect()
     }
@@ -1015,7 +1112,11 @@ mod tests {
             let windows = ladder(&coord, coord.bins(), *k);
             let hist = exact_histograms(&exact.profile, &windows, &coord, *beta, scale);
             let got = stitch(*beta, &coord, &windows, &hist, 1e-15, MAX_ITERS).unwrap();
-            assert!(got.converged, "residual {} after {} iters", got.residual, got.iters);
+            assert!(
+                got.converged,
+                "residual {} after {} iters",
+                got.residual, got.iters
+            );
 
             let e = worst(&got.profile.free_energy, &exact.profile.free_energy);
             println!(
@@ -1028,8 +1129,9 @@ mod tests {
 
             for (w, win) in windows.iter().enumerate() {
                 let bias = win.on_grid(&coord);
-                let lw: Vec<f64> =
-                    (0..coord.bins()).map(|b| exact.profile.log_p[b] - beta * bias[b]).collect();
+                let lw: Vec<f64> = (0..coord.bins())
+                    .map(|b| exact.profile.log_p[b] - beta * bias[b])
+                    .collect();
                 let want = -log_sum_exp(&lw) / beta;
                 assert!(
                     (got.f[w] - want).abs() < 1e-12,
@@ -1060,7 +1162,11 @@ mod tests {
 
         let got = stitch(beta, &coord, &flat, &hist, TOL, MAX_ITERS).unwrap();
         assert_eq!(got.iters, 1, "an unbiased window is already the answer");
-        assert!(got.f[0].abs() < 1e-15, "the one window's constant is zero, got {}", got.f[0]);
+        assert!(
+            got.f[0].abs() < 1e-15,
+            "the one window's constant is zero, got {}",
+            got.f[0]
+        );
         for b in 0..coord.bins() {
             let want = (hist[0][b] as f64 / total as f64).ln();
             assert!(
@@ -1119,8 +1225,9 @@ mod tests {
         for (k, m0, steps, tol) in cases {
             let win = Window::new(k, m0);
             let bias = win.on_grid(&coord);
-            let lw: Vec<f64> =
-                (0..coord.bins()).map(|b| exact.profile.log_p[b] - beta * bias[b]).collect();
+            let lw: Vec<f64> = (0..coord.bins())
+                .map(|b| exact.profile.log_p[b] - beta * bias[b])
+                .collect();
             let norm = log_sum_exp(&lw);
             let want: Vec<f64> = lw.iter().map(|x| (x - norm).exp()).collect();
 
@@ -1131,12 +1238,19 @@ mod tests {
                 u.steps(steps);
                 let n: u64 = u.histogram().iter().sum();
                 let got: Vec<f64> = u.histogram().iter().map(|&c| c as f64 / n as f64).collect();
-                let tv: f64 =
-                    0.5 * got.iter().zip(want.iter()).map(|(a, b)| (a - b).abs()).sum::<f64>();
+                let tv: f64 = 0.5
+                    * got
+                        .iter()
+                        .zip(want.iter())
+                        .map(|(a, b)| (a - b).abs())
+                        .sum::<f64>();
                 tv_worst = tv_worst.max(tv);
             }
             println!("k={k} m0={m0} steps={steps} worst TV over 4 seeds {tv_worst:.4}");
-            assert!(tv_worst < tol, "k={k} m0={m0} steps={steps}: total variation {tv_worst}");
+            assert!(
+                tv_worst < tol,
+                "k={k} m0={m0} steps={steps}: total variation {tv_worst}"
+            );
             if k == 0.0 && steps == 400_000 {
                 unbiased_tv = tv_worst;
             } else if k > 0.0 {
@@ -1173,7 +1287,11 @@ mod tests {
         let mut umbrella_worst = 0.0f64;
         for seed in 0..4u64 {
             let r = run(&g, beta, &windows, 20_000, per, seed).unwrap();
-            assert!(r.converged, "seed {seed}: residual {} after {} iters", r.residual, r.iters);
+            assert!(
+                r.converged,
+                "seed {seed}: residual {} after {} iters",
+                r.residual, r.iters
+            );
             umbrella_worst =
                 umbrella_worst.max(worst(&r.profile.free_energy, &exact.profile.free_energy));
         }
@@ -1189,7 +1307,10 @@ mod tests {
             "barrier {:.3}: worst bin, umbrella {umbrella_worst:.4}, unbiased {unbiased_worst:.4}",
             exact.profile.barrier()
         );
-        assert!(umbrella_worst < 0.25, "worst bin {umbrella_worst} against the enumeration");
+        assert!(
+            umbrella_worst < 0.25,
+            "worst bin {umbrella_worst} against the enumeration"
+        );
         assert!(
             umbrella_worst < 0.6 * unbiased_worst,
             "the windows bought nothing: {umbrella_worst} against {unbiased_worst} unbiased"
@@ -1241,7 +1362,11 @@ mod tests {
         for seed in 0..8u64 {
             let mut wt = Meta::new(&g, beta, Hills::new(0.02, 0.5, 20, Some(5.0)), seed);
             wt.run(4_000_000);
-            assert_eq!(wt.deposited(), 200_000, "one hill per stride, and the stride is 20");
+            assert_eq!(
+                wt.deposited(),
+                200_000,
+                "one hill per stride, and the stride is 20"
+            );
             tempered = tempered.max(worst(&wt.profile().centred(), &want));
 
             let mut lp = Meta::new(&g, beta, Hills::new(0.02, 0.5, 20, None), seed);
@@ -1251,7 +1376,10 @@ mod tests {
         println!(
             "span {span:.3}: worst bin, well-tempered {tempered:.4}, Laio-Parrinello {plain:.4}"
         );
-        assert!(tempered < 0.15, "well-tempered bias is off by {tempered} on a span of {span}");
+        assert!(
+            tempered < 0.15,
+            "well-tempered bias is off by {tempered} on a span of {span}"
+        );
         assert!(
             tempered * 3.0 < plain,
             "tempering bought nothing: {tempered} against {plain} untempered"
@@ -1278,8 +1406,17 @@ mod tests {
             let e = exact_profile(g, *beta).unwrap();
             let want = el.log_partition(g, *beta).unwrap().log_z.unwrap();
             let (lo, hi) = e.log_z;
-            assert!(lo <= want && want <= hi, "n={}: {want} outside [{lo}, {hi}]", g.n);
-            assert!(hi - lo < 1e-12, "n={}: bracket width {} is not a useful bound", g.n, hi - lo);
+            assert!(
+                lo <= want && want <= hi,
+                "n={}: {want} outside [{lo}, {hi}]",
+                g.n
+            );
+            assert!(
+                hi - lo < 1e-12,
+                "n={}: bracket width {} is not a useful bound",
+                g.n,
+                hi - lo
+            );
             // The profile is normalised, so its own weights must re-sum to one exactly enough that
             // `free_energy` is a free energy and not a shape.
             let z: f64 = e.profile.log_p.iter().map(|x| x.exp()).sum();
@@ -1298,7 +1435,9 @@ mod tests {
             assert_eq!(coord.bins(), n + 1);
             let mut seen = vec![0u32; coord.bins()];
             for mask in 0u64..(1u64 << n) {
-                let m: i64 = (0..n).map(|i| if mask >> i & 1 == 1 { 1i64 } else { -1 }).sum();
+                let m: i64 = (0..n)
+                    .map(|i| if mask >> i & 1 == 1 { 1i64 } else { -1 })
+                    .sum();
                 let b = coord.bin(m);
                 assert_eq!(coord.value(b), m as f64, "n={n} m={m} went to bin {b}");
                 seen[b] += 1;
@@ -1323,18 +1462,31 @@ mod tests {
             assert_eq!(w.m0, coord.value(b), "window {b} is not on bin {b}");
             assert_eq!(w.bias(w.m0), 0.0, "a restraint is zero at its own centre");
         }
-        assert_eq!(ladder(&coord, 1, 0.25)[0].m0, 0.0, "a single window is central");
+        assert_eq!(
+            ladder(&coord, 1, 0.25)[0].m0,
+            0.0,
+            "a single window is central"
+        );
         // An unbiased window is flat, and the harmonic form is symmetric about its centre.
         let w = Window::new(0.5, 3.0);
         assert_eq!(w.bias(5.0), w.bias(1.0));
         assert_eq!(w.bias(5.0), 1.0, "(k/2) d^2 with k = 1/2 and d = 2");
-        assert!(Window::new(0.0, 7.0).on_grid(&coord).iter().all(|&x| x == 0.0));
+        assert!(
+            Window::new(0.0, 7.0)
+                .on_grid(&coord)
+                .iter()
+                .all(|&x| x == 0.0)
+        );
     }
 
     /// The rescaling that turns a well-tempered bias into a free energy, at its two limits.
     #[test]
     fn the_well_tempered_rescaling_has_the_right_limits() {
-        assert_eq!(Hills::new(1.0, 1.0, 1, None).rescale(), 1.0, "untempered needs no rescaling");
+        assert_eq!(
+            Hills::new(1.0, 1.0, 1, None).rescale(),
+            1.0,
+            "untempered needs no rescaling"
+        );
         assert_eq!(Hills::new(1.0, 1.0, 1, Some(2.0)).rescale(), 2.0);
         assert_eq!(Hills::new(1.0, 1.0, 1, Some(5.0)).rescale(), 1.25);
         // gamma -> infinity IS the untempered algorithm, and the rescaling must agree.
@@ -1349,45 +1501,89 @@ mod tests {
         let hist = vec![vec![1u64; 5]];
         let err = |r: Result<Wham, Invalid>| r.err().unwrap();
 
-        assert_eq!(err(solve(0.0, &vals, &bias, &hist, TOL, 10)), Invalid::BadBeta(0.0));
+        assert_eq!(
+            err(solve(0.0, &vals, &bias, &hist, TOL, 10)),
+            Invalid::BadBeta(0.0)
+        );
         assert_eq!(
             err(solve(f64::NAN, &vals, &bias, &hist, TOL, 10)).to_string(),
             "a free energy is divided by beta, which must be finite and positive, not NaN"
         );
-        assert_eq!(err(solve(1.0, &vals, &[], &[], TOL, 10)), Invalid::NoWindows);
         assert_eq!(
-            err(solve(1.0, &vals, &bias, &[hist[0].clone(), hist[0].clone()], TOL, 10)),
-            Invalid::Mismatched { windows: 1, histograms: 2 }
+            err(solve(1.0, &vals, &[], &[], TOL, 10)),
+            Invalid::NoWindows
+        );
+        assert_eq!(
+            err(solve(
+                1.0,
+                &vals,
+                &bias,
+                &[hist[0].clone(), hist[0].clone()],
+                TOL,
+                10
+            )),
+            Invalid::Mismatched {
+                windows: 1,
+                histograms: 2
+            }
         );
         assert_eq!(
             err(solve(1.0, &vals, &[vec![0.0; 3]], &hist, TOL, 10)),
-            Invalid::Ragged { window: 0, len: 3, bins: 5 }
+            Invalid::Ragged {
+                window: 0,
+                len: 3,
+                bins: 5
+            }
         );
         assert_eq!(
             err(solve(1.0, &vals, &bias, &[vec![1u64; 4]], TOL, 10)),
-            Invalid::Ragged { window: 0, len: 4, bins: 5 }
+            Invalid::Ragged {
+                window: 0,
+                len: 4,
+                bins: 5
+            }
         );
         assert_eq!(
             err(solve(1.0, &vals, &bias, &[vec![0u64; 5]], TOL, 10)),
             Invalid::EmptyWindow(0)
         );
         assert_eq!(
-            err(solve(1.0, &vals, &[vec![0.0, 0.0, f64::INFINITY, 0.0, 0.0]], &hist, TOL, 10)),
+            err(solve(
+                1.0,
+                &vals,
+                &[vec![0.0, 0.0, f64::INFINITY, 0.0, 0.0]],
+                &hist,
+                TOL,
+                10
+            )),
             Invalid::NotFinite { window: 0, bin: 2 }
         );
 
         let big = ising::ring(21, 1.0, 0.0);
         assert_eq!(
             exact_profile(&big, 1.0).err().unwrap(),
-            Invalid::TooLarge { n: 21, cap: MAX_ENUM }
+            Invalid::TooLarge {
+                n: 21,
+                cap: MAX_ENUM
+            }
         );
         let small = ising::ring(4, 1.0, 0.0);
-        assert_eq!(exact_profile(&small, -1.0).err().unwrap(), Invalid::BadBeta(-1.0));
+        assert_eq!(
+            exact_profile(&small, -1.0).err().unwrap(),
+            Invalid::BadBeta(-1.0)
+        );
         // Every refusal must print something a caller can act on.
         for e in [
             Invalid::NoWindows,
-            Invalid::Mismatched { windows: 1, histograms: 2 },
-            Invalid::Ragged { window: 0, len: 3, bins: 5 },
+            Invalid::Mismatched {
+                windows: 1,
+                histograms: 2,
+            },
+            Invalid::Ragged {
+                window: 0,
+                len: 3,
+                bins: 5,
+            },
             Invalid::EmptyWindow(3),
             Invalid::NotFinite { window: 1, bin: 2 },
             Invalid::TooLarge { n: 21, cap: 20 },
@@ -1408,7 +1604,14 @@ mod tests {
         assert!(got.profile.log_p[1] == f64::NEG_INFINITY);
         // The barrier and the centring must both ignore them rather than become NaN.
         assert!(got.profile.barrier().is_finite());
-        assert!(got.profile.centred().iter().filter(|x| x.is_finite()).count() == 3);
+        assert!(
+            got.profile
+                .centred()
+                .iter()
+                .filter(|x| x.is_finite())
+                .count()
+                == 3
+        );
     }
 
     /// Seeded runs repeat exactly, which is the crate's headline and not free: the walk draws a
@@ -1425,7 +1628,9 @@ mod tests {
         // Windows must not share a stream: two windows of the SAME shape still differ.
         let same = [Window::new(0.25, 0.0), Window::new(0.25, 0.0)];
         let h = sample(&g, 0.7, &same, 1_000, 20_000, 5);
-        assert_ne!(h[0], h[1], "two windows drawing the same numbers are one window counted twice");
+        assert_ne!(
+            h[0], h[1],
+            "two windows drawing the same numbers are one window counted twice"
+        );
     }
 }
-

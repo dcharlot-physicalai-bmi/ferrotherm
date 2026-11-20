@@ -73,7 +73,11 @@ impl Hubo {
     #[must_use]
     /// An empty model over `n` spins: no terms, zero energy everywhere.
     pub fn new(n: usize) -> Hubo {
-        Hubo { n, terms: Vec::new(), incident: vec![Vec::new(); n] }
+        Hubo {
+            n,
+            terms: Vec::new(),
+            incident: vec![Vec::new(); n],
+        }
     }
 
     #[must_use]
@@ -117,7 +121,10 @@ impl Hubo {
     /// is why its table is right and this doc comment was wrong until it was checked.
     #[must_use]
     pub fn ancillas_avoided(&self) -> usize {
-        self.terms.iter().map(|(v, _)| v.len().saturating_sub(2)).sum()
+        self.terms
+            .iter()
+            .map(|(v, _)| v.len().saturating_sub(2))
+            .sum()
     }
 
     /// Add a term. Rejects the same things [`crate::factor::Factor`] rejects, and for the same
@@ -156,7 +163,8 @@ impl Hubo {
             for k in g.offset[i]..g.offset[i + 1] {
                 let j = g.nbr[k] as usize;
                 if j > i {
-                    h.add(&[i, j], g.w[k]).expect("two distinct in-range variables");
+                    h.add(&[i, j], g.w[k])
+                        .expect("two distinct in-range variables");
                 }
             }
         }
@@ -165,7 +173,9 @@ impl Hubo {
 
     /// Every term as `(variables, weight)`, in insertion order.
     pub fn iter(&self) -> impl Iterator<Item = (Vec<usize>, f64)> + '_ {
-        self.terms.iter().map(|(v, w)| (v.iter().map(|&i| i as usize).collect(), *w))
+        self.terms
+            .iter()
+            .map(|(v, w)| (v.iter().map(|&i| i as usize).collect(), *w))
     }
 
     /// `E(s) = −Σ_T w_T Π s_i`.
@@ -209,7 +219,12 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { beta_min: 0.05, beta_max: 8.0, stages: 200, sweeps_per_stage: 8 }
+        Params {
+            beta_min: 0.05,
+            beta_max: 8.0,
+            stages: 200,
+            sweeps_per_stage: 8,
+        }
     }
 }
 
@@ -258,7 +273,11 @@ pub fn anneal_metered(h: &Hubo, p: &Params, seed: u64, mut ledger: Option<&mut L
     let stages = p.stages.max(1);
     let (b0, b1) = (p.beta_min.max(1e-12), p.beta_max.max(p.beta_min.max(1e-12)));
     for stage in 0..stages {
-        let f = if stages == 1 { 1.0 } else { stage as f64 / (stages - 1) as f64 };
+        let f = if stages == 1 {
+            1.0
+        } else {
+            stage as f64 / (stages - 1) as f64
+        };
         let beta = b0 * (b1 / b0).powf(f);
         for _ in 0..p.sweeps_per_stage.max(1) {
             for i in 0..n {
@@ -283,7 +302,13 @@ pub fn anneal_metered(h: &Hubo, p: &Params, seed: u64, mut ledger: Option<&mut L
         }
     }
     let energy = h.energy(&best);
-    Outcome { state: best, energy, proposals, accepted, ancillas_avoided: h.ancillas_avoided() }
+    Outcome {
+        state: best,
+        energy,
+        proposals,
+        accepted,
+        ancillas_avoided: h.ancillas_avoided(),
+    }
 }
 
 #[cfg(test)]
@@ -311,7 +336,11 @@ mod tests {
             let g = gb.build();
             let h = Hubo::from_graph(&g);
             assert_eq!(h.max_arity(), 2);
-            assert_eq!(h.ancillas_avoided(), 0, "a pairwise model needs no ancillas");
+            assert_eq!(
+                h.ancillas_avoided(),
+                0,
+                "a pairwise model needs no ancillas"
+            );
             for t in 0..40 {
                 let s: Vec<i8> = (0..n).map(|_| rng.spin(0.5)).collect();
                 assert!(
@@ -343,7 +372,10 @@ mod tests {
             }
             h.add(&vars, rng.f64() * 2.0 - 1.0).unwrap();
         }
-        assert!(h.max_arity() >= 3, "the test needs a genuinely higher-order model");
+        assert!(
+            h.max_arity() >= 3,
+            "the test needs a genuinely higher-order model"
+        );
         for _ in 0..50 {
             let mut s: Vec<i8> = (0..n).map(|_| rng.spin(0.5)).collect();
             for i in 0..n {
@@ -382,7 +414,10 @@ mod tests {
                 }
                 h.add(&vars, rng.f64() * 2.0 - 1.0).unwrap();
             }
-            assert!(h.ancillas_avoided() >= 24, "arity 3 and 4 terms cost at least one each");
+            assert!(
+                h.ancillas_avoided() >= 24,
+                "arity 3 and 4 terms cost at least one each"
+            );
 
             let out = anneal(&h, &Params::default(), seed);
             assert_eq!(out.ancillas_avoided, h.ancillas_avoided());
@@ -428,7 +463,11 @@ mod tests {
             let h = Hubo::from_graph(&g);
             let out = anneal(&h, &Params::default(), 3);
             let bonds = 2.0 * (l * l) as f64;
-            assert!((out.energy + bonds).abs() < 1e-9, "{l}x{l}: got {}", out.energy);
+            assert!(
+                (out.energy + bonds).abs() < 1e-9,
+                "{l}x{l}: got {}",
+                out.energy
+            );
         }
     }
 
@@ -458,14 +497,23 @@ mod tests {
 
         let mut h = Hubo::new(5);
         for third in [2, 3, 4] {
-            h.add(&[0, 1, third], 1.0).expect("distinct in-range variables");
+            h.add(&[0, 1, third], 1.0)
+                .expect("distinct in-range variables");
         }
-        let p = Program::from_ftp("ftp 1\nspins 5\nfactor 1 0 1 2\nfactor 1 0 1 3\nfactor 1 0 1 4\n")
-            .expect("a well-formed program");
+        let p =
+            Program::from_ftp("ftp 1\nspins 5\nfactor 1 0 1 2\nfactor 1 0 1 3\nfactor 1 0 1 4\n")
+                .expect("a well-formed program");
         let red = crate::reduce::to_pairwise(&p).expect("a reducible program");
 
-        assert_eq!(h.ancillas_avoided(), 3, "the per-term ceiling: three terms of arity 3");
-        assert_eq!(red.ancillas, 1, "one ancilla for the pair (0,1) serves all three terms");
+        assert_eq!(
+            h.ancillas_avoided(),
+            3,
+            "the per-term ceiling: three terms of arity 3"
+        );
+        assert_eq!(
+            red.ancillas, 1,
+            "one ancilla for the pair (0,1) serves all three terms"
+        );
         assert!(
             red.ancillas < h.ancillas_avoided(),
             "the reduction spent {} where the ceiling says {}; if these ever agree on THIS model \
@@ -476,8 +524,10 @@ mod tests {
 
         // And it is a ceiling rather than an estimate: never below what the reduction spends.
         let mut wide = Hubo::new(6);
-        wide.add(&[0, 1, 2, 3], 1.0).expect("distinct in-range variables");
-        wide.add(&[2, 3, 4, 5], -1.0).expect("distinct in-range variables");
+        wide.add(&[0, 1, 2, 3], 1.0)
+            .expect("distinct in-range variables");
+        wide.add(&[2, 3, 4, 5], -1.0)
+            .expect("distinct in-range variables");
         let wp = Program::from_ftp("ftp 1\nspins 6\nfactor 1 0 1 2 3\nfactor -1 2 3 4 5\n")
             .expect("a well-formed program");
         let wr = crate::reduce::to_pairwise(&wp).expect("a reducible program");

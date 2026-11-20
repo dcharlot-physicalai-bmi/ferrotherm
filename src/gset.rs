@@ -94,9 +94,14 @@ impl core::fmt::Display for GsetError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             GsetError::Header(t) => write!(f, "expected a header line `n m`, got {t:?}"),
-            GsetError::Line { line, text } => write!(f, "line {line}: expected `i j w`, got {text:?}"),
+            GsetError::Line { line, text } => {
+                write!(f, "line {line}: expected `i j w`, got {text:?}")
+            }
             GsetError::Vertex { line, got, n } => {
-                write!(f, "line {line}: vertex {got} is outside 1..={n}; this format is 1-based")
+                write!(
+                    f,
+                    "line {line}: vertex {got} is outside 1..={n}; this format is 1-based"
+                )
             }
             GsetError::Count { declared, found } => write!(
                 f,
@@ -114,22 +119,31 @@ impl core::fmt::Display for GsetError {
 /// so a failing `unwrap` would bury its own message under the graph it was complaining about.
 impl core::fmt::Debug for Instance {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "Instance {{ nodes: {}, edges: {}, W: {} }}", self.nodes, self.edges, self.total_weight)
+        write!(
+            f,
+            "Instance {{ nodes: {}, edges: {}, W: {} }}",
+            self.nodes, self.edges, self.total_weight
+        )
     }
 }
 
 impl Instance {
     /// Parse the G-set edge-list format.
-///
-/// # Errors
-///
-/// [`GsetError::Header`] for a missing or malformed header, [`GsetError::Line`] for a body line
-/// that is not `i j w`, [`GsetError::Vertex`] for a vertex outside `1..=n`, and
-/// [`GsetError::Count`] when the body length disagrees with the header -- the shape a truncated
-/// download takes, which otherwise parses into a valid smaller instance nobody can compare.
+    ///
+    /// # Errors
+    ///
+    /// [`GsetError::Header`] for a missing or malformed header, [`GsetError::Line`] for a body line
+    /// that is not `i j w`, [`GsetError::Vertex`] for a vertex outside `1..=n`, and
+    /// [`GsetError::Count`] when the body length disagrees with the header -- the shape a truncated
+    /// download takes, which otherwise parses into a valid smaller instance nobody can compare.
     pub fn parse(text: &str) -> Result<Instance, GsetError> {
-        let mut lines = text.lines().enumerate().filter(|(_, l)| !l.trim().is_empty());
-        let (_, head) = lines.next().ok_or_else(|| GsetError::Header(String::new()))?;
+        let mut lines = text
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| !l.trim().is_empty());
+        let (_, head) = lines
+            .next()
+            .ok_or_else(|| GsetError::Header(String::new()))?;
         let mut h = head.split_whitespace();
         let n: usize = h
             .next()
@@ -146,14 +160,25 @@ impl Instance {
         for (no, l) in lines {
             let mut it = l.split_whitespace();
             let (Some(a), Some(b), Some(w)) = (it.next(), it.next(), it.next()) else {
-                return Err(GsetError::Line { line: no + 1, text: l.to_string() });
+                return Err(GsetError::Line {
+                    line: no + 1,
+                    text: l.to_string(),
+                });
             };
-            let (Ok(a), Ok(b), Ok(w)) = (a.parse::<i64>(), b.parse::<i64>(), w.parse::<f64>()) else {
-                return Err(GsetError::Line { line: no + 1, text: l.to_string() });
+            let (Ok(a), Ok(b), Ok(w)) = (a.parse::<i64>(), b.parse::<i64>(), w.parse::<f64>())
+            else {
+                return Err(GsetError::Line {
+                    line: no + 1,
+                    text: l.to_string(),
+                });
             };
             for v in [a, b] {
                 if v < 1 || v as usize > n {
-                    return Err(GsetError::Vertex { line: no + 1, got: v, n });
+                    return Err(GsetError::Vertex {
+                        line: no + 1,
+                        got: v,
+                        n,
+                    });
                 }
             }
             // THE NEGATION. Everything in this module exists to get this sign right once.
@@ -164,7 +189,12 @@ impl Instance {
         if found != m {
             return Err(GsetError::Count { declared: m, found });
         }
-        Ok(Instance { graph: gb.build(), total_weight: total, nodes: n, edges: m })
+        Ok(Instance {
+            graph: gb.build(),
+            total_weight: total,
+            nodes: n,
+            edges: m,
+        })
     }
 
     /// The cut a state achieves.
@@ -196,7 +226,9 @@ mod tests {
         let n = inst.nodes;
         let mut best = f64::NEG_INFINITY;
         for mask in 0u32..(1u32 << n) {
-            let s: Vec<i8> = (0..n).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..n)
+                .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                .collect();
             best = best.max(inst.cut(&s));
         }
         best
@@ -211,17 +243,24 @@ mod tests {
         let n = inst.nodes;
         let (mut lo_e, mut best_cut_at_lo_e) = (f64::INFINITY, 0.0);
         for mask in 0u32..(1u32 << n) {
-            let s: Vec<i8> = (0..n).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..n)
+                .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                .collect();
             let e = inst.graph.energy(&s);
             if e < lo_e {
                 lo_e = e;
                 best_cut_at_lo_e = inst.cut(&s);
             }
         }
-        assert!((best_cut_at_lo_e - brute_max_cut(&inst)).abs() < 1e-9,
-                "the energy minimum must BE the cut maximum: {best_cut_at_lo_e} vs {}",
-                brute_max_cut(&inst));
-        assert!((brute_max_cut(&inst) - 4.0).abs() < 1e-9, "C5's max cut is 4 of 5 edges");
+        assert!(
+            (best_cut_at_lo_e - brute_max_cut(&inst)).abs() < 1e-9,
+            "the energy minimum must BE the cut maximum: {best_cut_at_lo_e} vs {}",
+            brute_max_cut(&inst)
+        );
+        assert!(
+            (brute_max_cut(&inst) - 4.0).abs() < 1e-9,
+            "C5's max cut is 4 of 5 edges"
+        );
     }
 
     #[test]
@@ -232,7 +271,10 @@ mod tests {
         let b = crate::bound::forest(&inst.graph, 60);
         let ub = inst.cut_upper_bound(b.value);
         let truth = brute_max_cut(&inst);
-        assert!(ub >= truth - 1e-9, "upper bound {ub} sits BELOW the true max cut {truth}");
+        assert!(
+            ub >= truth - 1e-9,
+            "upper bound {ub} sits BELOW the true max cut {truth}"
+        );
     }
 
     #[test]
@@ -246,24 +288,40 @@ mod tests {
         // and the alias says what the second element IS, which the raw type did not.
         type Edges = &'static [(usize, usize, f64)];
         let cases: [(&str, Edges); 4] = [
-            ("3 3\n1 2 1\n2 3 1\n1 3 1\n", &[(0, 1, 1.0), (1, 2, 1.0), (0, 2, 1.0)]),
-            ("3 3\n1 2 -1\n2 3 -1\n1 3 -1\n", &[(0, 1, -1.0), (1, 2, -1.0), (0, 2, -1.0)]),
+            (
+                "3 3\n1 2 1\n2 3 1\n1 3 1\n",
+                &[(0, 1, 1.0), (1, 2, 1.0), (0, 2, 1.0)],
+            ),
+            (
+                "3 3\n1 2 -1\n2 3 -1\n1 3 -1\n",
+                &[(0, 1, -1.0), (1, 2, -1.0), (0, 2, -1.0)],
+            ),
             (
                 "4 4\n1 2 1\n2 3 -1\n3 4 1\n4 1 -1\n",
                 &[(0, 1, 1.0), (1, 2, -1.0), (2, 3, 1.0), (3, 0, -1.0)],
             ),
             (
                 "5 5\n1 2 -1\n2 3 1\n3 4 -1\n4 5 1\n5 1 -1\n",
-                &[(0, 1, -1.0), (1, 2, 1.0), (2, 3, -1.0), (3, 4, 1.0), (4, 0, -1.0)],
+                &[
+                    (0, 1, -1.0),
+                    (1, 2, 1.0),
+                    (2, 3, -1.0),
+                    (3, 4, 1.0),
+                    (4, 0, -1.0),
+                ],
             ),
         ];
         for (text, edges) in cases {
             let inst = Instance::parse(text).unwrap();
             for mask in 0u32..(1u32 << inst.nodes) {
-                let s: Vec<i8> =
-                    (0..inst.nodes).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
-                let textbook: f64 =
-                    edges.iter().filter(|(a, b, _)| s[*a] != s[*b]).map(|(_, _, w)| *w).sum();
+                let s: Vec<i8> = (0..inst.nodes)
+                    .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                    .collect();
+                let textbook: f64 = edges
+                    .iter()
+                    .filter(|(a, b, _)| s[*a] != s[*b])
+                    .map(|(_, _, w)| *w)
+                    .sum();
                 assert!(
                     (inst.cut(&s) - textbook).abs() < 1e-12,
                     "{text:?}: cut() gave {} and the crossing-edge sum is {textbook}",
@@ -281,14 +339,22 @@ mod tests {
         let inst = Instance::parse("5 5\n1 2 -1\n2 3 1\n3 4 -1\n4 5 1\n5 1 -1\n").unwrap();
         let truth = (0u32..(1u32 << inst.nodes))
             .map(|m| {
-                let s: Vec<i8> =
-                    (0..inst.nodes).map(|i| if m >> i & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..inst.nodes)
+                    .map(|i| if m >> i & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 inst.cut(&s)
             })
             .fold(f64::NEG_INFINITY, f64::max);
-        for b in [crate::bound::decoupled(&inst.graph), crate::bound::odd_cycle(&inst.graph, 6)] {
+        for b in [
+            crate::bound::decoupled(&inst.graph),
+            crate::bound::odd_cycle(&inst.graph, 6),
+        ] {
             let ub = inst.cut_upper_bound(b.value);
-            assert!(ub >= truth - 1e-9, "{} gave upper bound {ub} below the true max cut {truth}", b.method);
+            assert!(
+                ub >= truth - 1e-9,
+                "{} gave upper bound {ub} below the true max cut {truth}",
+                b.method
+            );
         }
     }
 
@@ -299,7 +365,10 @@ mod tests {
         let short = "5 5\n1 2 1\n2 3 1\n";
         assert_eq!(
             Instance::parse(short).unwrap_err(),
-            GsetError::Count { declared: 5, found: 2 }
+            GsetError::Count {
+                declared: 5,
+                found: 2
+            }
         );
     }
 
@@ -308,9 +377,15 @@ mod tests {
         // A 0 in the file means the producer was 0-based. Silently accepting it shifts every edge
         // by one vertex, which still parses and still samples.
         let zero = "3 1\n0 1 1\n";
-        assert!(matches!(Instance::parse(zero), Err(GsetError::Vertex { got: 0, .. })));
+        assert!(matches!(
+            Instance::parse(zero),
+            Err(GsetError::Vertex { got: 0, .. })
+        ));
         let over = "3 1\n1 4 1\n";
-        assert!(matches!(Instance::parse(over), Err(GsetError::Vertex { got: 4, n: 3, .. })));
+        assert!(matches!(
+            Instance::parse(over),
+            Err(GsetError::Vertex { got: 4, n: 3, .. })
+        ));
     }
 
     #[test]

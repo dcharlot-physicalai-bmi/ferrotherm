@@ -52,8 +52,8 @@
 //! constraint on the machine and it is exactly the class of limit [`ferrotherm::fabric`] exists to
 //! declare: a model quantised into it still runs, it just answers a different question.
 
-use ferrotherm::fabric::{Device, Fabric, Topology, Unsupported};
 use ferrotherm::embed::Embedding;
+use ferrotherm::fabric::{Device, Fabric, Topology, Unsupported};
 use ferrotherm::ftp::Program;
 use ferrotherm::ledger::{Ledger, Prices};
 use ferrotherm::schedule::Schedule;
@@ -202,7 +202,7 @@ pub struct Hitachi {
     token: String,
     endpoint: String,
     machine: Machine,
-    model: Vec<[i64; 4]>,      // x0, y0, x1, y1
+    model: Vec<[i64; 4]>, // x0, y0, x1, y1
     coeff: Vec<f64>,
     spins: usize,
     ledger: Ledger,
@@ -295,9 +295,8 @@ impl Hitachi {
 
         let placed = ferrotherm::embed::apply(&logical, &hardware, &e);
         let program = Program::from_graph(&placed.graph, &Schedule::geometric(0.05, 6.0, 40, 20));
-        self.layout(&program).map_err(|err| {
-            format!("the embedded program still does not fit: {err}")
-        })?;
+        self.layout(&program)
+            .map_err(|err| format!("the embedded program still does not fit: {err}"))?;
         Ok(e)
     }
 
@@ -327,7 +326,10 @@ impl Hitachi {
             // its own. `|w| <= 7` admits 3.5, which a machine storing four-bit INTEGERS cannot
             // hold; a second, weaker copy of a limit is how the two drift apart.
             if !range.holds(w) {
-                return Err(LayoutError::CoefficientRange { value: w, limit: lim });
+                return Err(LayoutError::CoefficientRange {
+                    value: w,
+                    limit: lim,
+                });
             }
             Ok(())
         };
@@ -340,7 +342,8 @@ impl Hitachi {
             // their sign is inverted, so our -h·s becomes their +(-h)·s
             let w = -*h;
             check_range(w)?;
-            self.model.push([a.0 as i64, a.1 as i64, a.0 as i64, a.1 as i64]);
+            self.model
+                .push([a.0 as i64, a.1 as i64, a.0 as i64, a.1 as i64]);
             self.coeff.push(w);
         }
 
@@ -359,7 +362,8 @@ impl Hitachi {
             }
             let w = -f.weight(); // sign inversion, measured
             check_range(w)?;
-            self.model.push([a.0 as i64, a.1 as i64, b.0 as i64, b.1 as i64]);
+            self.model
+                .push([a.0 as i64, a.1 as i64, b.0 as i64, b.1 as i64]);
             self.coeff.push(w);
         }
         Ok(())
@@ -453,7 +457,9 @@ impl Device for Hitachi {
                 // of them used to come back as `TooHighDegree { degree: 0, limit: 8 }` -- which
                 // reads as "degree 0 exceeds 8", is not true of anything, and told a caller with a
                 // non-adjacent coupling nothing about their non-adjacent coupling.
-                return vec![Unsupported::Unplaceable { detail: e.to_string() }];
+                return vec![Unsupported::Unplaceable {
+                    detail: e.to_string(),
+                }];
             }
         }
         bad
@@ -464,13 +470,19 @@ impl Device for Hitachi {
             return Err("no program laid out".into());
         }
         let body = self.request_json(1, schedule);
-        let resp = ureq::post(&self.endpoint)
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .set("Content-Type", "application/json")
-            .timeout(std::time::Duration::from_secs(180))
-            .send_string(&body)
-            .map_err(|e| format!("annealing cloud: {e}"))?
-            .into_string()
+        let agent = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(180)))
+            .build()
+            .new_agent();
+        let mut resp = agent
+            .post(&self.endpoint)
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .header("Content-Type", "application/json")
+            .send(&body)
+            .map_err(|e| format!("annealing cloud: {e}"))?;
+        let resp = resp
+            .body_mut()
+            .read_to_string()
             .map_err(|e| format!("reading response: {e}"))?;
 
         let side = self.machine.side();
@@ -502,9 +514,13 @@ impl Device for Hitachi {
 }
 
 fn scan_numbers(s: &str, after: &str) -> Vec<f64> {
-    let Some(i) = s.find(after) else { return Vec::new() };
+    let Some(i) = s.find(after) else {
+        return Vec::new();
+    };
     let rest = &s[i + after.len()..];
-    let end = rest.find(']').unwrap_or(rest.find(',').unwrap_or(rest.len()));
+    let end = rest
+        .find(']')
+        .unwrap_or(rest.find(',').unwrap_or(rest.len()));
     rest[..end]
         .split(',')
         .filter_map(|t| t.trim().parse::<f64>().ok())
@@ -517,7 +533,9 @@ fn scan_numbers(s: &str, after: &str) -> Vec<f64> {
 /// executions together and produce a state that is not any single run's answer.
 fn scan_spins(s: &str) -> Vec<(usize, usize, i8)> {
     const KEY: &str = "\"spins\":[";
-    let Some(i) = s.find(KEY) else { return Vec::new() };
+    let Some(i) = s.find(KEY) else {
+        return Vec::new();
+    };
     let rest = &s[i + KEY.len()..];
 
     // Bracket-match the first execution's block rather than guessing where it ends.
@@ -541,15 +559,22 @@ fn scan_spins(s: &str) -> Vec<(usize, usize, i8)> {
         .split('[')
         .filter_map(|chunk| {
             let body = chunk.split(']').next()?;
-            let parts: Vec<&str> =
-                body.split(',').map(str::trim).filter(|p| !p.is_empty()).collect();
+            let parts: Vec<&str> = body
+                .split(',')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .collect();
             if parts.len() != 3 {
                 return None;
             }
             Some((
                 parts[0].parse::<usize>().ok()?,
                 parts[1].parse::<usize>().ok()?,
-                if parts[2].parse::<i64>().ok()? > 0 { 1i8 } else { -1i8 },
+                if parts[2].parse::<i64>().ok()? > 0 {
+                    1i8
+                } else {
+                    -1i8
+                },
             ))
         })
         .collect()
@@ -573,7 +598,11 @@ mod layout_reporting_tests {
 
         // The default is the service this driver is named for, and it is visible and replaceable.
         let d = asic();
-        assert_eq!(d.endpoint(), ACW_ENDPOINT, "the default is stated, not hidden in a call site");
+        assert_eq!(
+            d.endpoint(),
+            ACW_ENDPOINT,
+            "the default is stated, not hidden in a call site"
+        );
         let redirected = asic().with_endpoint("http://127.0.0.1:1/never-listening");
         assert_eq!(redirected.endpoint(), "http://127.0.0.1:1/never-listening");
 
@@ -582,14 +611,25 @@ mod layout_reporting_tests {
         let mut m = asic().with_endpoint("http://127.0.0.1:1/never-listening");
         let side = Machine::Asic.side();
         // `factor <weight> <i> <j>`. Spins 0 and 1 are (0,0) and (1,0): King-adjacent.
-        let src = format!("ftp 1\nname local-only\nspins {}\nfactor -1 0 1\n", side + 2);
+        let src = format!(
+            "ftp 1\nname local-only\nspins {}\nfactor -1 0 1\n",
+            side + 2
+        );
         let p = Program::from_ftp(&src).expect("a program that fits the grid");
-        m.layout(&p).expect("layout is a local pass and must not need the network");
-        assert_eq!(m.fabric().max_spins, Some(side * side), "describing the fabric is local too");
+        m.layout(&p)
+            .expect("layout is a local pass and must not need the network");
+        assert_eq!(
+            m.fabric().max_spins,
+            Some(side * side),
+            "describing the fabric is local too"
+        );
     }
 
     fn asic() -> Hitachi {
-        Hitachi::new(String::from("no-token-needed-for-a-capability-check"), Machine::Asic)
+        Hitachi::new(
+            String::from("no-token-needed-for-a-capability-check"),
+            Machine::Asic,
+        )
     }
 
     #[test]
@@ -600,13 +640,19 @@ mod layout_reporting_tests {
         let mut h = asic();
         assert!(h.layout(&p).is_err(), "it does not fit as written");
 
-        let e = h.place(&p).expect("a King's graph has room for two coupled variables");
+        let e = h
+            .place(&p)
+            .expect("a King's graph has room for two coupled variables");
         assert_eq!(e.chains.len(), 600);
-        assert!(e.chains.iter().all(|c| !c.is_empty()), "every variable got sites");
+        assert!(
+            e.chains.iter().all(|c| !c.is_empty()),
+            "every variable got sites"
+        );
 
         // and the placement really is one
         let hardware = ferrotherm::embed::topology::king(384);
-        e.verify(&p.to_graph().unwrap(), &hardware).expect("place must return a valid embedding");
+        e.verify(&p.to_graph().unwrap(), &hardware)
+            .expect("place must return a valid embedding");
     }
 
     #[test]
@@ -631,8 +677,14 @@ mod layout_reporting_tests {
         let bad = asic().program(&p);
         assert_eq!(bad.len(), 1, "{bad:?}");
         let msg = bad[0].to_string();
-        assert!(msg.contains("King-adjacent"), "it names the real problem: {msg}");
-        assert!(!msg.contains("degree"), "and not a degree that was never the issue: {msg}");
+        assert!(
+            msg.contains("King-adjacent"),
+            "it names the real problem: {msg}"
+        );
+        assert!(
+            !msg.contains("degree"),
+            "and not a degree that was never the issue: {msg}"
+        );
     }
 
     #[test]
@@ -647,7 +699,9 @@ mod layout_reporting_tests {
         // thing wearing the right name. The two checks are defence in depth and each must hold on
         // its own.
         let p = Program::from_ftp("ftp 1\nspins 2\nfactor 3.5 0 1\n").unwrap();
-        let e = asic().layout(&p).expect_err("3.5 is not a four-bit integer");
+        let e = asic()
+            .layout(&p)
+            .expect_err("3.5 is not a four-bit integer");
         assert!(
             matches!(e, LayoutError::CoefficientRange { .. }),
             "and it is refused as a coefficient problem: {e}"
@@ -660,7 +714,8 @@ mod layout_reporting_tests {
         // and the fabric-level check refuses it too, independently
         let bad = asic().program(&p);
         assert!(
-            bad.iter().any(|u| u.to_string().contains("integers -7..=7")),
+            bad.iter()
+                .any(|u| u.to_string().contains("integers -7..=7")),
             "the outer gate names what it can hold: {bad:?}"
         );
     }
@@ -674,7 +729,10 @@ mod tests {
     fn the_king_graph_is_what_it_says() {
         assert!(king_adjacent((1, 1), (2, 2)), "diagonals count");
         assert!(king_adjacent((1, 1), (1, 2)));
-        assert!(!king_adjacent((1, 1), (1, 1)), "a site is not its own neighbour");
+        assert!(
+            !king_adjacent((1, 1), (1, 1)),
+            "a site is not its own neighbour"
+        );
         assert!(!king_adjacent((1, 1), (1, 3)));
     }
 
@@ -682,8 +740,11 @@ mod tests {
     fn the_asic_declares_its_four_bit_limit() {
         let d = Hitachi::new("x", Machine::Asic);
         let f = d.fabric();
-        assert_eq!(f.coupling_precision, ferrotherm::fabric::Precision::Fixed { bits: 4 },
-                   "-7..=7 is four bits with a sign");
+        assert_eq!(
+            f.coupling_precision,
+            ferrotherm::fabric::Precision::Fixed { bits: 4 },
+            "-7..=7 is four bits with a sign"
+        );
         assert_eq!(f.max_spins, Some(384 * 384));
         assert_eq!(f.max_degree, Some(8));
     }
@@ -706,7 +767,10 @@ mod tests {
         let p = Program::from_ftp("ftp 1\nspins 4\nfactor 1 0 1\n").unwrap();
         d.layout(&p).unwrap();
         assert_eq!(d.model.len(), 1);
-        assert_eq!(d.coeff[0], -1.0, "our ferromagnetic +1 must cross as their -1");
+        assert_eq!(
+            d.coeff[0], -1.0,
+            "our ferromagnetic +1 must cross as their -1"
+        );
     }
 
     #[test]
@@ -721,11 +785,15 @@ mod tests {
     #[test]
     fn the_request_is_shaped_the_way_the_api_documents() {
         let mut d = Hitachi::new("x", Machine::Asic);
-        d.layout(&Program::from_ftp("ftp 1\nspins 4\nfactor 1 0 1\n").unwrap()).unwrap();
+        d.layout(&Program::from_ftp("ftp 1\nspins 4\nfactor 1 0 1\n").unwrap())
+            .unwrap();
         let j = d.request_json(3, &Schedule::geometric(0.1, 10.0, 20, 50));
         assert!(j.contains("\"type\":5"));
         assert!(j.contains("\"num_executions\":3"));
-        assert!(j.contains("[0,0,1,0,-1]"), "model triple with the inverted sign: {j}");
+        assert!(
+            j.contains("[0,0,1,0,-1]"),
+            "model triple with the inverted sign: {j}"
+        );
         assert!(j.contains("temperature_num_steps"));
     }
 

@@ -14,7 +14,7 @@
 //! Pseudo-PIPs (`ppips_*.db`) carry no bits at all: `always` connections exist unconditionally.
 //! They must be skipped when emitting, not treated as missing fuses.
 
-use crate::json::{parse, Json};
+use crate::json::{Json, parse};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -70,19 +70,32 @@ impl PipDb {
     /// A message when the database is not the JSON shape a `*.json` PIP file has.
     pub fn parse(text: &str) -> Result<PipDb, String> {
         let j = parse(text)?;
-        let tile_type = j.get("tile_type").and_then(super::json::Json::as_str).unwrap_or("").to_string();
+        let tile_type = j
+            .get("tile_type")
+            .and_then(super::json::Json::as_str)
+            .unwrap_or("")
+            .to_string();
         let mut pips = Vec::new();
         if let Some(Json::Obj(list)) = j.get("pips") {
             for (_key, v) in list {
-                let src = v.get("src_wire").and_then(super::json::Json::as_str).unwrap_or("").to_string();
-                let dst = v.get("dst_wire").and_then(super::json::Json::as_str).unwrap_or("").to_string();
+                let src = v
+                    .get("src_wire")
+                    .and_then(super::json::Json::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                let dst = v
+                    .get("dst_wire")
+                    .and_then(super::json::Json::as_str)
+                    .unwrap_or("")
+                    .to_string();
                 if src.is_empty() || dst.is_empty() {
                     continue;
                 }
                 pips.push(Pip {
                     src,
                     dst,
-                    directional: v.get("is_directional").and_then(super::json::Json::as_str) == Some("1"),
+                    directional: v.get("is_directional").and_then(super::json::Json::as_str)
+                        == Some("1"),
                     pseudo: v.get("is_pseudo").and_then(super::json::Json::as_str) == Some("1"),
                 });
             }
@@ -101,8 +114,14 @@ impl PipDb {
         let mut sites = Vec::new();
         if let Some(Json::Arr(list)) = j.get("sites") {
             for s in list {
-                let prefix = s.get("prefix").and_then(super::json::Json::as_str).unwrap_or("");
-                let sname = s.get("name").and_then(super::json::Json::as_str).unwrap_or("");
+                let prefix = s
+                    .get("prefix")
+                    .and_then(super::json::Json::as_str)
+                    .unwrap_or("");
+                let sname = s
+                    .get("name")
+                    .and_then(super::json::Json::as_str)
+                    .unwrap_or("");
                 let mut pins = HashMap::new();
                 if let Some(Json::Obj(ps)) = s.get("site_pins") {
                     for (pin, v) in ps {
@@ -111,15 +130,28 @@ impl PipDb {
                         }
                     }
                 }
-                sites.push(Site { name: format!("{prefix}_{sname}"), pins });
+                sites.push(Site {
+                    name: format!("{prefix}_{sname}"),
+                    pins,
+                });
             }
         }
-        Ok(PipDb { tile_type, pips, by_src, wires, sites })
+        Ok(PipDb {
+            tile_type,
+            pips,
+            by_src,
+            wires,
+            sites,
+        })
     }
 
     /// PIPs driven from `wire` (the routing fan-out).
     pub fn from(&self, wire: &str) -> impl Iterator<Item = &Pip> + '_ + use<'_> {
-        self.by_src.get(wire).into_iter().flatten().map(move |&i| &self.pips[i as usize])
+        self.by_src
+            .get(wire)
+            .into_iter()
+            .flatten()
+            .map(move |&i| &self.pips[i as usize])
     }
 }
 
@@ -174,7 +206,10 @@ mod tests {
         let fan: Vec<_> = db.from("BYP_ALT0").map(|p| p.dst.as_str()).collect();
         assert_eq!(fan.len(), 2);
         assert!(fan.contains(&"BYP_BOUNCE0") && fan.contains(&"BYP_L0"));
-        assert!(db.from("IMUX_L0").next().is_none(), "nothing is driven from a sink-only wire");
+        assert!(
+            db.from("IMUX_L0").next().is_none(),
+            "nothing is driven from a sink-only wire"
+        );
     }
 
     /// THE NAME-ORDER TRAP: the tile database keys PIPs source-first, the fuse database keys them
@@ -182,7 +217,10 @@ mod tests {
     #[test]
     fn segbits_feature_is_destination_first() {
         let db = PipDb::parse(TT).unwrap();
-        let p = db.from("BYP_ALT0").find(|p| p.dst == "BYP_BOUNCE0").unwrap();
+        let p = db
+            .from("BYP_ALT0")
+            .find(|p| p.dst == "BYP_BOUNCE0")
+            .unwrap();
         assert_eq!(p.feature("INT_L"), "INT_L.BYP_BOUNCE0.BYP_ALT0");
         // the source-first form is what the tile database uses, and it is NOT a segbits key
         assert_ne!(p.feature("INT_L"), "INT_L.BYP_ALT0.BYP_BOUNCE0");
@@ -200,8 +238,14 @@ mod tests {
         let db = PipDb::parse(src).unwrap();
         assert_eq!(db.sites.len(), 1);
         assert_eq!(db.sites[0].name, "SLICE_X0Y0");
-        assert_eq!(db.sites[0].pins.get("A").map(std::string::String::as_str), Some("CLBLL_LL_A"));
-        assert_eq!(db.sites[0].pins.get("A6").map(std::string::String::as_str), Some("CLBLL_LL_A6"));
+        assert_eq!(
+            db.sites[0].pins.get("A").map(std::string::String::as_str),
+            Some("CLBLL_LL_A")
+        );
+        assert_eq!(
+            db.sites[0].pins.get("A6").map(std::string::String::as_str),
+            Some("CLBLL_LL_A6")
+        );
     }
 
     #[test]

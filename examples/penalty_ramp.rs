@@ -37,7 +37,15 @@ struct Instance {
 fn instance(seed: u64) -> Instance {
     let mut rng = Pcg::new(seed, 0x9A);
     let sign = |r: &mut Pcg| if r.f64() < 0.5 { 1.0 } else { -1.0 };
-    let singles = (0..20).map(|_| ((rng.f64() * NV as f64) as usize, (rng.f64() * K as f64) as i64, sign(&mut rng))).collect();
+    let singles = (0..20)
+        .map(|_| {
+            (
+                (rng.f64() * NV as f64) as usize,
+                (rng.f64() * K as f64) as i64,
+                sign(&mut rng),
+            )
+        })
+        .collect();
     let mut pairs = Vec::new();
     while pairs.len() < 10 {
         let a = (rng.f64() * NV as f64) as usize;
@@ -45,7 +53,11 @@ fn instance(seed: u64) -> Instance {
         if a == b {
             continue;
         }
-        pairs.push(((a, (rng.f64() * K as f64) as i64), (b, (rng.f64() * K as f64) as i64), sign(&mut rng)));
+        pairs.push((
+            (a, (rng.f64() * K as f64) as i64),
+            (b, (rng.f64() * K as f64) as i64),
+            sign(&mut rng),
+        ));
     }
     Instance { singles, pairs }
 }
@@ -91,13 +103,18 @@ impl Instance {
 
     fn model(&self) -> (Model, Vec<Var>) {
         let mut m = Model::new();
-        let vars: Vec<Var> = (0..NV).map(|i| m.categorical_as(&format!("v{i}"), K as usize, Encoding::OneHot)).collect();
+        let vars: Vec<Var> = (0..NV)
+            .map(|i| m.categorical_as(&format!("v{i}"), K as usize, Encoding::OneHot))
+            .collect();
         m.all_different(vars.iter().copied());
         for &(var, val, c) in &self.singles {
             m.objective(Sense::Minimize, Expr::lit(c, Lit::Is(vars[var], val)));
         }
         for &((a, va), (b, vb), c) in &self.pairs {
-            m.objective(Sense::Minimize, Expr::pair(c, Lit::Is(vars[a], va), Lit::Is(vars[b], vb)));
+            m.objective(
+                Sense::Minimize,
+                Expr::pair(c, Lit::Is(vars[a], va), Lit::Is(vars[b], vb)),
+            );
         }
         (m, vars)
     }
@@ -119,9 +136,16 @@ fn main() {
         ("ramp 0.25->2", base.clone().ramp_domain_wall(0.25, 2.0)),
     ];
     println!("RAMPING THE ENCODING PENALTY AGAINST HOLDING IT, AT AN EQUAL SWEEP BUDGET\n");
-    println!("  model      {NV} one-hot categoricals over {K} values, all_different, 20 random +-1 value literals + 10 random +-1 pairs; optimum over 40,320 permutations");
-    println!("  penalty    the model's certified penalty is the schedule's 1.0; a schedule scales it per stage");
-    println!("  ladder     0.05..8.0, 120 stages x 40 sweeps = {} sweeps for every schedule; {instances} instances x {tries} paired seeds\n", base.total_sweeps());
+    println!(
+        "  model      {NV} one-hot categoricals over {K} values, all_different, 20 random +-1 value literals + 10 random +-1 pairs; optimum over 40,320 permutations"
+    );
+    println!(
+        "  penalty    the model's certified penalty is the schedule's 1.0; a schedule scales it per stage"
+    );
+    println!(
+        "  ladder     0.05..8.0, 120 stages x 40 sweeps = {} sweeps for every schedule; {instances} instances x {tries} paired seeds\n",
+        base.total_sweeps()
+    );
     let mut feas = vec![0usize; schedules.len()];
     let mut opt = vec![0usize; schedules.len()];
     let mut wins = vec![0usize; schedules.len()]; // instances on which this schedule's P(opt) beats constant 1's
@@ -130,7 +154,9 @@ fn main() {
     for seed in 0..instances {
         let inst = instance(500 + seed);
         let (mut m, _) = inst.model();
-        let p = m.certified_penalty().unwrap_or_else(|_| 2.0 * (inst.singles.len() + inst.pairs.len()) as f64);
+        let p = m
+            .certified_penalty()
+            .unwrap_or_else(|_| 2.0 * (inst.singles.len() + inst.pairs.len()) as f64);
         m.fixed_penalty(p);
         penalties.push(p);
         let c = m.compile().expect("a compilable permutation model");
@@ -142,7 +168,9 @@ fn main() {
                     continue;
                 }
                 feas[si] += 1;
-                let assignment: Vec<i64> = (0..NV).map(|i| sol.get(&format!("v{i}")).expect("decoded")).collect();
+                let assignment: Vec<i64> = (0..NV)
+                    .map(|i| sol.get(&format!("v{i}")).expect("decoded"))
+                    .collect();
                 if inst.value(&assignment) <= e_star + 1e-9 {
                     opt[si] += 1;
                     per_inst[si] += 1;
@@ -160,7 +188,10 @@ fn main() {
     let total = (instances * tries) as usize;
     let mean_p = penalties.iter().sum::<f64>() / penalties.len() as f64;
     println!("  certified penalty: mean {mean_p:.2} over instances\n");
-    println!("  {:<14}   {:>10}   {:>10} {:>18}   {:>22}", "schedule", "P(feasible)", "P(optimum)", "95% Wilson", "vs constant 1 (inst)");
+    println!(
+        "  {:<14}   {:>10}   {:>10} {:>18}   {:>22}",
+        "schedule", "P(feasible)", "P(optimum)", "95% Wilson", "vs constant 1 (inst)"
+    );
     for (si, (name, _)) in schedules.iter().enumerate() {
         let (lo, hi) = wilson(opt[si], total, 1.96);
         println!(
@@ -175,9 +206,17 @@ fn main() {
         );
     }
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  Every schedule spends the same sweeps on the same ladder with the same seeds; only the penalty's");
-    println!("  path differs. P(optimum) is the fraction of returned answers that are feasible AND attain the exact");
-    println!("  optimum. A ramp that beats 'constant 1' with non-overlapping intervals is the shipped premise");
-    println!("  confirmed; one that does not is a knob that should default to off. The constant half and double");
+    println!(
+        "  Every schedule spends the same sweeps on the same ladder with the same seeds; only the penalty's"
+    );
+    println!(
+        "  path differs. P(optimum) is the fraction of returned answers that are feasible AND attain the exact"
+    );
+    println!(
+        "  optimum. A ramp that beats 'constant 1' with non-overlapping intervals is the shipped premise"
+    );
+    println!(
+        "  confirmed; one that does not is a knob that should default to off. The constant half and double"
+    );
     println!("  say whether the certified penalty itself was the binding choice.");
 }

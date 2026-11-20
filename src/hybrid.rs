@@ -113,15 +113,26 @@ impl Split {
         source: &'static str,
     ) -> Result<Split, HybridError> {
         for (v, what) in [
-            (accel_joules, "accelerator energy must be finite and non-negative"),
+            (
+                accel_joules,
+                "accelerator energy must be finite and non-negative",
+            ),
             (host_joules, "host energy must be finite and non-negative"),
-            (baseline_joules, "baseline energy must be finite and non-negative"),
+            (
+                baseline_joules,
+                "baseline energy must be finite and non-negative",
+            ),
         ] {
             if !v.is_finite() || v < 0.0 {
                 return Err(HybridError::NotPhysical(what));
             }
         }
-        Ok(Split { accel_joules, host_joules, baseline_joules, source })
+        Ok(Split {
+            accel_joules,
+            host_joules,
+            baseline_joules,
+            source,
+        })
     }
 
     /// What the hybrid spends per unit of work.
@@ -210,12 +221,17 @@ impl Split {
     /// caller can see how far short the target is.
     pub fn host_joules_for(&self, target: f64) -> Result<f64, HybridError> {
         if !target.is_finite() || target <= 0.0 {
-            return Err(HybridError::NotPhysical("a target multiplier must be finite and positive"));
+            return Err(HybridError::NotPhysical(
+                "a target multiplier must be finite and positive",
+            ));
         }
         let budget = self.baseline_joules / target;
         let left = budget - self.accel_joules;
         if left <= 0.0 {
-            return Err(HybridError::AboveCeiling { target, ceiling: self.ceiling()? });
+            return Err(HybridError::AboveCeiling {
+                target,
+                ceiling: self.ceiling()?,
+            });
         }
         Ok(left)
     }
@@ -313,7 +329,11 @@ mod tests {
     #[test]
     fn the_published_headline_reproduces_from_the_published_parts() {
         let s = Z1T_PUBLISHED;
-        assert!((s.total() - 294.52e-9).abs() < 1e-13, "total = {} nJ", s.total() * 1e9);
+        assert!(
+            (s.total() - 294.52e-9).abs() < 1e-13,
+            "total = {} nJ",
+            s.total() * 1e9
+        );
         let f = s.factor().unwrap();
         assert!((f - 138.87).abs() < 0.01, "factor = {f}");
     }
@@ -328,7 +348,11 @@ mod tests {
         assert!((c - 143.12).abs() < 0.01, "ceiling = {c}");
         let h = s.headroom().unwrap();
         assert!((h - 1.0306).abs() < 1e-4, "headroom = {h}");
-        assert!(s.accel_share().unwrap() < 0.03, "accel share = {}", s.accel_share().unwrap());
+        assert!(
+            s.accel_share().unwrap() < 0.03,
+            "accel share = {}",
+            s.accel_share().unwrap()
+        );
         // headroom is a property of the machine, not of the opponent it was pointed at
         let quiet = s.with_baseline_scaled(0.1);
         assert!((quiet.headroom().unwrap() - h).abs() < 1e-12);
@@ -340,7 +364,10 @@ mod tests {
         let k = s.host_speedup_for(1000.0).unwrap();
         assert!((k - 8.886).abs() < 0.01, "host must improve {k}x");
         // and with the sampler free it is still 7x, so the sampler is not what is in the way
-        let free = Split { accel_joules: 0.0, ..s };
+        let free = Split {
+            accel_joules: 0.0,
+            ..s
+        };
         assert!((free.host_speedup_for(1000.0).unwrap() - 6.987).abs() < 0.01);
     }
 
@@ -355,7 +382,11 @@ mod tests {
         assert!((iso_loss.factor().unwrap() - 13.887).abs() < 0.01);
         // both at once, which is the number a datacentre would actually be buying
         let both = s.with_baseline_scaled(0.1).with_work_multiplier(10.0);
-        assert!((both.factor().unwrap() - 1.3887).abs() < 1e-3, "{}", both.factor().unwrap());
+        assert!(
+            (both.factor().unwrap() - 1.3887).abs() < 1e-3,
+            "{}",
+            both.factor().unwrap()
+        );
         // ... while the sampler's own share never moved
         assert!((both.headroom().unwrap() - s.headroom().unwrap()).abs() < 1e-12);
     }

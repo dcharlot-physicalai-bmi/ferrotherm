@@ -110,7 +110,14 @@ fn calibrate(label: &str, note: &str, data: &Dataset) -> (f64, f64, f64, f64, f6
         "arm", "spins", "per-pixel MAE", "log-likelihood", "learned"
     );
 
-    let p = ebm::Params { epochs: 600, k: 10, positive_sweeps: 5, learning_rate: 0.05, batch: 7, persistent: false };
+    let p = ebm::Params {
+        epochs: 600,
+        k: 10,
+        positive_sweeps: 5,
+        learning_rate: 0.05,
+        batch: 7,
+        persistent: false,
+    };
     let mut out = Vec::new();
     for (name, structure) in [
         ("marginals-only", GraphBuilder::new(visible).build()),
@@ -120,10 +127,16 @@ fn calibrate(label: &str, note: &str, data: &Dataset) -> (f64, f64, f64, f64, f6
         let m = mae(&model_marginals(&t.graph, visible), &dm);
         let ll = t.log_likelihood.unwrap();
         let learned = (ll - floor) / (ceiling - floor) * 100.0;
-        println!("{name:>16} {:>7} {m:>15.4} {ll:>16.4} {learned:>9.1}%", t.graph.n);
+        println!(
+            "{name:>16} {:>7} {m:>15.4} {ll:>16.4} {learned:>9.1}%",
+            t.graph.n
+        );
         out.push((m, learned));
     }
-    println!("{:>16} {:>7} {noise:>15.4} {floor:>16.4} {:>9.1}%", "learned nothing", visible, 0.0);
+    println!(
+        "{:>16} {:>7} {noise:>15.4} {floor:>16.4} {:>9.1}%",
+        "learned nothing", visible, 0.0
+    );
     (out[0].0, out[0].1, out[1].0, out[1].1, noise)
 }
 

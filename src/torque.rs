@@ -102,7 +102,10 @@ pub fn strength(logical: &Graph) -> f64 {
 /// silently substituting the default would hide the caller's mistake.
 #[must_use]
 pub fn strength_with(logical: &Graph, prefactor: f64) -> f64 {
-    assert!(prefactor.is_finite() && prefactor > 0.0, "prefactor must be finite and positive");
+    assert!(
+        prefactor.is_finite() && prefactor > 0.0,
+        "prefactor must be finite and positive"
+    );
     if logical.n_edges == 0 {
         return 1.0;
     }
@@ -139,8 +142,14 @@ pub struct Case {
 /// If elimination returns no ground state, which `ground_state` cannot do without erroring first.
 pub fn case(logical: Graph, embedding: embed::Embedding) -> Result<Case, TooWide> {
     let exact = Elimination::default().ground_state(&logical)?;
-    let optimum = exact.ground_energy.expect("ground_state computed no ground energy");
-    Ok(Case { logical, embedding, optimum })
+    let optimum = exact
+        .ground_energy
+        .expect("ground_state computed no ground energy");
+    Ok(Case {
+        logical,
+        embedding,
+        optimum,
+    })
 }
 
 /// What one chain strength did across a set of cases.
@@ -168,8 +177,10 @@ pub struct Row {
 #[must_use]
 pub fn sweep(cases: &[Case], hardware: &Graph, strengths: &[f64], seed: u64) -> Vec<Row> {
     assert!(!cases.is_empty(), "a sweep over no cases measures nothing");
-    let ladder: Vec<(f64, usize)> =
-        tempering::geometric_ladder(0.05, 6.0, 120).into_iter().map(|b| (b, 60)).collect();
+    let ladder: Vec<(f64, usize)> = tempering::geometric_ladder(0.05, 6.0, 120)
+        .into_iter()
+        .map(|b| (b, 60))
+        .collect();
     let n = cases.len() as f64;
     strengths
         .iter()
@@ -187,7 +198,12 @@ pub fn sweep(cases: &[Case], hardware: &Graph, strengths: &[f64], seed: u64) -> 
                     found += 1;
                 }
             }
-            Row { strength: s, broken: broken / n, gap: gap / n, found }
+            Row {
+                strength: s,
+                broken: broken / n,
+                gap: gap / n,
+                found,
+            }
         })
         .collect()
 }
@@ -216,9 +232,17 @@ mod tests {
         b.couple(1, 2, 2.0);
         b.couple(0, 2, -2.0);
         let g = b.build();
-        assert!((rms_coupling(&g) - 3f64.sqrt()).abs() < 1e-12, "{}", rms_coupling(&g));
+        assert!(
+            (rms_coupling(&g) - 3f64.sqrt()).abs() < 1e-12,
+            "{}",
+            rms_coupling(&g)
+        );
         assert!((mean_degree(&g) - 2.0).abs() < 1e-12);
-        assert!((strength(&g) - UTC_PREFACTOR * 6f64.sqrt()).abs() < 1e-12, "{}", strength(&g));
+        assert!(
+            (strength(&g) - UTC_PREFACTOR * 6f64.sqrt()).abs() < 1e-12,
+            "{}",
+            strength(&g)
+        );
     }
 
     /// On a `k`-regular model with every `|J| = j`, the rule collapses to `prefactor * j * sqrt(k)`
@@ -230,10 +254,22 @@ mod tests {
             (ising::ring(9, -0.75, 0.0), 2.0, 0.75),
             (embed::topology::complete(7), 6.0, 1.0),
         ] {
-            assert!((mean_degree(&g) - k).abs() < 1e-12, "degree {}", mean_degree(&g));
-            assert!((rms_coupling(&g) - j).abs() < 1e-12, "rms {}", rms_coupling(&g));
+            assert!(
+                (mean_degree(&g) - k).abs() < 1e-12,
+                "degree {}",
+                mean_degree(&g)
+            );
+            assert!(
+                (rms_coupling(&g) - j).abs() < 1e-12,
+                "rms {}",
+                rms_coupling(&g)
+            );
             let want = UTC_PREFACTOR * j * k.sqrt();
-            assert!((strength(&g) - want).abs() < 1e-12, "{} vs {want}", strength(&g));
+            assert!(
+                (strength(&g) - want).abs() < 1e-12,
+                "{} vs {want}",
+                strength(&g)
+            );
         }
     }
 
@@ -289,10 +325,17 @@ mod tests {
         assert!((embed::worst_coefficient(&spiked) - 8.0).abs() < 1e-12);
         // 44 edges at J^2 = 1, one at 64, over 45 edges.
         let want = (108.0f64 / 45.0).sqrt();
-        assert!((rms_coupling(&spiked) - want).abs() < 1e-12, "{}", rms_coupling(&spiked));
+        assert!(
+            (rms_coupling(&spiked) - want).abs() < 1e-12,
+            "{}",
+            rms_coupling(&spiked)
+        );
         assert!((rms_coupling(&plain) - 1.0).abs() < 1e-12);
         let ratio = strength(&spiked) / strength(&plain);
-        assert!((ratio - want).abs() < 1e-12 && ratio < 1.6, "rms rule moved {ratio}x");
+        assert!(
+            (ratio - want).abs() < 1e-12 && ratio < 1.6,
+            "rms rule moved {ratio}x"
+        );
     }
 
     // ---- the sweep: what the rule costs ---------------------------------------------------
@@ -318,12 +361,12 @@ mod tests {
             for j in (i + 1)..n {
                 let sign = if rng.f64() < 0.5 { 1.0 } else { -1.0 };
                 // Spread the spikes across distinct variables rather than onto one.
-                let mag = if k % (edges / spikes).max(1) == 0 && k / (edges / spikes).max(1) < spikes
-                {
-                    big
-                } else {
-                    1.0
-                };
+                let mag =
+                    if k % (edges / spikes).max(1) == 0 && k / (edges / spikes).max(1) < spikes {
+                        big
+                    } else {
+                        1.0
+                    };
                 b.couple(i, j, sign * mag);
                 k += 1;
             }
@@ -351,8 +394,11 @@ mod tests {
         let mut out = Vec::new();
         for seed in 0..seeds {
             let g = make(seed);
-            let Some(emb) = embed::embed(&g, hardware, seed) else { continue };
-            emb.verify(&g, hardware).expect("the placer returned a broken embedding");
+            let Some(emb) = embed::embed(&g, hardware, seed) else {
+                continue;
+            };
+            emb.verify(&g, hardware)
+                .expect("the placer returned a broken embedding");
             out.push(case(g, emb).expect("a small clique is narrow enough to eliminate"));
         }
         out
@@ -383,11 +429,16 @@ mod tests {
     fn the_oracle_agrees_with_exhaustive_enumeration() {
         for seed in 0..4 {
             let g = clique_pm1(10, seed);
-            let elim =
-                Elimination::default().ground_state(&g).expect("K10 is narrow").ground_energy;
+            let elim = Elimination::default()
+                .ground_state(&g)
+                .expect("K10 is narrow")
+                .ground_energy;
             let set = samples::enumerate(&g, 1.0).expect("2^10 states");
             let brute = set.energies().iter().copied().fold(f64::INFINITY, f64::min);
-            assert!((elim.expect("min-sum ran") - brute).abs() < 1e-9, "seed {seed}");
+            assert!(
+                (elim.expect("min-sum ran") - brute).abs() < 1e-9,
+                "seed {seed}"
+            );
         }
     }
 
@@ -405,18 +456,34 @@ mod tests {
         let mut strengths = vec![0.5, 1.0, 2.0, 3.0, maxj, utc, 6.0, 9.0, 16.0, 32.0];
         strengths.sort_by(f64::total_cmp);
         let rows = sweep(&cs, &hw, &strengths, 0xC4A1);
-        show("uniform +-1 K10 on chimera(4,4,4)", &rows, &[("<- UTC", utc), ("<- 4 max|J|", maxj)]);
+        show(
+            "uniform +-1 K10 on chimera(4,4,4)",
+            &rows,
+            &[("<- UTC", utc), ("<- 4 max|J|", maxj)],
+        );
 
         let knee = knee(&rows).expect("some strength must hold every chain");
         let at_utc = rows.iter().find(|r| r.strength == utc).expect("UTC row");
-        assert_eq!(at_utc.broken, 0.0, "the rule must not break chains: {at_utc:?}");
-        assert!(utc >= knee && utc <= 2.0 * knee, "UTC {utc} against knee {knee}");
+        assert_eq!(
+            at_utc.broken, 0.0,
+            "the rule must not break chains: {at_utc:?}"
+        );
+        assert!(
+            utc >= knee && utc <= 2.0 * knee,
+            "UTC {utc} against knee {knee}"
+        );
         // Weak chains break and strong ones do not: the failure is one-sided, which is why the
         // broken column alone cannot pick a strength.
         let weakest = rows[0];
         let strongest = rows[rows.len() - 1];
-        assert!(weakest.broken > 0.05, "0.5x should break chains: {weakest:?}");
-        assert_eq!(strongest.broken, 0.0, "32x should break none: {strongest:?}");
+        assert!(
+            weakest.broken > 0.05,
+            "0.5x should break chains: {weakest:?}"
+        );
+        assert_eq!(
+            strongest.broken, 0.0,
+            "32x should break none: {strongest:?}"
+        );
         // And over-strong is worse on the only column that matters.
         assert!(strongest.gap > at_utc.gap, "{strongest:?} vs {at_utc:?}");
     }
@@ -434,19 +501,38 @@ mod tests {
         let mut strengths = vec![2.0, 4.0, 6.0, utc, 12.0, 16.0, 24.0, maxj, 48.0, 64.0];
         strengths.sort_by(f64::total_cmp);
         let rows = sweep(&cs, &hw, &strengths, 0xC4A2);
-        show("spiked K10 (one J = 8) on chimera(4,4,4)", &rows, &[
-            ("<- UTC", utc),
-            ("<- 4 max|J|", maxj),
-        ]);
+        show(
+            "spiked K10 (one J = 8) on chimera(4,4,4)",
+            &rows,
+            &[("<- UTC", utc), ("<- 4 max|J|", maxj)],
+        );
 
         let knee = knee(&rows).expect("some strength must hold every chain");
         let at_utc = rows.iter().find(|r| r.strength == utc).expect("UTC row");
-        let at_max = rows.iter().find(|r| r.strength == maxj).expect("max|J| row");
-        assert!(maxj > 3.0 * knee, "the max rule should overshoot: {maxj} vs knee {knee}");
-        assert!(utc <= 2.0 * knee, "the rms rule should not: {utc} vs knee {knee}");
-        assert_eq!(at_max.broken, 0.0, "over-strong chains never break — that is the trap");
-        assert!(at_utc.gap < at_max.gap, "rms {at_utc:?} should beat max {at_max:?}");
-        assert!(at_utc.found >= at_max.found, "rms {at_utc:?} vs max {at_max:?}");
+        let at_max = rows
+            .iter()
+            .find(|r| r.strength == maxj)
+            .expect("max|J| row");
+        assert!(
+            maxj > 3.0 * knee,
+            "the max rule should overshoot: {maxj} vs knee {knee}"
+        );
+        assert!(
+            utc <= 2.0 * knee,
+            "the rms rule should not: {utc} vs knee {knee}"
+        );
+        assert_eq!(
+            at_max.broken, 0.0,
+            "over-strong chains never break — that is the trap"
+        );
+        assert!(
+            at_utc.gap < at_max.gap,
+            "rms {at_utc:?} should beat max {at_max:?}"
+        );
+        assert!(
+            at_utc.found >= at_max.found,
+            "rms {at_utc:?} vs max {at_max:?}"
+        );
     }
 
     /// FIELD-HEAVY FAMILY. Same +-1 clique, plus +-5 fields. A field pulls every site of a chain
@@ -459,24 +545,43 @@ mod tests {
         assert!(cs.len() >= 6, "only {} of 8 embedded", cs.len());
         let utc = strength(&cs[0].logical);
         let maxj = embed::DEFAULT_CHAIN_MULTIPLE * embed::worst_coefficient(&cs[0].logical);
-        assert!((rms_coupling(&cs[0].logical) - 1.0).abs() < 1e-12, "couplings are still +-1");
-        assert!((maxj - 20.0).abs() < 1e-12, "the max rule read the field: {maxj}");
+        assert!(
+            (rms_coupling(&cs[0].logical) - 1.0).abs() < 1e-12,
+            "couplings are still +-1"
+        );
+        assert!(
+            (maxj - 20.0).abs() < 1e-12,
+            "the max rule read the field: {maxj}"
+        );
 
         let mut strengths = vec![1.0, 2.0, 3.0, utc, 6.0, 8.0, 12.0, maxj, 32.0];
         strengths.sort_by(f64::total_cmp);
         let rows = sweep(&cs, &hw, &strengths, 0xC4A3);
-        show("field-heavy K10 on chimera(4,4,4)", &rows, &[
-            ("<- UTC", utc),
-            ("<- 4 max|coef|", maxj),
-        ]);
+        show(
+            "field-heavy K10 on chimera(4,4,4)",
+            &rows,
+            &[("<- UTC", utc), ("<- 4 max|coef|", maxj)],
+        );
 
         let knee = knee(&rows).expect("some strength must hold every chain");
         let at_utc = rows.iter().find(|r| r.strength == utc).expect("UTC row");
-        assert_eq!(at_utc.broken, 0.0, "the rule must not break chains: {at_utc:?}");
-        assert!((utc - knee).abs() < 1e-12, "UTC {utc} should BE the knee, which is {knee}");
-        assert!(maxj > 3.0 * knee, "the max rule should overshoot: {maxj} vs {knee}");
+        assert_eq!(
+            at_utc.broken, 0.0,
+            "the rule must not break chains: {at_utc:?}"
+        );
+        assert!(
+            (utc - knee).abs() < 1e-12,
+            "UTC {utc} should BE the knee, which is {knee}"
+        );
+        assert!(
+            maxj > 3.0 * knee,
+            "the max rule should overshoot: {maxj} vs {knee}"
+        );
         let strongest = rows[rows.len() - 1];
-        assert_eq!(strongest.broken, 0.0, "over-strong chains never break — that is the trap");
+        assert_eq!(
+            strongest.broken, 0.0,
+            "over-strong chains never break — that is the trap"
+        );
         assert!(strongest.gap > at_utc.gap, "{strongest:?} vs {at_utc:?}");
     }
 }

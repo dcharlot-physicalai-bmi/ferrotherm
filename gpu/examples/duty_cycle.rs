@@ -55,7 +55,11 @@ fn where_the_device_side_stops() {
     let nodes = 9_216u64; // 96x96, the die in z1_ledger
     let dev = DeviceRun {
         prices: Z1_SPICE,
-        per_period: Ledger { samples: nodes * 250, reads: 834, writes: 0 },
+        per_period: Ledger {
+            samples: nodes * 250,
+            reads: 834,
+            writes: 0,
+        },
         graph_nodes: nodes,
         standby_watts: None,
         standby_is_upper_bound: false,
@@ -80,10 +84,18 @@ fn where_the_device_side_stops() {
             println!();
             println!("  TOTAL    : cannot be computed.");
             println!();
-            println!("  Every per-operation energy this device needs is published and the cadence is");
-            println!("  feasible, and the comparison still stops -- because `Prices` has no standby");
-            println!("  term, because Table IV has no standby row, because no thermodynamic vendor");
-            println!("  publishes one. Below full duty cycle standby IS the bill, so this is not a");
+            println!(
+                "  Every per-operation energy this device needs is published and the cadence is"
+            );
+            println!(
+                "  feasible, and the comparison still stops -- because `Prices` has no standby"
+            );
+            println!(
+                "  term, because Table IV has no standby row, because no thermodynamic vendor"
+            );
+            println!(
+                "  publishes one. Below full duty cycle standby IS the bill, so this is not a"
+            );
             println!("  detail that rounds away: it is the whole quantity.");
             println!();
             println!("  One number, from the party that knows it, and `Machine::beaten_by_device`");
@@ -100,7 +112,9 @@ fn where_the_device_side_stops() {
     println!();
     println!("USING A PUBLISHED ACTIVE-POWER FIGURE AS AN UPPER BOUND ON STANDBY.\n");
     println!("  Z1 spec: <1 W while sampling above 50 MHz (a projection for taped-out silicon,");
-    println!("  and absent from Extropic's own hardware page). Charge the device that as standby.\n");
+    println!(
+        "  and absent from Extropic's own hardware page). Charge the device that as standby.\n"
+    );
     // A machine that must stay available: whatever idles here, against a task once a minute.
     // Deliberately a MODEST incumbent idle so the result is not flattered -- 20 W, not the 67 W a
     // laptop's whole-system reading gives.
@@ -110,7 +124,9 @@ fn where_the_device_side_stops() {
         match incumbent.beaten_by_device(&dev.with_standby_at_most(1.0), task, period) {
             Ok(v) => println!(
                 "  {label:<14} device {:>10.4} J vs incumbent {:>10.4} J  ->  {:?}",
-                v.challenger_joules, v.incumbent_joules, v.outcome()
+                v.challenger_joules,
+                v.incumbent_joules,
+                v.outcome()
             ),
             Err(e) => println!("  {label:<14} {e}"),
         }
@@ -118,8 +134,14 @@ fn where_the_device_side_stops() {
     println!();
     println!("  The asymmetry is the point. A device that wins while charged its full ACTIVE draw");
     println!("  wins with the real standby too, whatever that turns out to be -- so a");
-    println!("  {:?} here is a finding. A loss under the same handicap would be", Outcome::ChallengerWins);
-    println!("  {:?}: the handicap could be the entire margin.", Outcome::Inconclusive);
+    println!(
+        "  {:?} here is a finding. A loss under the same handicap would be",
+        Outcome::ChallengerWins
+    );
+    println!(
+        "  {:?}: the handicap could be the entire margin.",
+        Outcome::Inconclusive
+    );
     println!();
 }
 
@@ -134,10 +156,16 @@ fn main() {
         eprintln!("no power backend; this example is a measurement and cannot be simulated");
         return;
     };
-    println!("adapter : {} ({:?})", gpu.adapter().name, gpu.adapter().device_type);
+    println!(
+        "adapter : {} ({:?})",
+        gpu.adapter().name,
+        gpu.adapter().device_type
+    );
     println!("machine : {}", meter.machine());
     if !gpu.is_hardware() {
-        println!("\nSoftware rasteriser. Numbers below describe a CPU twice over; not reported as a ratio.");
+        println!(
+            "\nSoftware rasteriser. Numbers below describe a CPU twice over; not reported as a ratio."
+        );
     }
     println!("\nsettling...");
     std::thread::sleep(Duration::from_secs(5));
@@ -155,8 +183,10 @@ fn main() {
     let n = (l * l) as u64;
     let sweeps = 200u32;
     let window = Duration::from_secs(4);
-    println!("model   : {l}x{l} = {n} nodes; each path repeats {sweeps}-sweep passes for {:.0} s\n",
-             window.as_secs_f64());
+    println!(
+        "model   : {l}x{l} = {n} nodes; each path repeats {sweeps}-sweep passes for {:.0} s\n",
+        window.as_secs_f64()
+    );
 
     // Read before `row` takes a mutable borrow of the meter, and used everywhere below: the
     // scope is a property of the backend, not of any one measurement.
@@ -168,7 +198,10 @@ fn main() {
         std::thread::sleep(Duration::from_secs(10));
         let idle = match meter.idle(Duration::from_secs(3)) {
             Ok(w) => w,
-            Err(e) => { eprintln!("{label}: {e}"); return None; }
+            Err(e) => {
+                eprintln!("{label}: {e}");
+                return None;
+            }
         };
         let mut passes = 0u64;
         let m = match meter.measure(idle, || {
@@ -179,7 +212,10 @@ fn main() {
             }
         }) {
             Ok(m) => m,
-            Err(e) => { eprintln!("{label}: {e}"); return None; }
+            Err(e) => {
+                eprintln!("{label}: {e}");
+                return None;
+            }
         };
         let updates = passes * n * sweeps as u64;
         let rate = updates as f64 / m.seconds;
@@ -191,7 +227,10 @@ fn main() {
         );
         match Machine::new(m.idle_watts, marginal, rate) {
             Ok(machine) => Some(machine),
-            Err(e) => { eprintln!("  {label}: {e}"); None }
+            Err(e) => {
+                eprintln!("  {label}: {e}");
+                None
+            }
         }
     };
 
@@ -208,7 +247,9 @@ fn main() {
         let gm = GpuModel::from_graph(&g);
         let mut spins = vec![1i8; n as usize];
         gpu.sweep(&gm, &mut spins, 0.7, 1).unwrap(); // warm the pipeline, off the clock
-        row("gpu", &mut || { gpu.sweep(&gm, &mut spins, 0.7, sweeps).unwrap(); })
+        row("gpu", &mut || {
+            gpu.sweep(&gm, &mut spins, 0.7, sweeps).unwrap();
+        })
     } else {
         eprintln!(
             "gpu: {:?} is discrete and this meter reads {:?}, so the card's draw is outside the \
@@ -229,25 +270,36 @@ fn main() {
     // Report every path the instrument COULD see. An earlier version returned early unless both
     // measured, which threw away a perfectly good GPU measurement because the CPU's delta sat in
     // the noise -- and the finding here is a property of one machine at a time, not of the ratio.
-    let paths: Vec<(&str, Machine)> =
-        [("gpu", g_m), ("cpu", c_m)].into_iter().filter_map(|(k, v)| v.map(|m| (k, m))).collect();
+    let paths: Vec<(&str, Machine)> = [("gpu", g_m), ("cpu", c_m)]
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|m| (k, m)))
+        .collect();
     if paths.is_empty() {
         eprintln!("\nno path could be measured; each one's reason is printed above");
         return;
     }
     if paths.len() == 1 {
-        println!("\n  Only the {} path was measurable; what follows describes it alone.", paths[0].0);
+        println!(
+            "\n  Only the {} path was measurable; what follows describes it alone.",
+            paths[0].0
+        );
     }
 
     // A task worth pricing: one 512x512 lattice sampled for 200 sweeps, which is what a small
     // posterior draw looks like. Fixed across cadences so only the WAIT changes.
     let task_work = n * sweeps as u64;
 
-    println!("\nIDLE-DOMINANCE THRESHOLD -- below this duty cycle, most of the bill is being switched on:");
+    println!(
+        "\nIDLE-DOMINANCE THRESHOLD -- below this duty cycle, most of the bill is being switched on:"
+    );
     for (label, m) in &paths {
         let d = m.idle_dominant_below();
-        println!("  {label}: {:.4}%  (idle {:.1} W vs marginal {:.1} W)",
-                 100.0 * d, m.idle_watts, m.marginal_watts);
+        println!(
+            "  {label}: {:.4}%  (idle {:.1} W vs marginal {:.1} W)",
+            100.0 * d,
+            m.idle_watts,
+            m.marginal_watts
+        );
         if d < 0.001 {
             println!("       ** under 0.1% -- the prediction is FALSIFIED on this path **");
         }
@@ -255,11 +307,17 @@ fn main() {
 
     println!("\nONE TASK ({task_work} node updates), priced at each cadence.");
     println!("  'above idle' is what joules.rs reports; 'total' leaves the wait in.\n");
-    println!("  {:<16} {:>10} {:>13} {:>13} {:>10} {:>14}",
-             "cadence", "duty", "above idle", "total", "understated", "standby budget");
+    println!(
+        "  {:<16} {:>10} {:>13} {:>13} {:>10} {:>14}",
+        "cadence", "duty", "above idle", "total", "understated", "standby budget"
+    );
     for &(label, period) in CADENCES {
         for (who, m) in &paths {
-            let period = if period == 0.0 { m.run_seconds(task_work) } else { period };
+            let period = if period == 0.0 {
+                m.run_seconds(task_work)
+            } else {
+                period
+            };
             let (Ok(d), Ok(total), Ok(budget)) = (
                 m.duty(task_work, period),
                 m.joules_per_period(task_work, period),
@@ -271,37 +329,68 @@ fn main() {
             let above = m.marginal_watts * m.run_seconds(task_work);
             // The ratio is the point of the table: how far the above-idle figure -- the one this
             // whole field reports -- sits from what the machine actually spent.
-            println!("  {:<12} {who}  {:>9.4}% {:>11.4} J {:>11.4} J {:>9.0}x {:>12.2} W",
-                     label, 100.0 * d, above, total, total / above, budget);
+            println!(
+                "  {:<12} {who}  {:>9.4}% {:>11.4} J {:>11.4} J {:>9.0}x {:>12.2} W",
+                label,
+                100.0 * d,
+                above,
+                total,
+                total / above,
+                budget
+            );
         }
     }
 
     println!("\nHOW TO READ THE LAST COLUMN.");
-    println!("  It is the standby power a competing device must come in UNDER to be cheaper on this");
-    println!("  task at that cadence, GRANTING IT FREE COMPUTATION. A better sampler cannot argue it");
+    println!(
+        "  It is the standby power a competing device must come in UNDER to be cheaper on this"
+    );
+    println!(
+        "  task at that cadence, GRANTING IT FREE COMPUTATION. A better sampler cannot argue it"
+    );
     println!("  down, because the bound already assumes a perfect one.");
     println!();
-    println!("  Notice what happens down the column: as the cadence slackens the budget stops moving");
-    println!("  and settles on the idle draw. At that point nothing about sampling matters, and the");
+    println!(
+        "  Notice what happens down the column: as the cadence slackens the budget stops moving"
+    );
+    println!(
+        "  and settles on the idle draw. At that point nothing about sampling matters, and the"
+    );
     println!("  whole thermodynamic value proposition is one number -- standby power.");
     println!();
     println!("  WHICH COMPARISON THIS IS, because the budget means different things in two cases.");
     println!("  This meter's scope is {scope:?}.");
     println!("  Whole-system readings price the case where the fabric REPLACES the host -- a");
     println!("  standalone device answering the query itself, which is the generous case. A");
-    println!("  CPU-package reading is NARROWER: it omits RAM, storage, fans and supply losses, so");
-    println!("  it understates the incumbent's idle -- the very term the low-duty argument leans on,");
+    println!(
+        "  CPU-package reading is NARROWER: it omits RAM, storage, fans and supply losses, so"
+    );
+    println!(
+        "  it understates the incumbent's idle -- the very term the low-duty argument leans on,"
+    );
     println!("  which makes any conclusion drawn from it conservative rather than flattering.");
     println!();
-    println!("  The other case is a fabric sitting BESIDE a host that has to stay awake regardless. In");
-    println!("  that arrangement the host's idle is common to both sides and cancels, and what remains");
+    println!(
+        "  The other case is a fabric sitting BESIDE a host that has to stay awake regardless. In"
+    );
+    println!(
+        "  that arrangement the host's idle is common to both sides and cancels, and what remains"
+    );
     println!("  is the accelerator's own standby against the GPU's own contribution to idle. This");
-    println!("  machine cannot report that: an integrated SoC shares one power rail, so per-component");
+    println!(
+        "  machine cannot report that: an integrated SoC shares one power rail, so per-component"
+    );
     println!("  idle is not separable here. Saying so beats splitting 67 W by assumption.");
     println!();
-    println!("  That number is not published. ledger::Z1_SPICE states e_sample, e_read, e_write and a");
+    println!(
+        "  That number is not published. ledger::Z1_SPICE states e_sample, e_read, e_write and a"
+    );
     println!("  reflash cap because Table IV states them; it carries no standby term because no");
-    println!("  thermodynamic vendor has published one. So the device column of this table cannot be");
-    println!("  filled in by anybody today, and the field's strongest argument -- the intermittent,");
+    println!(
+        "  thermodynamic vendor has published one. So the device column of this table cannot be"
+    );
+    println!(
+        "  filled in by anybody today, and the field's strongest argument -- the intermittent,"
+    );
     println!("  low-duty edge workload -- is the one it has never priced.");
 }

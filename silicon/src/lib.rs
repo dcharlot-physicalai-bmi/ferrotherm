@@ -5,18 +5,18 @@
 
 pub mod bitstream;
 pub mod capture;
-pub mod mpsse;
 pub mod ecc;
 pub mod frame;
 pub mod framebuf;
 pub mod json;
 pub mod logic_location;
+pub mod lut;
+pub mod mpsse;
 pub mod pips;
 pub mod route;
 pub mod segbits;
 pub mod tilegrid;
 pub mod usplus;
-pub mod lut;
 
 #[cfg(feature = "flash")]
 pub mod flash;
@@ -135,9 +135,11 @@ pub mod device {
                         .into(),
                 );
             }
-            Err("the sequential fabric is not yet assembled: flip-flops and clock are pending, so \
+            Err(
+                "the sequential fabric is not yet assembled: flip-flops and clock are pending, so \
                  there is nothing on the board to advance a sweep"
-                .into())
+                    .into(),
+            )
         }
 
         fn ledger(&self) -> Ledger {
@@ -156,8 +158,15 @@ pub mod device {
         #[test]
         fn the_declared_limits_match_the_cell_that_was_built() {
             let f = PtV2::describe();
-            assert_eq!(f.max_degree, Some(5), "one LUT6 input is spent on the random bit");
-            assert!(f.uniform_couplings, "the cell counts neighbours, it does not weight them");
+            assert_eq!(
+                f.max_degree,
+                Some(5),
+                "one LUT6 input is spent on the random bit"
+            );
+            assert!(
+                f.uniform_couplings,
+                "the cell counts neighbours, it does not weight them"
+            );
             assert_eq!(f.max_arity, 2);
         }
 
@@ -178,7 +187,10 @@ pub mod device {
             let mut d = PtV2::default();
             let src = "ftp 1\nspins 6\nfactor 1 0 1\nfactor 1 1 2\nfactor 1 2 3\nfactor 1 3 4\n\
                        factor 1 4 5\n";
-            assert!(d.program(&prog(src)).is_empty(), "a uniform chain should fit");
+            assert!(
+                d.program(&prog(src)).is_empty(),
+                "a uniform chain should fit"
+            );
         }
 
         #[test]
@@ -189,21 +201,30 @@ pub mod device {
                 src.push_str(&format!("factor 1 0 {j}\n"));
             }
             let bad = d.program(&prog(&src));
-            assert!(bad.iter().any(|u| matches!(u, Unsupported::TooHighDegree { .. })),
-                    "degree 6 must not fit in five neighbour inputs: {bad:?}");
+            assert!(
+                bad.iter()
+                    .any(|u| matches!(u, Unsupported::TooHighDegree { .. })),
+                "degree 6 must not fit in five neighbour inputs: {bad:?}"
+            );
         }
 
         #[test]
         fn running_without_a_board_says_which_thing_is_missing() {
             let mut d = PtV2::default();
-            assert!(d.run(&Schedule::constant(1.0, 10), 1).unwrap_err().contains("no program"));
+            assert!(
+                d.run(&Schedule::constant(1.0, 10), 1)
+                    .unwrap_err()
+                    .contains("no program")
+            );
             d.program(&prog("ftp 1\nspins 3\nfactor 1 0 1\nfactor 1 1 2\n"));
             let e = d.run(&Schedule::constant(1.0, 10), 1).unwrap_err();
-            assert!(e.contains("board") || e.contains("sequential fabric"), "{e}");
+            assert!(
+                e.contains("board") || e.contains("sequential fabric"),
+                "{e}"
+            );
         }
     }
 }
-
 
 #[cfg(test)]
 mod declared_capability_tests {
@@ -220,7 +241,10 @@ mod declared_capability_tests {
         assert!(r.holds(1.0), "a neighbour can be present");
         assert!(r.holds(0.0), "or absent");
         assert!(!r.holds(-1.0), "and it cannot be negative");
-        assert!(f.uniform_couplings, "which is the same fact said the other way");
+        assert!(
+            f.uniform_couplings,
+            "which is the same fact said the other way"
+        );
     }
 
     #[test]
@@ -228,7 +252,10 @@ mod declared_capability_tests {
         use ferrotherm::ftp::Program;
         let anti = Program::from_ftp("ftp 1\nspins 3\nfactor -1 0 1\nfactor -1 1 2\n").unwrap();
         let bad = PtV2::describe().check(&anti);
-        assert!(!bad.is_empty(), "a counting cell cannot run an antiferromagnet");
+        assert!(
+            !bad.is_empty(),
+            "a counting cell cannot run an antiferromagnet"
+        );
         assert!(
             bad.iter().any(|u| u.to_string().contains("integers 0..=1")),
             "and it says why: {bad:?}"

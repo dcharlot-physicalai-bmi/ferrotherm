@@ -84,7 +84,7 @@
 //! The 2026-09-19 run found a deadlock in the JTAG driver that no earlier readback was long enough
 //! to meet; see [`crate::mpsse`].
 
-use crate::bitstream::{cmd, reg, type1_read, type1_write, type2_read, DUMMY, NOOP, SYNC};
+use crate::bitstream::{DUMMY, NOOP, SYNC, cmd, reg, type1_read, type1_write, type2_read};
 use crate::frame::WORDS_PER_FRAME;
 use crate::logic_location::LlBit;
 use crate::tilegrid::Far;
@@ -225,7 +225,10 @@ pub fn strip_pad(words: &[u32], n_frames: usize) -> Result<&[u32], CaptureError>
     }
     let want = readback_words(n_frames);
     if words.len() < want {
-        return Err(CaptureError::Short { got: words.len(), want });
+        return Err(CaptureError::Short {
+            got: words.len(),
+            want,
+        });
     }
     Ok(&words[PAD_FRAMES * WORDS_PER_FRAME..want])
 }
@@ -252,7 +255,10 @@ impl Readout {
     pub fn from_words(first: u32, words: &[u32], n_frames: usize) -> Result<Readout, CaptureError> {
         let minor = Far::decode(first).minor;
         if minor as usize + n_frames > FRAMES_PER_COLUMN {
-            return Err(CaptureError::CrossesColumn { minor, frames: n_frames });
+            return Err(CaptureError::CrossesColumn {
+                minor,
+                frames: n_frames,
+            });
         }
         let body = strip_pad(words, n_frames)?;
         let mut frames = Vec::with_capacity(n_frames);
@@ -367,19 +373,45 @@ mod tests {
         let at = |w: &[u32], v: u32| w.iter().position(|&x| x == v);
         let g_restore = at(&restore, cmd::GRESTORE).expect("the stream must issue GRESTORE");
         let g_capture = at(&restore, cmd::GCAPTURE).expect("the stream must issue GCAPTURE");
-        assert!(g_restore < g_capture, "GRESTORE must precede GCAPTURE, got {g_restore} then {g_capture}");
-        assert!(at(&plain, cmd::GRESTORE).is_none(), "the plain capture must NOT restore");
+        assert!(
+            g_restore < g_capture,
+            "GRESTORE must precede GCAPTURE, got {g_restore} then {g_capture}"
+        );
+        assert!(
+            at(&plain, cmd::GRESTORE).is_none(),
+            "the plain capture must NOT restore"
+        );
 
         // One command BLOCK longer: the type-1 header, the command, and the two NOOP settles that
         // every command in this stream is followed by. Identical everywhere else, so the variant
         // cannot drift away from the read it is a variant of.
-        assert_eq!(restore.len(), plain.len() + 4, "exactly one extra command block");
+        assert_eq!(
+            restore.len(),
+            plain.len() + 4,
+            "exactly one extra command block"
+        );
         let block = g_restore - 1..=g_restore + 2;
-        let stripped: Vec<u32> =
-            restore.iter().copied().enumerate().filter(|&(i, _)| !block.contains(&i)).map(|(_, w)| w).collect();
-        assert_eq!(stripped, plain, "apart from the restore block the two streams are the same read");
-        assert_eq!(restore[g_restore - 1], plain[3], "the restore uses the same type-1 CMD header");
-        assert_eq!((restore[g_restore + 1], restore[g_restore + 2]), (NOOP, NOOP), "a command settles on two NOOPs");
+        let stripped: Vec<u32> = restore
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|&(i, _)| !block.contains(&i))
+            .map(|(_, w)| w)
+            .collect();
+        assert_eq!(
+            stripped, plain,
+            "apart from the restore block the two streams are the same read"
+        );
+        assert_eq!(
+            restore[g_restore - 1],
+            plain[3],
+            "the restore uses the same type-1 CMD header"
+        );
+        assert_eq!(
+            (restore[g_restore + 1], restore[g_restore + 2]),
+            (NOOP, NOOP),
+            "a command settles on two NOOPs"
+        );
     }
 
     fn listing() -> Vec<LlBit> {
@@ -415,13 +447,22 @@ mod tests {
     #[test]
     fn the_stream_captures_before_it_reads() {
         let w = capture_and_read(0x0042_0100, 4);
-        let gcap = w.iter().position(|&x| x == cmd::GCAPTURE).expect("GCAPTURE");
+        let gcap = w
+            .iter()
+            .position(|&x| x == cmd::GCAPTURE)
+            .expect("GCAPTURE");
         let rcfg = w.iter().position(|&x| x == cmd::RCFG).expect("RCFG");
-        assert!(gcap < rcfg, "capturing after the read latches into a frame nobody reads");
+        assert!(
+            gcap < rcfg,
+            "capturing after the read latches into a frame nobody reads"
+        );
         assert_eq!(w[gcap - 1], type1_write(reg::CMD, 1));
         assert_eq!(w[rcfg - 1], type1_write(reg::CMD, 1));
         // the FAR write is what the read starts from, and it follows RCFG
-        let far = w.iter().position(|&x| x == type1_write(reg::FAR, 1)).expect("FAR");
+        let far = w
+            .iter()
+            .position(|&x| x == type1_write(reg::FAR, 1))
+            .expect("FAR");
         assert!(far > rcfg);
         assert_eq!(w[far + 1], 0x0042_0100);
         // the frame-data register is READ, not written: the write header would load the
@@ -454,7 +495,10 @@ mod tests {
         let short = &w[..w.len() - 1];
         assert_eq!(
             strip_pad(short, 2),
-            Err(CaptureError::Short { got: short.len(), want: readback_words(2) })
+            Err(CaptureError::Short {
+                got: short.len(),
+                want: readback_words(2)
+            })
         );
         assert_eq!(strip_pad(&w, 0), Err(CaptureError::Empty));
     }
@@ -492,9 +536,16 @@ mod tests {
             let at = i * WORDS_PER_FRAME;
             naive.push(w[at..at + WORDS_PER_FRAME].to_vec());
         }
-        let naive = Readout { first: 0x0042_0100, frames: naive };
+        let naive = Readout {
+            first: 0x0042_0100,
+            frames: naive,
+        };
         assert_ne!(naive, honest);
-        assert_eq!(naive.bit(0x0042_0100, 0), Some(true), "the pad frame is full of ones too");
+        assert_eq!(
+            naive.bit(0x0042_0100, 0),
+            Some(true),
+            "the pad frame is full of ones too"
+        );
         assert_eq!(naive.bit(0x0042_0101, 0), Some(true));
         assert_eq!(honest.bit(0x0042_0101, 0), Some(false));
     }
@@ -505,7 +556,10 @@ mod tests {
         let r = Readout::from_words(0x0050_0000, &buffer(), 2).unwrap();
         let s = r.sample(&listing());
         assert_eq!(s.uncovered, 3);
-        assert!(!s.observed(), "a run that reached none of the cells reported success");
+        assert!(
+            !s.observed(),
+            "a run that reached none of the cells reported success"
+        );
         assert_eq!(s.ones(), 0);
     }
 
@@ -513,11 +567,21 @@ mod tests {
     /// incrementing by one and every frame after it would be mislabelled.
     #[test]
     fn a_run_past_the_column_end_is_refused() {
-        let far = Far { block_type: 0, bottom_half: false, row: 0, column: 3, minor: 120 }.encode();
+        let far = Far {
+            block_type: 0,
+            bottom_half: false,
+            row: 0,
+            column: 3,
+            minor: 120,
+        }
+        .encode();
         let words = vec![0u32; readback_words(64)];
         assert_eq!(
             Readout::from_words(far, &words, 64),
-            Err(CaptureError::CrossesColumn { minor: 120, frames: 64 })
+            Err(CaptureError::CrossesColumn {
+                minor: 120,
+                frames: 64
+            })
         );
         // eight frames fit exactly, and are allowed
         assert!(Readout::from_words(far, &vec![0u32; readback_words(8)], 8).is_ok());
@@ -532,7 +596,10 @@ mod tests {
         assert_eq!(reaches(STREAM_MASK, STREAM_CTL0), 0x0000_0401 & 0x0000_0501);
         assert_eq!(reaches(STREAM_MASK, STREAM_CTL0) & GLUTMASK, 0);
         // and the value that would deliver it
-        assert_eq!(reaches(STREAM_MASK | GLUTMASK, STREAM_CTL0) & GLUTMASK, GLUTMASK);
+        assert_eq!(
+            reaches(STREAM_MASK | GLUTMASK, STREAM_CTL0) & GLUTMASK,
+            GLUTMASK
+        );
     }
 
     #[test]

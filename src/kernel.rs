@@ -69,11 +69,7 @@ pub fn p_pair(field: f64, beta: f64) -> (f64, f64) {
 /// Draw the new value of a site.
 #[inline]
 pub fn draw(field: f64, beta: f64, rng: &mut Pcg) -> i8 {
-    if rng.f64() < p_up(field, beta) {
-        1
-    } else {
-        -1
-    }
+    if rng.f64() < p_up(field, beta) { 1 } else { -1 }
 }
 
 /// Contribution to `d log p(s_new) / d h_i` from this update.
@@ -134,7 +130,10 @@ mod tests {
         // exp() of a large negative argument is the failure mode here; it must not produce NaN.
         for &(f, b) in &[(1e6, 1.0), (-1e6, 1.0), (1.0, 1e6), (1.0, -1e6)] {
             let p = p_up(f, b);
-            assert!(p.is_finite() && (0.0..=1.0).contains(&p), "f={f} beta={b} -> {p}");
+            assert!(
+                p.is_finite() && (0.0..=1.0).contains(&p),
+                "f={f} beta={b} -> {p}"
+            );
         }
     }
 
@@ -168,7 +167,10 @@ mod tests {
         let want = p_up(f, beta);
         // three sigma of a binomial at this n
         let tol = 3.0 * (want * (1.0 - want) / n as f64).sqrt();
-        assert!((got - want).abs() < tol, "got {got}, want {want}, tol {tol}");
+        assert!(
+            (got - want).abs() < tol,
+            "got {got}, want {want}, tol {tol}"
+        );
     }
 
     #[test]
@@ -188,11 +190,21 @@ mod tests {
                 let f = x / (2.0 * beta);
                 let (up, down) = p_pair(f, beta);
                 for (name, got) in [("p_down", p_down(f, beta)), ("p_pair", down)] {
-                    assert!(got > 0.0, "{name} at 2 beta f = {x} is {got}: a down-flip made impossible");
+                    assert!(
+                        got > 0.0,
+                        "{name} at 2 beta f = {x} is {got}: a down-flip made impossible"
+                    );
                     let rel = (got - want).abs() / want;
-                    assert!(rel < 1e-14, "{name} at 2 beta f = {x}: {got:e} against {want:e}, rel {rel:e}");
+                    assert!(
+                        rel < 1e-14,
+                        "{name} at 2 beta f = {x}: {got:e} against {want:e}, rel {rel:e}"
+                    );
                 }
-                assert_eq!(up.to_bits(), p_up(f, beta).to_bits(), "p_pair's up tail is p_up to the bit");
+                assert_eq!(
+                    up.to_bits(),
+                    p_up(f, beta).to_bits(),
+                    "p_pair's up tail is p_up to the bit"
+                );
                 // Mirrored: the up tail at the negated field is the same small number.
                 let rel = (p_up(-f, beta) - want).abs() / want;
                 assert!(rel < 1e-14, "p_up(-f) at 2 beta f = {x}: rel {rel:e}");

@@ -173,7 +173,10 @@ pub fn nested_rhat(chains: &[Vec<f64>], superchain: &[usize]) -> f64 {
         return f64::NAN;
     }
     let n = chains[0].len();
-    if n == 0 || chains.iter().any(|c| c.len() != n) || chains.iter().flatten().any(|v| !v.is_finite()) {
+    if n == 0
+        || chains.iter().any(|c| c.len() != n)
+        || chains.iter().flatten().any(|v| !v.is_finite())
+    {
         return f64::NAN;
     }
     let mut ids: Vec<usize> = superchain.to_vec();
@@ -182,14 +185,19 @@ pub fn nested_rhat(chains: &[Vec<f64>], superchain: &[usize]) -> f64 {
     if ids.len() < 2 {
         return f64::NAN;
     }
-    let members: Vec<Vec<usize>> =
-        ids.iter().map(|&k| (0..chains.len()).filter(|&c| superchain[c] == k).collect()).collect();
+    let members: Vec<Vec<usize>> = ids
+        .iter()
+        .map(|&k| (0..chains.len()).filter(|&c| superchain[c] == k).collect())
+        .collect();
     let per = members[0].len();
     if members.iter().any(|m| m.len() != per) {
         return f64::NAN;
     }
     let chain_mean: Vec<f64> = chains.iter().map(|c| mean(c)).collect();
-    let chain_var: Vec<f64> = chains.iter().map(|c| if n > 1 { variance(c) } else { 0.0 }).collect();
+    let chain_var: Vec<f64> = chains
+        .iter()
+        .map(|c| if n > 1 { variance(c) } else { 0.0 })
+        .collect();
     let mut super_mean = Vec::with_capacity(members.len());
     let mut within_super = Vec::with_capacity(members.len());
     for m in &members {
@@ -212,7 +220,13 @@ pub fn nested_rhat(chains: &[Vec<f64>], superchain: &[usize]) -> f64 {
 /// Blom's offset: `z = Phi^-1((r - 3/8) / (S + 1/4))`. What every rank-normalised statistic runs on.
 #[must_use]
 pub fn rank_normalise(chains: &[Vec<f64>]) -> Vec<Vec<f64>> {
-    let mut all: Vec<(f64, usize)> = chains.iter().flatten().copied().enumerate().map(|(i, v)| (v, i)).collect();
+    let mut all: Vec<(f64, usize)> = chains
+        .iter()
+        .flatten()
+        .copied()
+        .enumerate()
+        .map(|(i, v)| (v, i))
+        .collect();
     let s = all.len();
     all.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(core::cmp::Ordering::Equal));
     let mut rank = vec![0.0f64; s];
@@ -231,7 +245,12 @@ pub fn rank_normalise(chains: &[Vec<f64>]) -> Vec<Vec<f64>> {
     let mut out = Vec::with_capacity(chains.len());
     let mut at = 0;
     for c in chains {
-        out.push(rank[at..at + c.len()].iter().map(|r| inverse_normal_cdf((r - 0.375) / (s as f64 + 0.25))).collect());
+        out.push(
+            rank[at..at + c.len()]
+                .iter()
+                .map(|r| inverse_normal_cdf((r - 0.375) / (s as f64 + 0.25)))
+                .collect(),
+        );
         at += c.len();
     }
     out
@@ -242,7 +261,11 @@ pub fn rank_normalise(chains: &[Vec<f64>]) -> Vec<Vec<f64>> {
 pub fn fold(chains: &[Vec<f64>]) -> Vec<Vec<f64>> {
     let mut pooled: Vec<f64> = chains.iter().flatten().copied().collect();
     pooled.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
-    let med = if pooled.len() % 2 == 1 { pooled[pooled.len() / 2] } else { 0.5 * (pooled[pooled.len() / 2 - 1] + pooled[pooled.len() / 2]) };
+    let med = if pooled.len() % 2 == 1 {
+        pooled[pooled.len() / 2]
+    } else {
+        0.5 * (pooled[pooled.len() / 2 - 1] + pooled[pooled.len() / 2])
+    };
     // Written as loops rather than closures so the mutation suite can name the line: its row
     // format splits on '|', which a closure's parameter list contains.
     let mut out = Vec::with_capacity(chains.len());
@@ -274,16 +297,27 @@ pub fn ess(chains: &[Vec<f64>]) -> f64 {
     // Biased per-chain autocovariances (divided by N), as Stan uses, from the unbiased ones.
     let acov: Vec<Vec<f64>> = s
         .iter()
-        .map(|c| autocovariance(c, n - 1).into_iter().enumerate().map(|(k, v)| v * (n - k) as f64 / n as f64).collect())
+        .map(|c| {
+            autocovariance(c, n - 1)
+                .into_iter()
+                .enumerate()
+                .map(|(k, v)| v * (n - k) as f64 / n as f64)
+                .collect()
+        })
         .collect();
-    let chain_var: Vec<f64> = acov.iter().map(|a| a[0] * n as f64 / (n as f64 - 1.0)).collect();
+    let chain_var: Vec<f64> = acov
+        .iter()
+        .map(|a| a[0] * n as f64 / (n as f64 - 1.0))
+        .collect();
     let means: Vec<f64> = s.iter().map(|c| mean(c)).collect();
     let mean_var = mean(&chain_var);
     let var_plus = mean_var * (n as f64 - 1.0) / n as f64 + variance(&means);
     if !(var_plus > 0.0) {
         return f64::NAN;
     }
-    let rho = |t: usize| -> f64 { 1.0 - (mean_var - acov.iter().map(|a| a[t]).sum::<f64>() / m as f64) / var_plus };
+    let rho = |t: usize| -> f64 {
+        1.0 - (mean_var - acov.iter().map(|a| a[t]).sum::<f64>() / m as f64) / var_plus
+    };
     // Geyer: sum autocorrelations in pairs while the pair sum is positive, then force the pair
     // sums to be non-increasing -- the loop `certify::tau_int` runs over one chain, shared so the
     // two cannot drift apart. It returns `1/2 + sum rho`; Stan's `tau` is twice that.
@@ -310,7 +344,16 @@ pub fn ess_tail(chains: &[Vec<f64>]) -> f64 {
     pooled.sort_by(|a, b| a.partial_cmp(b).unwrap_or(core::cmp::Ordering::Equal));
     let q = |p: f64| pooled[((pooled.len() as f64 - 1.0) * p).round() as usize];
     let (lo, hi) = (q(0.05), q(0.95));
-    let indicator = |cut: f64| -> Vec<Vec<f64>> { chains.iter().map(|c| c.iter().map(|x| if *x <= cut { 1.0 } else { 0.0 }).collect()).collect() };
+    let indicator = |cut: f64| -> Vec<Vec<f64>> {
+        chains
+            .iter()
+            .map(|c| {
+                c.iter()
+                    .map(|x| if *x <= cut { 1.0 } else { 0.0 })
+                    .collect()
+            })
+            .collect()
+    };
     ess(&rank_normalise(&indicator(lo))).min(ess(&rank_normalise(&indicator(hi))))
 }
 
@@ -333,21 +376,49 @@ pub fn inverse_normal_cdf(p: f64) -> f64 {
     if p == 1.0 {
         return f64::INFINITY;
     }
-    const A: [f64; 6] = [-3.969_683_028_665_376e1, 2.209_460_984_245_205e2, -2.759_285_104_469_687e2, 1.383_577_518_672_69e2, -3.066_479_806_614_716e1, 2.506_628_277_459_239];
-    const B: [f64; 5] = [-5.447_609_879_822_406e1, 1.615_858_368_580_409e2, -1.556_989_798_598_866e2, 6.680_131_188_771_972e1, -1.328_068_155_288_572e1];
-    const C: [f64; 6] = [-7.784_894_002_430_293e-3, -3.223_964_580_411_365e-1, -2.400_758_277_161_838, -2.549_732_539_343_734, 4.374_664_141_464_968, 2.938_163_982_698_783];
-    const D: [f64; 4] = [7.784_695_709_041_462e-3, 3.224_671_290_700_398e-1, 2.445_134_137_142_996, 3.754_408_661_907_416];
+    const A: [f64; 6] = [
+        -3.969_683_028_665_376e1,
+        2.209_460_984_245_205e2,
+        -2.759_285_104_469_687e2,
+        1.383_577_518_672_69e2,
+        -3.066_479_806_614_716e1,
+        2.506_628_277_459_239,
+    ];
+    const B: [f64; 5] = [
+        -5.447_609_879_822_406e1,
+        1.615_858_368_580_409e2,
+        -1.556_989_798_598_866e2,
+        6.680_131_188_771_972e1,
+        -1.328_068_155_288_572e1,
+    ];
+    const C: [f64; 6] = [
+        -7.784_894_002_430_293e-3,
+        -3.223_964_580_411_365e-1,
+        -2.400_758_277_161_838,
+        -2.549_732_539_343_734,
+        4.374_664_141_464_968,
+        2.938_163_982_698_783,
+    ];
+    const D: [f64; 4] = [
+        7.784_695_709_041_462e-3,
+        3.224_671_290_700_398e-1,
+        2.445_134_137_142_996,
+        3.754_408_661_907_416,
+    ];
     let p_low = 0.024_25;
     let mut x = if p < p_low {
         let q = (-2.0 * p.ln()).sqrt();
-        (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5]) / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
+        (((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
+            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
     } else if p <= 1.0 - p_low {
         let q = p - 0.5;
         let r = q * q;
-        (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0)
+        (((((A[0] * r + A[1]) * r + A[2]) * r + A[3]) * r + A[4]) * r + A[5]) * q
+            / (((((B[0] * r + B[1]) * r + B[2]) * r + B[3]) * r + B[4]) * r + 1.0)
     } else {
         let q = (-2.0 * (1.0 - p).ln()).sqrt();
-        -(((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5]) / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
+        -(((((C[0] * q + C[1]) * q + C[2]) * q + C[3]) * q + C[4]) * q + C[5])
+            / ((((D[0] * q + D[1]) * q + D[2]) * q + D[3]) * q + 1.0)
     };
     for _ in 0..2 {
         let e = normal_cdf(x) - p;
@@ -385,13 +456,29 @@ mod tests {
     fn independent_chains_read_one_and_their_full_size() {
         let chains = iid(4, 2000, 1, 0.0, 1.0);
         let d = diagnose(&chains);
-        for (name, r) in [("rhat", d.rhat), ("rank", d.rhat_rank), ("folded", d.rhat_folded)] {
+        for (name, r) in [
+            ("rhat", d.rhat),
+            ("rank", d.rhat_rank),
+            ("folded", d.rhat_folded),
+        ] {
             assert!((r - 1.0).abs() < 0.01, "{name} = {r} on independent draws");
         }
         let total = 8000.0;
-        assert!((d.ess_bulk / total - 1.0).abs() < 0.15, "bulk ESS {} of {total}", d.ess_bulk);
-        assert!((d.ess_tail / total - 1.0).abs() < 0.3, "tail ESS {} of {total}", d.ess_tail);
-        assert!((d.mcse_mean / (1.0 / total.sqrt()) - 1.0).abs() < 0.3, "mcse {}", d.mcse_mean);
+        assert!(
+            (d.ess_bulk / total - 1.0).abs() < 0.15,
+            "bulk ESS {} of {total}",
+            d.ess_bulk
+        );
+        assert!(
+            (d.ess_tail / total - 1.0).abs() < 0.3,
+            "tail ESS {} of {total}",
+            d.ess_tail
+        );
+        assert!(
+            (d.mcse_mean / (1.0 / total.sqrt()) - 1.0).abs() < 0.3,
+            "mcse {}",
+            d.mcse_mean
+        );
     }
 
     /// Shifted chains: the classical statistic is a closed form of the split chains' means and
@@ -408,12 +495,23 @@ mod tests {
         let n = s[0].len() as f64;
         let means: Vec<f64> = s.iter().map(|c| c.iter().sum::<f64>() / n).collect();
         let grand = means.iter().sum::<f64>() / means.len() as f64;
-        let b = n * means.iter().map(|m| (m - grand).powi(2)).sum::<f64>() / (means.len() as f64 - 1.0);
-        let w = s.iter().map(|c| { let m = c.iter().sum::<f64>() / n; c.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0) }).sum::<f64>() / s.len() as f64;
+        let b =
+            n * means.iter().map(|m| (m - grand).powi(2)).sum::<f64>() / (means.len() as f64 - 1.0);
+        let w = s
+            .iter()
+            .map(|c| {
+                let m = c.iter().sum::<f64>() / n;
+                c.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0)
+            })
+            .sum::<f64>()
+            / s.len() as f64;
         let want = (((n - 1.0) / n * w + b / n) / w).sqrt();
         let got = split_rhat(&chains);
         assert!((got - want).abs() < 1e-12, "{got} vs closed form {want}");
-        assert!(got > 2.0, "four chains two standard deviations apart: R-hat {got}");
+        assert!(
+            got > 2.0,
+            "four chains two standard deviations apart: R-hat {got}"
+        );
     }
 
     /// An AR(1) chain at `rho` has `ESS / N = (1 - rho) / (1 + rho)` exactly.
@@ -424,12 +522,20 @@ mod tests {
             .map(|c| {
                 let mut rng = Pcg::new(20 + c, 0x4B);
                 let mut x = 0.0f64;
-                (0..20_000).map(|_| { x = rho * x + (1.0 - rho * rho).sqrt() * normal(&mut rng); x }).collect()
+                (0..20_000)
+                    .map(|_| {
+                        x = rho * x + (1.0 - rho * rho).sqrt() * normal(&mut rng);
+                        x
+                    })
+                    .collect()
             })
             .collect();
         let e = ess(&chains);
         let want = 80_000.0 * (1.0 - rho) / (1.0 + rho);
-        assert!((e / want - 1.0).abs() < 0.25, "ESS {e} vs closed form {want}");
+        assert!(
+            (e / want - 1.0).abs() < 0.25,
+            "ESS {e} vs closed form {want}"
+        );
     }
 
     /// A GEYER SUM OF ZERO OR LESS IS A FAILURE, NOT THE CAP. Chains that alternate sign every
@@ -444,23 +550,37 @@ mod tests {
         let chains: Vec<Vec<f64>> = (0..4)
             .map(|c| {
                 let mut rng = Pcg::new(40 + c, 0x4C);
-                (0..4_000).map(|t| if t % 2 == 0 { 1.0 } else { -1.0 }).map(|s: f64| s + 0.1 * normal(&mut rng)).collect()
+                (0..4_000)
+                    .map(|t| if t % 2 == 0 { 1.0 } else { -1.0 })
+                    .map(|s: f64| s + 0.1 * normal(&mut rng))
+                    .collect()
             })
             .collect();
         let e = ess(&chains);
-        assert!(e.is_nan(), "an alternating chain has no Geyer value; got ESS {e}");
+        assert!(
+            e.is_nan(),
+            "an alternating chain has no Geyer value; got ESS {e}"
+        );
 
         let rho = -0.5f64;
         let chains: Vec<Vec<f64>> = (0..4)
             .map(|c| {
                 let mut rng = Pcg::new(50 + c, 0x4D);
                 let mut x = 0.0f64;
-                (0..20_000).map(|_| { x = rho * x + (1.0 - rho * rho).sqrt() * normal(&mut rng); x }).collect()
+                (0..20_000)
+                    .map(|_| {
+                        x = rho * x + (1.0 - rho * rho).sqrt() * normal(&mut rng);
+                        x
+                    })
+                    .collect()
             })
             .collect();
         let e = ess(&chains);
         let want = 80_000.0 * (1.0 - rho) / (1.0 + rho);
-        assert!((e / want - 1.0).abs() < 0.25, "ESS {e} vs closed form {want}");
+        assert!(
+            (e / want - 1.0).abs() < 0.25,
+            "ESS {e} vs closed form {want}"
+        );
     }
 
     /// A trend inside every chain -- the first half around 0, the second around 3 -- leaves the
@@ -478,10 +598,20 @@ mod tests {
             let means: Vec<f64> = chains.iter().map(|c| c.iter().sum::<f64>() / n).collect();
             let grand = means.iter().sum::<f64>() / 4.0;
             let b = n * means.iter().map(|m| (m - grand).powi(2)).sum::<f64>() / 3.0;
-            let w = chains.iter().map(|c| { let m = c.iter().sum::<f64>() / n; c.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0) }).sum::<f64>() / 4.0;
+            let w = chains
+                .iter()
+                .map(|c| {
+                    let m = c.iter().sum::<f64>() / n;
+                    c.iter().map(|x| (x - m).powi(2)).sum::<f64>() / (n - 1.0)
+                })
+                .sum::<f64>()
+                / 4.0;
             (((n - 1.0) / n * w + b / n) / w).sqrt()
         };
-        assert!((unsplit - 1.0).abs() < 0.02, "unsplit R-hat {unsplit} cannot see a trend");
+        assert!(
+            (unsplit - 1.0).abs() < 0.02,
+            "unsplit R-hat {unsplit} cannot see a trend"
+        );
         let r = split_rhat(&chains);
         assert!(r > 1.5, "split R-hat must see it: {r}");
     }
@@ -495,7 +625,11 @@ mod tests {
             *x *= 3.0;
         }
         let d = diagnose(&chains);
-        assert!(d.rhat_rank < 1.1, "rank R-hat {} on equal centres", d.rhat_rank);
+        assert!(
+            d.rhat_rank < 1.1,
+            "rank R-hat {} on equal centres",
+            d.rhat_rank
+        );
         assert!(
             d.rhat_folded > 1.1 && d.rhat_folded > d.rhat_rank + 0.05,
             "folded R-hat must see the spread the rank one misses: folded {} vs rank {}",
@@ -508,18 +642,43 @@ mod tests {
     /// normalisation preserves order and lands near a standard normal.
     #[test]
     fn the_normal_quantile_round_trips_and_ranks_are_standard_normal() {
-        for &p in &[1e-9, 1e-4, 0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 0.99, 0.9999, 1.0 - 1e-9] {
+        for &p in &[
+            1e-9,
+            1e-4,
+            0.01,
+            0.1,
+            0.3,
+            0.5,
+            0.7,
+            0.9,
+            0.99,
+            0.9999,
+            1.0 - 1e-9,
+        ] {
             let x = inverse_normal_cdf(p);
-            assert!((normal_cdf(x) - p).abs() < 1e-12, "p {p}: x {x}, back {}", normal_cdf(x));
+            assert!(
+                (normal_cdf(x) - p).abs() < 1e-12,
+                "p {p}: x {x}, back {}",
+                normal_cdf(x)
+            );
         }
         let chains = iid(2, 3000, 5, 10.0, 4.0);
         let z = rank_normalise(&chains);
         let pooled: Vec<f64> = z.iter().flatten().copied().collect();
         let raw: Vec<f64> = chains.iter().flatten().copied().collect();
         for i in 1..raw.len() {
-            assert_eq!(raw[i] > raw[i - 1], pooled[i] > pooled[i - 1], "rank normalisation must preserve order");
+            assert_eq!(
+                raw[i] > raw[i - 1],
+                pooled[i] > pooled[i - 1],
+                "rank normalisation must preserve order"
+            );
         }
-        assert!(mean(&pooled).abs() < 0.01 && (variance(&pooled) - 1.0).abs() < 0.02, "mean {} var {}", mean(&pooled), variance(&pooled));
+        assert!(
+            mean(&pooled).abs() < 0.01 && (variance(&pooled) - 1.0).abs() < 0.02,
+            "mean {} var {}",
+            mean(&pooled),
+            variance(&pooled)
+        );
     }
 
     /// NESTED R-hat, against two things it does not share arithmetic with. First a hand-worked
@@ -530,13 +689,21 @@ mod tests {
     /// written out again here in its own six lines -- on data where the two differ from 1 by a lot.
     #[test]
     fn nested_rhat_matches_a_hand_case_and_the_classical_identity() {
-        let chains = vec![vec![0.0, 2.0], vec![2.0, 4.0], vec![4.0, 6.0], vec![6.0, 8.0]];
+        let chains = vec![
+            vec![0.0, 2.0],
+            vec![2.0, 4.0],
+            vec![4.0, 6.0],
+            vec![6.0, 8.0],
+        ];
         let r = nested_rhat(&chains, &[0, 0, 1, 1]);
         assert!((r - 3f64.sqrt()).abs() < 1e-15, "hand case: {r}");
         // Relabelling superchains changes nothing; regrouping does.
         assert!((nested_rhat(&chains, &[7, 7, 2, 2]) - r).abs() < 1e-15);
         let regrouped = nested_rhat(&chains, &[0, 1, 0, 1]);
-        assert!((regrouped - r).abs() > 0.1, "a different grouping is a different statistic: {regrouped}");
+        assert!(
+            (regrouped - r).abs() > 0.1,
+            "a different grouping is a different statistic: {regrouped}"
+        );
 
         // One chain per superchain: R_nu^2 - R_classical^2 = 1 / N, on chains that disagree.
         let mut shifted = iid(6, 40, 3, 0.0, 1.0);
@@ -552,20 +719,46 @@ mod tests {
         let w = mean(&shifted.iter().map(|c| variance(c)).collect::<Vec<_>>());
         let b = n * variance(&means);
         let classical_sq = ((n - 1.0) * w / n + b / n) / w;
-        assert!(classical_sq > 1.2, "the chains must actually disagree: {classical_sq}");
-        assert!((nu * nu - classical_sq - 1.0 / n).abs() < 1e-12, "footnote 3: {} vs {}", nu * nu, classical_sq + 1.0 / n);
+        assert!(
+            classical_sq > 1.2,
+            "the chains must actually disagree: {classical_sq}"
+        );
+        assert!(
+            (nu * nu - classical_sq - 1.0 / n).abs() < 1e-12,
+            "footnote 3: {} vs {}",
+            nu * nu,
+            classical_sq + 1.0 / n
+        );
 
         // One draw per chain is the regime it exists for, and has no within-chain variance.
         let singles = vec![vec![1.0], vec![3.0], vec![5.0], vec![9.0]];
         // Superchain means 2 and 7, B = 12.5; between-chain variances 2 and 8, W = 5.
         let r1 = nested_rhat(&singles, &[0, 0, 1, 1]);
-        assert!((r1 - 3.5f64.sqrt()).abs() < 1e-15, "one draw per chain: {r1}");
+        assert!(
+            (r1 - 3.5f64.sqrt()).abs() < 1e-15,
+            "one draw per chain: {r1}"
+        );
 
         // Refusals.
-        assert!(nested_rhat(&chains, &[0, 0, 0, 1]).is_nan(), "unequal superchains");
-        assert!(nested_rhat(&chains, &[0, 0, 0, 0]).is_nan(), "one superchain");
-        assert!(nested_rhat(&chains, &[0, 1]).is_nan(), "ids and chains must pair up");
-        assert!(nested_rhat(&[vec![1.0, f64::NAN], vec![2.0, 3.0]], &[0, 1]).is_nan(), "non-finite draw");
-        assert!(nested_rhat(&[vec![1.0], vec![1.0]], &[0, 1]).is_nan(), "W = 0");
+        assert!(
+            nested_rhat(&chains, &[0, 0, 0, 1]).is_nan(),
+            "unequal superchains"
+        );
+        assert!(
+            nested_rhat(&chains, &[0, 0, 0, 0]).is_nan(),
+            "one superchain"
+        );
+        assert!(
+            nested_rhat(&chains, &[0, 1]).is_nan(),
+            "ids and chains must pair up"
+        );
+        assert!(
+            nested_rhat(&[vec![1.0, f64::NAN], vec![2.0, 3.0]], &[0, 1]).is_nan(),
+            "non-finite draw"
+        );
+        assert!(
+            nested_rhat(&[vec![1.0], vec![1.0]], &[0, 1]).is_nan(),
+            "W = 0"
+        );
     }
 }

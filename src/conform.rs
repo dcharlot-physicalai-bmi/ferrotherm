@@ -65,7 +65,13 @@ impl core::fmt::Display for Report {
         writeln!(f, "ferrotherm conformance — {}", self.fabric)?;
         writeln!(f, "{}", "-".repeat(78))?;
         for c in &self.cases {
-            writeln!(f, "{} {:<28} {}", if c.passed { "PASS" } else { "FAIL" }, c.name, c.detail)?;
+            writeln!(
+                f,
+                "{} {:<28} {}",
+                if c.passed { "PASS" } else { "FAIL" },
+                c.name,
+                c.detail
+            )?;
         }
         let n = self.cases.len();
         let ok = self.cases.iter().filter(|c| c.passed).count();
@@ -74,7 +80,12 @@ impl core::fmt::Display for Report {
 }
 
 fn case(name: &'static str, asks: &'static str, passed: bool, detail: String) -> CaseResult {
-    CaseResult { name, asks, passed, detail }
+    CaseResult {
+        name,
+        asks,
+        passed,
+        detail,
+    }
 }
 
 fn ladder() -> Schedule {
@@ -105,7 +116,12 @@ pub fn run(dev: &mut dyn Device) -> Report {
                 (e == -12.0, format!("ground energy {e}, exact -12"))
             }
         };
-        cases.push(case("ferromagnet", "can it satisfy every bond at once", ok, detail));
+        cases.push(case(
+            "ferromagnet",
+            "can it satisfy every bond at once",
+            ok,
+            detail,
+        ));
     }
 
     // --- 2. frustration, where the optimum is not "satisfy everything" ---------------------------
@@ -119,10 +135,18 @@ pub fn run(dev: &mut dyn Device) -> Report {
             Err(e) => (false, e),
             Ok(s) => {
                 let e = p.to_graph().unwrap().energy(&s);
-                (e == -3.0, format!("ground energy {e}, exact -3 (one bond must break)"))
+                (
+                    e == -3.0,
+                    format!("ground energy {e}, exact -3 (one bond must break)"),
+                )
             }
         };
-        cases.push(case("frustration", "does it know a bond must break", ok, detail));
+        cases.push(case(
+            "frustration",
+            "does it know a bond must break",
+            ok,
+            detail,
+        ));
     }
 
     // --- 3. a planted optimum at a size nothing can enumerate ------------------------------------
@@ -133,10 +157,22 @@ pub fn run(dev: &mut dyn Device) -> Report {
             Err(e) => (false, e),
             Ok(s) => {
                 let ex = planted.excess(&s);
-                (ex < 0.05, format!("{:.2}% above a planted optimum of {}", ex * 100.0, planted.ground_energy))
+                (
+                    ex < 0.05,
+                    format!(
+                        "{:.2}% above a planted optimum of {}",
+                        ex * 100.0,
+                        planted.ground_energy
+                    ),
+                )
             }
         };
-        cases.push(case("planted optimum", "how close on a known answer", ok, detail));
+        cases.push(case(
+            "planted optimum",
+            "how close on a known answer",
+            ok,
+            detail,
+        ));
     }
 
     // --- 4. agreement with exact inference -------------------------------------------------------
@@ -161,7 +197,12 @@ pub fn run(dev: &mut dyn Device) -> Report {
             }
             _ => (false, "exact inference declined this graph".into()),
         };
-        cases.push(case("exact agreement", "does it match an exact solver", ok, detail));
+        cases.push(case(
+            "exact agreement",
+            "does it match an exact solver",
+            ok,
+            detail,
+        ));
     }
 
     // --- 5. determinism -------------------------------------------------------------------------
@@ -171,7 +212,12 @@ pub fn run(dev: &mut dyn Device) -> Report {
             (Ok(a), Ok(b)) => (a == b, format!("same seed reproduces: {}", a == b)),
             (Err(e), _) | (_, Err(e)) => (false, e),
         };
-        cases.push(case("determinism", "does one seed give one answer", ok, detail));
+        cases.push(case(
+            "determinism",
+            "does one seed give one answer",
+            ok,
+            detail,
+        ));
     }
 
     // --- 6. the discriminating case: it must be able to FAIL -------------------------------------
@@ -243,7 +289,12 @@ pub fn run(dev: &mut dyn Device) -> Report {
                 }
             },
         };
-        cases.push(case("sampling fidelity", "at what temperature did it really sample", ok, detail));
+        cases.push(case(
+            "sampling fidelity",
+            "at what temperature did it really sample",
+            ok,
+            detail,
+        ));
     }
 
     Report { fabric, cases }
@@ -261,7 +312,10 @@ fn chain(
     if !bad.is_empty() {
         return Err(format!(
             "refused: {}",
-            bad.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join("; ")
+            bad.iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
         ));
     }
     dev.sample(beta, plan, seed)
@@ -272,7 +326,10 @@ fn solve(dev: &mut dyn Device, p: &Program, seed: u64) -> Result<Vec<i8>, String
     if !bad.is_empty() {
         return Err(format!(
             "refused: {}",
-            bad.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join("; ")
+            bad.iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
         ));
     }
     dev.run(&ladder(), seed)
@@ -297,9 +354,15 @@ mod cross_backend {
         let plan = Plan::new(500, 3000, 8);
 
         let mut cpu = crate::fabric::Cpu::default();
-        let cpu_c = chain(&mut cpu, &p, 0.5, &plan, 11).unwrap().certificate(&g).unwrap();
+        let cpu_c = chain(&mut cpu, &p, 0.5, &plan, 11)
+            .unwrap()
+            .certificate(&g)
+            .unwrap();
         let mut rtl = crate::hdl::RtlFabric::new();
-        let rtl_c = chain(&mut rtl, &p, 0.5, &plan, 11).unwrap().certificate(&g).unwrap();
+        let rtl_c = chain(&mut rtl, &p, 0.5, &plan, 11)
+            .unwrap()
+            .certificate(&g)
+            .unwrap();
 
         // THE ANTI-VACUITY ASSERTION, and the reason this test exists in this form. Both of these
         // cases used to be answered by a locally built `gibbs::Sampler`, so every fabric returned
@@ -324,7 +387,10 @@ mod cross_backend {
                 c.beta_eff
             );
             let (tv, floor) = (c.tv_exact.unwrap(), c.noise_floor.unwrap());
-            assert!(tv < floor, "{name} sits {tv:.4} from exact against a {floor:.4} noise floor");
+            assert!(
+                tv < floor,
+                "{name} sits {tv:.4} from exact against a {floor:.4} noise floor"
+            );
         }
     }
 
@@ -351,7 +417,11 @@ mod cross_backend {
         let r = run(&mut OptimiserOnly(0));
         for name in ["rejects a bad run", "sampling fidelity"] {
             let c = r.cases.iter().find(|c| c.name == name).unwrap();
-            assert!(!c.passed, "{name} passed for a fabric that cannot sample: {}", c.detail);
+            assert!(
+                !c.passed,
+                "{name} passed for a fabric that cannot sample: {}",
+                c.detail
+            );
             assert!(
                 c.detail.contains("no sampling path"),
                 "{name} must say WHY it could not be asked, not merely that it failed: {}",
@@ -399,10 +469,28 @@ mod tests {
         let r = run(&mut AlwaysUp(0));
         assert!(!r.passed(), "a constant device must not pass:\n{r}");
         // it passes the ferromagnet, because all-up really is that optimum
-        assert!(r.cases.iter().find(|c| c.name == "ferromagnet").unwrap().passed);
+        assert!(
+            r.cases
+                .iter()
+                .find(|c| c.name == "ferromagnet")
+                .unwrap()
+                .passed
+        );
         // and it fails frustration and the planted instance, which is what catches it
-        assert!(!r.cases.iter().find(|c| c.name == "frustration").unwrap().passed);
-        assert!(!r.cases.iter().find(|c| c.name == "planted optimum").unwrap().passed);
+        assert!(
+            !r.cases
+                .iter()
+                .find(|c| c.name == "frustration")
+                .unwrap()
+                .passed
+        );
+        assert!(
+            !r.cases
+                .iter()
+                .find(|c| c.name == "planted optimum")
+                .unwrap()
+                .passed
+        );
     }
 
     #[test]
@@ -428,7 +516,15 @@ mod tests {
         let r = run(&mut Narrow);
         let ferro = r.cases.iter().find(|c| c.name == "ferromagnet").unwrap();
         assert!(!ferro.passed);
-        assert!(ferro.detail.contains("refused"), "should say it was refused: {}", ferro.detail);
-        assert!(ferro.detail.contains("12"), "and name the limit it hit: {}", ferro.detail);
+        assert!(
+            ferro.detail.contains("refused"),
+            "should say it was refused: {}",
+            ferro.detail
+        );
+        assert!(
+            ferro.detail.contains("12"),
+            "and name the limit it hit: {}",
+            ferro.detail
+        );
     }
 }

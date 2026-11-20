@@ -168,10 +168,16 @@ impl core::fmt::Display for DiffuseError {
         match self {
             DiffuseError::NoSteps => write!(f, "a diffusion needs at least one step"),
             DiffuseError::TinyVocab { vocab } => {
-                write!(f, "a vocabulary of {vocab} is a constant; two tokens is the minimum")
+                write!(
+                    f,
+                    "a vocabulary of {vocab} is a constant; two tokens is the minimum"
+                )
             }
             DiffuseError::BadBeta { at, beta } => {
-                write!(f, "beta_{at} is {beta}, which is not a probability in [0, 1]")
+                write!(
+                    f,
+                    "beta_{at} is {beta}, which is not a probability in [0, 1]"
+                )
             }
             DiffuseError::Unreachable { x0, xt, t } => write!(
                 f,
@@ -179,7 +185,10 @@ impl core::fmt::Display for DiffuseError {
                  posterior to condition on"
             ),
             DiffuseError::BadToken { at, token, states } => {
-                write!(f, "token {token} at position {at} is not below the {states} states")
+                write!(
+                    f,
+                    "token {token} at position {at} is not below the {states} states"
+                )
             }
             DiffuseError::Width { got, want } => {
                 write!(f, "length {got} where {want} was required")
@@ -188,7 +197,10 @@ impl core::fmt::Display for DiffuseError {
                 write!(f, "row {row} sums to {sum} rather than one")
             }
             DiffuseError::TooLarge { cells, limit } => {
-                write!(f, "an exhaustive table of {cells} cells exceeds the {limit} ceiling")
+                write!(
+                    f,
+                    "an exhaustive table of {cells} cells exceeds the {limit} ceiling"
+                )
             }
             DiffuseError::PriorNotAbsorbed { alpha_bar_t } => write!(
                 f,
@@ -257,7 +269,12 @@ impl Forward {
             a *= 1.0 - b;
             abar.push(a);
         }
-        Ok(Forward { kernel, v, betas, abar })
+        Ok(Forward {
+            kernel,
+            v,
+            betas,
+            abar,
+        })
     }
 
     /// A constant-rate schedule: `beta_t = beta` at every step.
@@ -293,7 +310,11 @@ impl Forward {
         if t_steps == 0 {
             return Err(DiffuseError::NoSteps);
         }
-        let d = if t_steps == 1 { 0.0 } else { (b_last - b_first) / (t_steps as f64 - 1.0) };
+        let d = if t_steps == 1 {
+            0.0
+        } else {
+            (b_last - b_first) / (t_steps as f64 - 1.0)
+        };
         let betas = (0..t_steps).map(|i| b_first + d * i as f64).collect();
         Forward::new(kernel, v, betas)
     }
@@ -358,7 +379,11 @@ impl Forward {
     /// If `t` is zero or past `T`.
     #[must_use]
     pub fn beta(&self, t: usize) -> f64 {
-        assert!(t >= 1 && t <= self.betas.len(), "beta is indexed 1..={}", self.betas.len());
+        assert!(
+            t >= 1 && t <= self.betas.len(),
+            "beta is indexed 1..={}",
+            self.betas.len()
+        );
         self.betas[t - 1]
     }
 
@@ -370,7 +395,11 @@ impl Forward {
     /// If `t` is past `T`.
     #[must_use]
     pub fn alpha_bar(&self, t: usize) -> f64 {
-        assert!(t < self.abar.len(), "alpha_bar is indexed 0..={}", self.betas.len());
+        assert!(
+            t < self.abar.len(),
+            "alpha_bar is indexed 0..={}",
+            self.betas.len()
+        );
         self.abar[t]
     }
 
@@ -399,9 +428,7 @@ impl Forward {
         assert!(a < s && b < s, "states are 0..{s}");
         let beta = self.beta(t);
         match self.kernel {
-            Kernel::Uniform => {
-                (1.0 - beta) * f64::from(u8::from(a == b)) + beta / self.v as f64
-            }
+            Kernel::Uniform => (1.0 - beta) * f64::from(u8::from(a == b)) + beta / self.v as f64,
             Kernel::Absorbing => {
                 let m = s - 1;
                 if a == m {
@@ -586,7 +613,9 @@ impl Forward {
         if !(den > 0.0) {
             return Err(DiffuseError::Unreachable { x0, xt, t });
         }
-        Ok((0..self.states()).map(|y| self.q_bar(t, x0, y) / den).collect())
+        Ok((0..self.states())
+            .map(|y| self.q_bar(t, x0, y) / den)
+            .collect())
     }
 
     /// SEDD's per-transition weights at `x_t`: the forward rate-matrix row `Q(x_t, y)`.
@@ -709,7 +738,10 @@ impl SiteReverse {
         step: Vec<Vec<f64>>,
     ) -> Result<SiteReverse, DiffuseError> {
         if prior.len() != s {
-            return Err(DiffuseError::Width { got: prior.len(), want: s });
+            return Err(DiffuseError::Width {
+                got: prior.len(),
+                want: s,
+            });
         }
         let psum: f64 = prior.iter().sum();
         if (psum - 1.0).abs() > 1e-9 {
@@ -717,12 +749,18 @@ impl SiteReverse {
         }
         for (t, m) in step.iter().enumerate() {
             if m.len() != s * s {
-                return Err(DiffuseError::Width { got: m.len(), want: s * s });
+                return Err(DiffuseError::Width {
+                    got: m.len(),
+                    want: s * s,
+                });
             }
             for r in 0..s {
                 let rs: f64 = m[r * s..(r + 1) * s].iter().sum();
                 if (rs - 1.0).abs() > 1e-9 {
-                    return Err(DiffuseError::NotStochastic { row: t * s + r, sum: rs });
+                    return Err(DiffuseError::NotStochastic {
+                        row: t * s + r,
+                        sum: rs,
+                    });
                 }
             }
         }
@@ -757,7 +795,10 @@ impl SiteReverse {
     /// [`DiffuseError::NotStochastic`] if it is not a distribution.
     pub fn exact(fwd: &Forward, data: &[f64]) -> Result<SiteReverse, DiffuseError> {
         if data.len() != fwd.vocab() {
-            return Err(DiffuseError::Width { got: data.len(), want: fwd.vocab() });
+            return Err(DiffuseError::Width {
+                got: data.len(),
+                want: fwd.vocab(),
+            });
         }
         let dsum: f64 = data.iter().sum();
         if (dsum - 1.0).abs() > 1e-9 {
@@ -809,21 +850,31 @@ impl SiteReverse {
     ///
     /// If `fwd` is not an absorbing kernel.
     pub fn subs(fwd: &Forward, x0_pred: &[Vec<f64>]) -> Result<SiteReverse, DiffuseError> {
-        let m = fwd.mask().expect("SUBS is the masked parameterisation and needs a mask state");
+        let m = fwd
+            .mask()
+            .expect("SUBS is the masked parameterisation and needs a mask state");
         let t_steps = fwd.steps();
         if x0_pred.len() != t_steps {
-            return Err(DiffuseError::Width { got: x0_pred.len(), want: t_steps });
+            return Err(DiffuseError::Width {
+                got: x0_pred.len(),
+                want: t_steps,
+            });
         }
         let abar_t = fwd.alpha_bar(t_steps);
         if abar_t != 0.0 {
-            return Err(DiffuseError::PriorNotAbsorbed { alpha_bar_t: abar_t });
+            return Err(DiffuseError::PriorNotAbsorbed {
+                alpha_bar_t: abar_t,
+            });
         }
         let s = fwd.states();
         let mut step = Vec::with_capacity(t_steps);
         for t in 1..=t_steps {
             let pred = &x0_pred[t - 1];
             if pred.len() != fwd.vocab() {
-                return Err(DiffuseError::Width { got: pred.len(), want: fwd.vocab() });
+                return Err(DiffuseError::Width {
+                    got: pred.len(),
+                    want: fwd.vocab(),
+                });
             }
             let psum: f64 = pred.iter().sum();
             if (psum - 1.0).abs() > 1e-9 {
@@ -894,8 +945,16 @@ impl SiteReverse {
     /// If `x0` is not a state, or `fwd` and this chain disagree on the state count or step count.
     #[must_use]
     pub fn elbo(&self, fwd: &Forward, x0: usize) -> f64 {
-        assert_eq!(fwd.states(), self.s, "the bound needs one alphabet, not two");
-        assert_eq!(fwd.steps(), self.step.len(), "the bound needs one schedule, not two");
+        assert_eq!(
+            fwd.states(),
+            self.s,
+            "the bound needs one alphabet, not two"
+        );
+        assert_eq!(
+            fwd.steps(),
+            self.step.len(),
+            "the bound needs one schedule, not two"
+        );
         assert!(x0 < self.s, "states are 0..{}", self.s);
         let t_steps = self.step.len();
         let mut terms = Vec::new();
@@ -906,7 +965,9 @@ impl SiteReverse {
                 if w <= 0.0 {
                     continue;
                 }
-                let q = fwd.posterior(x0, xt, t).expect("weight is positive, so this is reachable");
+                let q = fwd
+                    .posterior(x0, xt, t)
+                    .expect("weight is positive, so this is reachable");
                 let p = &self.step[t - 1][xt * self.s..(xt + 1) * self.s];
                 terms.push(w * kl(&q, p));
             }
@@ -957,13 +1018,21 @@ pub fn masked_term(
     x0: &[u32],
     x0_pred: &[f64],
 ) -> Result<f64, DiffuseError> {
-    let m = fwd.mask().expect("the masked objective is the absorbing kernel's");
+    let m = fwd
+        .mask()
+        .expect("the masked objective is the absorbing kernel's");
     let v = fwd.vocab();
     if x_t.len() != x0.len() {
-        return Err(DiffuseError::Width { got: x_t.len(), want: x0.len() });
+        return Err(DiffuseError::Width {
+            got: x_t.len(),
+            want: x0.len(),
+        });
     }
     if x0_pred.len() != x0.len() * v {
-        return Err(DiffuseError::Width { got: x0_pred.len(), want: x0.len() * v });
+        return Err(DiffuseError::Width {
+            got: x0_pred.len(),
+            want: x0.len() * v,
+        });
     }
     let a_now = fwd.alpha_bar(t);
     if !(1.0 - a_now > 0.0) {
@@ -975,7 +1044,11 @@ pub fn masked_term(
     let mut acc = Vec::new();
     for (l, (&xt, &clean)) in x_t.iter().zip(x0).enumerate() {
         if clean as usize >= v {
-            return Err(DiffuseError::BadToken { at: l, token: clean, states: v });
+            return Err(DiffuseError::BadToken {
+                at: l,
+                token: clean,
+                states: v,
+            });
         }
         if xt as usize == m {
             acc.push(-x0_pred[l * v + clean as usize].ln());
@@ -1000,27 +1073,44 @@ pub fn masked_term(
 ///
 /// If `fwd` is not an absorbing kernel.
 pub fn masked_nelbo<D: Denoiser>(fwd: &Forward, d: &D, x0: &[u32]) -> Result<f64, DiffuseError> {
-    let m = fwd.mask().expect("the masked objective is the absorbing kernel's");
+    let m = fwd
+        .mask()
+        .expect("the masked objective is the absorbing kernel's");
     let l = x0.len();
     if l != d.positions() {
-        return Err(DiffuseError::Width { got: l, want: d.positions() });
+        return Err(DiffuseError::Width {
+            got: l,
+            want: d.positions(),
+        });
     }
     let v = fwd.vocab();
     if v != d.vocab() {
-        return Err(DiffuseError::Width { got: d.vocab(), want: v });
+        return Err(DiffuseError::Width {
+            got: d.vocab(),
+            want: v,
+        });
     }
     let t_steps = fwd.steps();
     let abar_t = fwd.alpha_bar(t_steps);
     if abar_t != 0.0 {
-        return Err(DiffuseError::PriorNotAbsorbed { alpha_bar_t: abar_t });
+        return Err(DiffuseError::PriorNotAbsorbed {
+            alpha_bar_t: abar_t,
+        });
     }
     if l >= 24 {
         let cells = 1usize.checked_shl(l as u32).unwrap_or(usize::MAX);
-        return Err(DiffuseError::TooLarge { cells, limit: 1 << 24 });
+        return Err(DiffuseError::TooLarge {
+            cells,
+            limit: 1 << 24,
+        });
     }
     for (i, &tok) in x0.iter().enumerate() {
         if tok as usize >= v {
-            return Err(DiffuseError::BadToken { at: i, token: tok, states: v });
+            return Err(DiffuseError::BadToken {
+                at: i,
+                token: tok,
+                states: v,
+            });
         }
     }
     let mut pred = vec![0.0; l * v];
@@ -1101,7 +1191,10 @@ pub fn denoising_score_entropy(
 ) -> Result<f64, DiffuseError> {
     let s = fwd.states();
     if scores.len() != s {
-        return Err(DiffuseError::Width { got: scores.len(), want: s });
+        return Err(DiffuseError::Width {
+            got: scores.len(),
+            want: s,
+        });
     }
     let ratios = fwd.conditional_ratios(x0, xt, t)?;
     let w = fwd.sedd_weights(xt);
@@ -1135,7 +1228,10 @@ pub fn reverse_marginal(
     pred: &[f64],
 ) -> Result<Vec<f64>, DiffuseError> {
     if pred.len() != fwd.vocab() {
-        return Err(DiffuseError::Width { got: pred.len(), want: fwd.vocab() });
+        return Err(DiffuseError::Width {
+            got: pred.len(),
+            want: fwd.vocab(),
+        });
     }
     let s = fwd.states();
     let mut out = vec![0.0; s];
@@ -1230,9 +1326,17 @@ impl TableDenoiser {
         }
         let cells = ctx.saturating_mul(l).saturating_mul(v);
         if cells > MAX_TABLE {
-            return Err(DiffuseError::TooLarge { cells, limit: MAX_TABLE });
+            return Err(DiffuseError::TooLarge {
+                cells,
+                limit: MAX_TABLE,
+            });
         }
-        Ok(TableDenoiser { l, v, s, logit: vec![0.0; cells] })
+        Ok(TableDenoiser {
+            l,
+            v,
+            s,
+            logit: vec![0.0; cells],
+        })
     }
 
     /// The row index of a noised sequence, base [`Forward::states`], least significant position
@@ -1317,17 +1421,26 @@ impl TableDenoiser {
     ) -> Result<(), DiffuseError> {
         assert_eq!(fwd.states(), self.s, "the fit needs one alphabet, not two");
         assert_eq!(fwd.vocab(), self.v, "the fit needs one vocabulary, not two");
-        let m = fwd.mask().expect("the masked objective is the absorbing kernel's");
+        let m = fwd
+            .mask()
+            .expect("the masked objective is the absorbing kernel's");
         if data.is_empty() {
             return Err(DiffuseError::NoSteps);
         }
         for row in data {
             if row.len() != self.l {
-                return Err(DiffuseError::Width { got: row.len(), want: self.l });
+                return Err(DiffuseError::Width {
+                    got: row.len(),
+                    want: self.l,
+                });
             }
             for (i, &tok) in row.iter().enumerate() {
                 if tok as usize >= self.v {
-                    return Err(DiffuseError::BadToken { at: i, token: tok, states: self.v });
+                    return Err(DiffuseError::BadToken {
+                        at: i,
+                        token: tok,
+                        states: self.v,
+                    });
                 }
             }
         }
@@ -1405,10 +1518,18 @@ mod tests {
     fn forward_marginal_is_exactly_stationary_when_absorbing_and_alpha_bar_close_when_uniform() {
         let v = 5;
         let f = Forward::absorbing_linear(v, 64).unwrap();
-        assert_eq!(f.alpha_bar(64), 0.0, "the standard schedule's last factor is exactly zero");
+        assert_eq!(
+            f.alpha_bar(64),
+            0.0,
+            "the standard schedule's last factor is exactly zero"
+        );
         let stat = f.stationary();
         for x0 in 0..v {
-            assert_eq!(f.marginal(x0, 64), stat, "x_0 = {x0} is not exactly absorbed");
+            assert_eq!(
+                f.marginal(x0, 64),
+                stat,
+                "x_0 = {x0} is not exactly absorbed"
+            );
         }
         // The mask row is stationary at EVERY time, not only the last.
         for t in 0..=64 {
@@ -1417,7 +1538,10 @@ mod tests {
 
         let g = Forward::constant(Kernel::Uniform, v, 200, 0.05).unwrap();
         let abar = g.alpha_bar(200);
-        assert!(abar > 0.0, "this arm only means something while the chain has NOT converged");
+        assert!(
+            abar > 0.0,
+            "this arm only means something while the chain has NOT converged"
+        );
         let ustat = g.stationary();
         let mut worst = 0.0f64;
         for x0 in 0..v {
@@ -1429,12 +1553,21 @@ mod tests {
                 // The deviation is a DIFFERENCE of two numbers near 1/V, so it carries the ulp of
                 // 1/V and not its own -- eight of those, not eight of 7e-6.
                 let tol = 8.0 * f64::EPSILON / v as f64;
-                assert!((d - exact).abs() <= tol, "x_0 {x0} j {j}: {d:e} vs {exact:e}");
+                assert!(
+                    (d - exact).abs() <= tol,
+                    "x_0 {x0} j {j}: {d:e} vs {exact:e}"
+                );
                 worst = worst.max(d);
             }
         }
-        assert!(worst <= abar, "deviation {worst:e} must be within alpha_bar {abar:e}");
-        assert!(worst > 0.0, "a uniform chain that converged EXACTLY would make this arm vacuous");
+        assert!(
+            worst <= abar,
+            "deviation {worst:e} must be within alpha_bar {abar:e}"
+        );
+        assert!(
+            worst > 0.0,
+            "a uniform chain that converged EXACTLY would make this arm vacuous"
+        );
     }
 
     /// ORACLE: an existing module with its own closed-form check.
@@ -1517,7 +1650,9 @@ mod tests {
                 let q = f.step_matrix(t);
                 for x0 in 0..s {
                     for xt in 0..s {
-                        let den: f64 = (0..s).map(|j| q[j * s + xt] * prod[t - 1][x0 * s + j]).sum();
+                        let den: f64 = (0..s)
+                            .map(|j| q[j * s + xt] * prod[t - 1][x0 * s + j])
+                            .sum();
                         match f.posterior(x0, xt, t) {
                             Err(DiffuseError::Unreachable { .. }) => {
                                 assert!(den <= 0.0, "{kernel:?}: refused a reachable pair");
@@ -1576,7 +1711,11 @@ mod tests {
                 let q = f.posterior(x0, m, t).unwrap();
                 let (a_prev, a_now) = (f.alpha_bar(t - 1), f.alpha_bar(t));
                 let stay = (1.0 - a_prev) / (1.0 - a_now);
-                assert!((q[m] - stay).abs() < 1e-15, "t {t}: stay-masked {} vs {stay}", q[m]);
+                assert!(
+                    (q[m] - stay).abs() < 1e-15,
+                    "t {t}: stay-masked {} vs {stay}",
+                    q[m]
+                );
                 assert!(
                     (q[x0] - (a_prev - a_now) / (1.0 - a_now)).abs() < 1e-15,
                     "t {t}: unmask-to-x0 probability"
@@ -1645,7 +1784,10 @@ mod tests {
                 let rev = SiteReverse::new(s, prior, step).unwrap();
                 for x0 in 0..v {
                     let gap = rev.log_likelihood(x0) - rev.elbo(&f, x0);
-                    assert!(gap >= -1e-12, "{kernel:?} x_0 {x0}: ELBO is ABOVE the likelihood by {gap:e}");
+                    assert!(
+                        gap >= -1e-12,
+                        "{kernel:?} x_0 {x0}: ELBO is ABOVE the likelihood by {gap:e}"
+                    );
                     worst_gap = worst_gap.min(gap);
                 }
             }
@@ -1749,7 +1891,11 @@ mod tests {
             }
         }
         let p = vec![0.5, 0.3, 0.2];
-        let d1 = Fixed { l: 1, v, p: p.clone() };
+        let d1 = Fixed {
+            l: 1,
+            v,
+            p: p.clone(),
+        };
         let per_site: Vec<f64> = (0..v)
             .map(|x0| {
                 let pred: Vec<Vec<f64>> = (0..f.steps()).map(|_| p.clone()).collect();
@@ -1769,7 +1915,10 @@ mod tests {
             for b in 0..v {
                 let got = masked_nelbo(&f, &d2, &[a as u32, b as u32]).unwrap();
                 let want = per_site[a] + per_site[b];
-                assert!((got - want).abs() < 1e-12, "two positions ({a},{b}): {got} vs {want}");
+                assert!(
+                    (got - want).abs() < 1e-12,
+                    "two positions ({a},{b}): {got} vs {want}"
+                );
             }
         }
         // And a schedule that does not absorb is REFUSED rather than silently missing a prior term.
@@ -1778,7 +1927,11 @@ mod tests {
             masked_nelbo(&g, &d1, &[0]),
             Err(DiffuseError::PriorNotAbsorbed { .. })
         ));
-        assert_eq!(f.mask().unwrap() as u32, m, "the mask index is the last state");
+        assert_eq!(
+            f.mask().unwrap() as u32,
+            m,
+            "the mask index is the last state"
+        );
     }
 
     /// SEDD's score entropy is a Bregman divergence: EXACTLY zero at the true ratio, positive
@@ -1794,11 +1947,22 @@ mod tests {
     #[test]
     fn score_entropy_is_exactly_zero_at_the_true_ratio_and_quadratic_around_it() {
         for a in [1e-3f64, 0.1, 1.0, 7.5, 300.0] {
-            assert_eq!(score_entropy_term(1.0, a, a), 0.0, "the optimum must be EXACTLY zero");
-            assert_eq!(score_entropy_term(2.5, a, a), 0.0, "and stay exact under any weight");
+            assert_eq!(
+                score_entropy_term(1.0, a, a),
+                0.0,
+                "the optimum must be EXACTLY zero"
+            );
+            assert_eq!(
+                score_entropy_term(2.5, a, a),
+                0.0,
+                "and stay exact under any weight"
+            );
             for f in [0.5f64, 0.9, 1.1, 2.0] {
                 let val = score_entropy_term(1.0, a * f, a);
-                assert!(val > 0.0, "a {a} factor {f}: {val} must be strictly positive");
+                assert!(
+                    val > 0.0,
+                    "a {a} factor {f}: {val} must be strictly positive"
+                );
             }
             let eps = 1e-5 * a;
             let got = score_entropy_term(1.0, a + eps, a);
@@ -1826,7 +1990,9 @@ mod tests {
             for t in 1..=f.steps() {
                 for x0 in 0..v {
                     for xt in 0..s {
-                        let Ok(ratios) = f.conditional_ratios(x0, xt, t) else { continue };
+                        let Ok(ratios) = f.conditional_ratios(x0, xt, t) else {
+                            continue;
+                        };
                         let at_truth = denoising_score_entropy(&f, x0, xt, t, &ratios).unwrap();
                         assert_eq!(at_truth, 0.0, "{kernel:?} t {t}: the optimum must be EXACT");
                         for scale in [0.5f64, 1.7] {
@@ -1844,7 +2010,10 @@ mod tests {
             // Structure: under the absorbing kernel an unmasked position has NOTHING to learn.
             if kernel == Kernel::Absorbing {
                 let m = f.mask().unwrap();
-                assert!(f.sedd_weights(0).iter().all(|&w| w == 0.0), "carry-over is weightless");
+                assert!(
+                    f.sedd_weights(0).iter().all(|&w| w == 0.0),
+                    "carry-over is weightless"
+                );
                 assert_eq!(f.sedd_weights(m)[m], 0.0, "no self-transition");
                 assert_eq!(f.sedd_weights(m).iter().sum::<f64>(), v as f64);
             }
@@ -1875,7 +2044,8 @@ mod tests {
     /// ONE. So this asserts a number, not an inequality. Measured over eight sampling seeds the
     /// z-scores were −1.95, −0.58, 0.14, −0.58, −0.98, 1.51, −0.42, −0.66.
     #[test]
-    fn a_trained_masked_model_reproduces_the_synthetic_histogram_and_its_predicted_sampling_error() {
+    fn a_trained_masked_model_reproduces_the_synthetic_histogram_and_its_predicted_sampling_error()
+    {
         let (v, l, t_steps) = (2usize, 2usize, 64usize);
         let f = Forward::absorbing_linear(v, t_steps).unwrap();
         let data = vec![vec![0u32, 0], vec![1u32, 1]];
@@ -1900,7 +2070,10 @@ mod tests {
             d.predict_x0(&[m, bit], t_steps, &mut pred);
             leak = leak.max(pred[(1 - bit) as usize]);
         }
-        assert!(leak < 1e-3, "one bit observed pins the other; leak was {leak:e}");
+        assert!(
+            leak < 1e-3,
+            "one bit observed pins the other; leak was {leak:e}"
+        );
 
         // The histogram.
         let n = 20_000usize;
@@ -2056,7 +2229,10 @@ mod tests {
     /// Malformed input is refused with the variant that names what went wrong.
     #[test]
     fn bad_schedules_and_bad_shapes_are_refused_with_a_named_variant() {
-        assert!(matches!(Forward::new(Kernel::Uniform, 4, vec![]), Err(DiffuseError::NoSteps)));
+        assert!(matches!(
+            Forward::new(Kernel::Uniform, 4, vec![]),
+            Err(DiffuseError::NoSteps)
+        ));
         assert!(matches!(
             Forward::new(Kernel::Uniform, 1, vec![0.5]),
             Err(DiffuseError::TinyVocab { vocab: 1 })
@@ -2097,7 +2273,11 @@ mod tests {
             DiffuseError::TinyVocab { vocab: 1 },
             DiffuseError::BadBeta { at: 1, beta: 2.0 },
             DiffuseError::Unreachable { x0: 0, xt: 1, t: 2 },
-            DiffuseError::BadToken { at: 0, token: 7, states: 3 },
+            DiffuseError::BadToken {
+                at: 0,
+                token: 7,
+                states: 3,
+            },
             DiffuseError::Width { got: 1, want: 2 },
             DiffuseError::NotStochastic { row: 0, sum: 0.9 },
             DiffuseError::TooLarge { cells: 9, limit: 4 },

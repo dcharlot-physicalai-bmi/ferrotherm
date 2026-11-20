@@ -91,7 +91,11 @@ impl Image {
         if width == 0 || height == 0 || pixels.len() != width * height {
             return None;
         }
-        Some(Image { width, height, pixels })
+        Some(Image {
+            width,
+            height,
+            pixels,
+        })
     }
 
     /// Pixels that differ between two images of the same shape, or `None` if the shapes differ.
@@ -112,7 +116,10 @@ impl Image {
     /// The image as spins: `+1` for a set pixel.
     #[must_use]
     pub fn spins(&self) -> Vec<i8> {
-        self.pixels.iter().map(|&b| if b { 1i8 } else { -1 }).collect()
+        self.pixels
+            .iter()
+            .map(|&b| if b { 1i8 } else { -1 })
+            .collect()
     }
 
     /// An image from spins, or `None` if the count disagrees with the shape.
@@ -186,7 +193,10 @@ impl core::fmt::Display for Refused {
         match self {
             Refused::Shape => write!(f, "the pixel count disagrees with the width and height"),
             Refused::FlipProbability(p) => {
-                write!(f, "a flip probability of {p} is not strictly inside (0, 0.5)")
+                write!(
+                    f,
+                    "a flip probability of {p} is not strictly inside (0, 0.5)"
+                )
             }
             Refused::Smoothness(j) => write!(f, "a smoothness of {j} is not positive and finite"),
             Refused::TooFewChains(n) => write!(
@@ -272,7 +282,11 @@ impl Restoration {
         let (jw, uw) = split(self.cost.writes, prices.e_write);
         Bill {
             priced: js + jr + jw,
-            unpriced: Ledger { samples: us, reads: ur, writes: uw },
+            unpriced: Ledger {
+                samples: us,
+                reads: ur,
+                writes: uw,
+            },
             evidence: self.evidence(prices),
         }
     }
@@ -328,7 +342,11 @@ impl Bill {
 ///
 /// [`Refused::Shape`], [`Refused::FlipProbability`] or [`Refused::Smoothness`] — each a statement
 /// about the arguments, checked before anything is built.
-pub fn posterior(observed: &Image, flip_probability: f64, smoothness: f64) -> Result<Graph, Refused> {
+pub fn posterior(
+    observed: &Image,
+    flip_probability: f64,
+    smoothness: f64,
+) -> Result<Graph, Refused> {
     let (w, h) = (observed.width, observed.height);
     if w == 0 || h == 0 || observed.pixels.len() != w * h {
         return Err(Refused::Shape);
@@ -388,7 +406,13 @@ fn mode_from_counts(
     let state: Vec<i8> = posterior
         .iter()
         .zip(&observed.pixels)
-        .map(|(&m, &t)| if m > 0.5 || (m == 0.5 && t) { 1i8 } else { -1i8 })
+        .map(|(&m, &t)| {
+            if m > 0.5 || (m == 0.5 && t) {
+                1i8
+            } else {
+                -1i8
+            }
+        })
         .collect();
     let image = Image::from_spins(observed.width, observed.height, &state)
         .expect("the model has one node per pixel");
@@ -458,7 +482,11 @@ pub fn restore(
     // Loading the model is a write per node, charged here because it is charged everywhere else:
     // on this hardware class a write is the most expensive line in the ledger, and an application
     // layer that quietly dropped it would report the cheap half of its own bill.
-    let mut cost = Ledger { samples: 0, reads: 0, writes: n as u64 };
+    let mut cost = Ledger {
+        samples: 0,
+        reads: 0,
+        writes: n as u64,
+    };
 
     match estimator {
         Estimator::Map => {
@@ -502,7 +530,11 @@ pub fn restore(
                 receipt,
             })
         }
-        Estimator::Fabric { chains, burn_in, sweeps } => {
+        Estimator::Fabric {
+            chains,
+            burn_in,
+            sweeps,
+        } => {
             let mut sums = vec![0.0f64; n];
             let mut traces: Vec<Vec<f64>> = Vec::with_capacity(chains);
             for c in 0..chains {
@@ -540,15 +572,24 @@ pub fn restore(
                 }
                 traces.push(trace);
             }
-            let method = format!("apps::restore/fabric({chains} netlists, {burn_in}+{sweeps} sweeps)");
+            let method =
+                format!("apps::restore/fabric({chains} netlists, {burn_in}+{sweeps} sweeps)");
             mode_from_counts(&sums, &traces, observed, &g, cost, &method, seed)
         }
-        Estimator::Mpm { chains, burn_in, sweeps } => {
+        Estimator::Mpm {
+            chains,
+            burn_in,
+            sweeps,
+        } => {
             let mut sums = vec![0.0f64; n];
             let mut traces: Vec<Vec<f64>> = Vec::with_capacity(chains);
             for c in 0..chains {
                 // beta = 1: the energy already IS the negative log posterior.
-                let mut smp = crate::gibbs::Sampler::new(&g, 1.0, seed ^ (c as u64).wrapping_mul(0x9E37_79B9));
+                let mut smp = crate::gibbs::Sampler::new(
+                    &g,
+                    1.0,
+                    seed ^ (c as u64).wrapping_mul(0x9E37_79B9),
+                );
                 // Dispersed starts, so the between-chain diagnostic has something to see. Half the
                 // chains start at the observation and half at its negation: if the posterior has
                 // two basins, chains started inside one of them will disagree and R-hat will say so.
@@ -659,9 +700,19 @@ pub fn marginals(model: &crate::gbp::Info, route: Route) -> Result<Marginals, St
     match route {
         Route::Exact => {
             let (mean, variance) = model.exact()?;
-            Ok(Marginals { mean, variance, route, iterations: 0, cost: Ledger::default() })
+            Ok(Marginals {
+                mean,
+                variance,
+                route,
+                iterations: 0,
+                cost: Ledger::default(),
+            })
         }
-        Route::MessagePassing { max_iters, tol, damping } => {
+        Route::MessagePassing {
+            max_iters,
+            tol,
+            damping,
+        } => {
             let b = model
                 .belief_propagation(max_iters, tol, damping)
                 .map_err(|e| e.to_string())?;
@@ -679,7 +730,11 @@ pub fn marginals(model: &crate::gbp::Info, route: Route) -> Result<Marginals, St
                 cost,
             })
         }
-        Route::Sampling { stride_h, burn, samples } => {
+        Route::Sampling {
+            stride_h,
+            burn,
+            samples,
+        } => {
             let spd = model.to_spd().map_err(|e| e.to_string())?;
             let r = crate::tla::solve_spd_exact_ou(&spd, 1.0, stride_h, burn, samples, 0xC0FF_EE01);
             let variance = (0..n).map(|i| r.a_inv[i * n + i]).collect();
@@ -688,7 +743,13 @@ pub fn marginals(model: &crate::gbp::Info, route: Route) -> Result<Marginals, St
                 reads: (samples as u64) * (n as u64),
                 writes: n as u64,
             };
-            Ok(Marginals { mean: r.x, variance, route, iterations: samples, cost })
+            Ok(Marginals {
+                mean: r.x,
+                variance,
+                route,
+                iterations: samples,
+                cost,
+            })
         }
     }
 }
@@ -713,7 +774,13 @@ pub fn exact_mpm(
     let state: Vec<i8> = m
         .iter()
         .zip(&observed.pixels)
-        .map(|(&p, &t)| if p > 0.5 || (p == 0.5 && t) { 1i8 } else { -1i8 })
+        .map(|(&p, &t)| {
+            if p > 0.5 || (p == 0.5 && t) {
+                1i8
+            } else {
+                -1i8
+            }
+        })
         .collect();
     let image = Image::from_spins(observed.width, observed.height, &state)
         .ok_or("the model has one node per pixel")?;
@@ -807,15 +874,24 @@ mod tests {
         let speckled = Image::new(5, 5, (0..25).map(|i| i % 7 == 0).collect()).expect("5x5");
         let (p_clean, j_weak) = (1e-6_f64, 1.0_f64);
         let half_lambda = ((1.0 - p_clean) / p_clean).ln() / 2.0;
-        assert!(half_lambda > 4.0 * j_weak, "{half_lambda} must outweigh a full neighbourhood");
+        assert!(
+            half_lambda > 4.0 * j_weak,
+            "{half_lambda} must outweigh a full neighbourhood"
+        );
         let clean = restore(&speckled, p_clean, j_weak, Estimator::Map, 1).expect("well posed");
-        assert_eq!(clean.image, speckled, "a channel that never lies must be believed exactly");
+        assert_eq!(
+            clean.image, speckled,
+            "a channel that never lies must be believed exactly"
+        );
         // The same channel under a prior strong enough to outvote it does NOT give the observation
         // back, which is what says the assertion above is about the inequality and not about `p`.
         let j_strong = 3.0;
         assert!(half_lambda < 4.0 * j_strong);
         let eaten = restore(&speckled, p_clean, j_strong, Estimator::Map, 1).expect("well posed");
-        assert_ne!(eaten.image, speckled, "a prior that outweighs the channel must overrule it");
+        assert_ne!(
+            eaten.image, speckled,
+            "a prior that outweighs the channel must overrule it"
+        );
         // And a channel that barely says anything must be overruled by the prior: one flat image.
         let vague = restore(&speckled, 0.499_999, 2.0, Estimator::Map, 1).expect("well posed");
         let first = vague.image.pixels[0];
@@ -845,7 +921,11 @@ mod tests {
             let (truth, noisy) = draw_and_corrupt(w, h, j, p, &mut rng);
             noisy_wrong += truth.differences(&noisy).expect("same shape");
             let map = restore(&noisy, p, j, Estimator::Map, 1).expect("well posed");
-            assert_eq!(map.gap(), Some(0.0), "the MAP arm must be exact on a submodular model");
+            assert_eq!(
+                map.gap(),
+                Some(0.0),
+                "the MAP arm must be exact on a submodular model"
+            );
             map_wrong += truth.differences(&map.image).expect("same shape");
             let (mpm, _) = exact_mpm(&noisy, p, j).expect("a 6-wide grid eliminates");
             mpm_wrong += truth.differences(&mpm).expect("same shape");
@@ -858,14 +938,22 @@ mod tests {
         );
         // Both estimators must actually be doing something: a restoration worse than the input is
         // not a restoration, and this is the assertion that would catch a model built wrong.
-        assert!(rate_map < rate_noisy * 0.9, "MAP {rate_map:.4} vs the noisy input {rate_noisy:.4}");
-        assert!(rate_mpm < rate_noisy * 0.9, "MPM {rate_mpm:.4} vs the noisy input {rate_noisy:.4}");
+        assert!(
+            rate_map < rate_noisy * 0.9,
+            "MAP {rate_map:.4} vs the noisy input {rate_noisy:.4}"
+        );
+        assert!(
+            rate_mpm < rate_noisy * 0.9,
+            "MPM {rate_mpm:.4} vs the noisy input {rate_noisy:.4}"
+        );
         // And the finding: the sampler's estimator wins the metric the task is scored by.
         assert!(
             rate_mpm < rate_map,
             "MPM {rate_mpm:.4} must beat MAP {rate_map:.4} on pixel error; noisy input {rate_noisy:.4}"
         );
-        eprintln!("pixel error over {trials} exact draws: noisy {rate_noisy:.4}, MAP {rate_map:.4}, MPM {rate_mpm:.4}");
+        eprintln!(
+            "pixel error over {trials} exact draws: noisy {rate_noisy:.4}, MAP {rate_map:.4}, MPM {rate_mpm:.4}"
+        );
     }
 
     /// The sampled MPM must converge to the exact MPM, marginal by marginal. Comparing the
@@ -884,7 +972,11 @@ mod tests {
                 &noisy,
                 p,
                 j,
-                Estimator::Mpm { chains: 4, burn_in: 200, sweeps },
+                Estimator::Mpm {
+                    chains: 4,
+                    burn_in: 200,
+                    sweeps,
+                },
                 0xA5A5,
             )
             .expect("well posed and converged");
@@ -899,7 +991,10 @@ mod tests {
         // Ten times the draws must buy roughly the sqrt(10) ~ 3.16x the accuracy. Asserting only
         // that the last one is small would pass for a chain that was never sampling the right
         // distribution but happened to be biased towards it.
-        assert!(worst[2] < worst[0] / 3.0, "worst marginal error by budget: {worst:?}");
+        assert!(
+            worst[2] < worst[0] / 3.0,
+            "worst marginal error by budget: {worst:?}"
+        );
         assert!(worst[2] < 0.02, "the longest run must be close: {worst:?}");
 
         // AND THE PICTURE — but not by asserting the two labellings are identical, which is an
@@ -909,8 +1004,18 @@ mod tests {
         //
         // The honest statement is self-calibrating: every pixel whose exact marginal is further
         // from a tie than this run's own worst marginal error must agree.
-        let r = restore(&noisy, p, j, Estimator::Mpm { chains: 4, burn_in: 500, sweeps: 20_000 }, 1)
-            .expect("converged");
+        let r = restore(
+            &noisy,
+            p,
+            j,
+            Estimator::Mpm {
+                chains: 4,
+                burn_in: 500,
+                sweeps: 20_000,
+            },
+            1,
+        )
+        .expect("converged");
         let tol = r
             .posterior
             .iter()
@@ -944,25 +1049,64 @@ mod tests {
         pixels[8] = false;
         pixels[20] = false;
         let observed = Image::new(6, 6, pixels).expect("6x6");
-        let r = restore(&observed, 0.2, 0.7, Estimator::Mpm { chains: 4, burn_in: 100, sweeps: 500 }, 3)
-            .expect("converged");
+        let r = restore(
+            &observed,
+            0.2,
+            0.7,
+            Estimator::Mpm {
+                chains: 4,
+                burn_in: 100,
+                sweeps: 500,
+            },
+            3,
+        )
+        .expect("converged");
 
         // Every operation is accounted: the model load, the sweeps, and every draw carried out.
         assert_eq!(r.cost.writes, 36, "loading the model is a write per pixel");
-        assert_eq!(r.cost.samples, 36 * 4 * (100 + 500), "burn-in is sampling too, and is charged");
-        assert_eq!(r.cost.reads, 36 * 4 * 500, "one read per pixel per recorded draw");
+        assert_eq!(
+            r.cost.samples,
+            36 * 4 * (100 + 500),
+            "burn-in is sampling too, and is charged"
+        );
+        assert_eq!(
+            r.cost.reads,
+            36 * 4 * 500,
+            "one read per pixel per recorded draw"
+        );
 
         // NO MACHINE IN THIS CRATE CAN PRICE THIS RUN, and the reason is the finding. Restoring an
         // image writes one field per pixel -- the observation IS the field -- so every frame is a
         // full reprogram, and `e_write` is unstated everywhere because the write on our own board
         // has not been metered. A bare `None` would hide which half is missing.
-        assert_eq!(r.joules(&KV260_AXI_METERED), None, "nobody has metered a write");
-        assert_eq!(r.joules(&KV260_MEASURED), None, "nor a read, on that older bitstream");
-        assert_eq!(r.joules(&Z1_SPICE), Some(r.cost.joules(&Z1_SPICE).expect("a projection states all three")));
+        assert_eq!(
+            r.joules(&KV260_AXI_METERED),
+            None,
+            "nobody has metered a write"
+        );
+        assert_eq!(
+            r.joules(&KV260_MEASURED),
+            None,
+            "nor a read, on that older bitstream"
+        );
+        assert_eq!(
+            r.joules(&Z1_SPICE),
+            Some(
+                r.cost
+                    .joules(&Z1_SPICE)
+                    .expect("a projection states all three")
+            )
+        );
 
         let bill = r.bill(&KV260_AXI_METERED);
-        assert!(!bill.complete(), "a bill with unpriced operations must say so");
-        assert_eq!(bill.unpriced.writes, 36, "the unpriced half is exactly the per-frame reprogram");
+        assert!(
+            !bill.complete(),
+            "a bill with unpriced operations must say so"
+        );
+        assert_eq!(
+            bill.unpriced.writes, 36,
+            "the unpriced half is exactly the per-frame reprogram"
+        );
         assert_eq!((bill.unpriced.samples, bill.unpriced.reads), (0, 0));
         assert!(bill.priced > 0.0, "and the metered half is still priced");
         assert_eq!(bill.evidence, Evidence::Metered);
@@ -981,7 +1125,10 @@ mod tests {
 
         // And the receipt re-derives the energy from the model rather than trusting the run.
         let g = posterior(&observed, 0.2, 0.7).expect("well posed");
-        let v = r.receipt.verify(&g).expect("the receipt must verify against its own model");
+        let v = r
+            .receipt
+            .verify(&g)
+            .expect("the receipt must verify against its own model");
         assert!((v.energy - r.energy).abs() < 1e-12);
     }
 
@@ -996,15 +1143,30 @@ mod tests {
     fn three_routes_to_one_gaussians_marginals_and_only_two_have_the_variance() {
         let model = crate::gbp::grid(5, 5, 1.0, -0.22);
         let exact = marginals(&model, Route::Exact).expect("positive definite");
-        assert_eq!(exact.cost, Ledger::default(), "the oracle runs on no device and is charged as none");
+        assert_eq!(
+            exact.cost,
+            Ledger::default(),
+            "the oracle runs on no device and is charged as none"
+        );
 
         let bp = marginals(
             &model,
-            Route::MessagePassing { max_iters: 20_000, tol: 1e-14, damping: 0.0 },
+            Route::MessagePassing {
+                max_iters: 20_000,
+                tol: 1e-14,
+                damping: 0.0,
+            },
         )
         .expect("this grid converges");
-        let sampled = marginals(&model, Route::Sampling { stride_h: 3.0, burn: 200, samples: 100_000 })
-            .expect("positive definite");
+        let sampled = marginals(
+            &model,
+            Route::Sampling {
+                stride_h: 3.0,
+                burn: 200,
+                samples: 100_000,
+            },
+        )
+        .expect("positive definite");
 
         // EVERY route has the mean. This is the half a deterministic method owns.
         for r in [&bp, &sampled] {
@@ -1027,7 +1189,10 @@ mod tests {
             "message passing must be overconfident on every node"
         );
         assert!(bp_err > 0.05, "and by a visible margin: {bp_err:e}");
-        assert!(s_err < bp_err / 2.0, "the sampler must be well under it: {s_err:.5} vs {bp_err:.5}");
+        assert!(
+            s_err < bp_err / 2.0,
+            "the sampler must be well under it: {s_err:.5} vs {bp_err:.5}"
+        );
 
         // AND THE BILL, in the operations each route actually performs -- counted EXACTLY, because
         // "more than zero" is what a mutant that billed the sampler per step instead of per node
@@ -1038,11 +1203,22 @@ mod tests {
             bp.iterations as u64 * (n + 2 * e),
             "a message-passing sweep touches every node and every directed message"
         );
-        assert_eq!(sampled.cost.samples, (200 + 100_000) * n, "burn-in is node updates too");
-        assert_eq!(sampled.cost.reads, 100_000 * n, "one read per node per recorded draw");
+        assert_eq!(
+            sampled.cost.samples,
+            (200 + 100_000) * n,
+            "burn-in is node updates too"
+        );
+        assert_eq!(
+            sampled.cost.reads,
+            100_000 * n,
+            "one read per node per recorded draw"
+        );
         assert_eq!((bp.cost.reads, bp.cost.writes), (n, n));
         let ratio = sampled.cost.samples as f64 / bp.cost.samples as f64;
-        assert!(ratio > 1.0, "the accurate variance costs more node updates, not fewer: {ratio:.1}x");
+        assert!(
+            ratio > 1.0,
+            "the accurate variance costs more node updates, not fewer: {ratio:.1}x"
+        );
         eprintln!(
             "5x5 grid, worst variance error: message passing {bp_err:.5} in {} sweeps, \
              sampling {s_err:.5} in {} draws ({ratio:.0}x the node updates)",
@@ -1051,8 +1227,18 @@ mod tests {
 
         // A model whose messages do not settle is refused by name, through this entry point too.
         let hot = crate::gbp::grid(6, 6, 1.0, -0.9);
-        let out = marginals(&hot, Route::MessagePassing { max_iters: 500, tol: 1e-12, damping: 0.0 });
-        assert!(out.is_err_and(|e| e.contains("did not settle")), "an unconverged run is not a belief");
+        let out = marginals(
+            &hot,
+            Route::MessagePassing {
+                max_iters: 500,
+                tol: 1e-12,
+                damping: 0.0,
+            },
+        );
+        assert!(
+            out.is_err_and(|e| e.contains("did not settle")),
+            "an unconverged run is not a belief"
+        );
     }
 
     /// **THE PATH, END TO END, WITH THE HARDWARE AT THE FAR END OF IT.** An image becomes a
@@ -1064,8 +1250,14 @@ mod tests {
     /// distributional: the Verilog's spins after `k` sweeps equal the emulator's, exactly.
     #[test]
     fn the_restored_image_comes_out_of_emitted_hardware() {
-        if std::process::Command::new("iverilog").arg("-V").output().is_err() {
-            eprintln!("SKIP: iverilog not installed on this machine; the emitted-hardware gate did not run, skipping");
+        if std::process::Command::new("iverilog")
+            .arg("-V")
+            .output()
+            .is_err()
+        {
+            eprintln!(
+                "SKIP: iverilog not installed on this machine; the emitted-hardware gate did not run, skipping"
+            );
             return;
         }
         // 5x5 keeps the emitted Verilog small enough to simulate in a unit test; the fabric this
@@ -1093,7 +1285,10 @@ mod tests {
         for _ in 0..=sweeps {
             one_more.core.sweep();
         }
-        assert_ne!(one_more.core.s, fab.core.s, "vacuous: the fabric has frozen by sweep {sweeps}");
+        assert_ne!(
+            one_more.core.s, fab.core.s,
+            "vacuous: the fabric has frozen by sweep {sweeps}"
+        );
 
         let core = fab.emit_verilog("wfab");
         let shell = fab.emit_axi_shell("wf_axi", "wfab", "clk");
@@ -1156,7 +1351,8 @@ module tb;
 endmodule
 "#
         );
-        let dir = std::env::temp_dir().join(format!("ferrotherm_restore_hw_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ferrotherm_restore_hw_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("fabric.v"), core).unwrap();
         std::fs::write(dir.join("shell.v"), shell).unwrap();
@@ -1166,10 +1362,21 @@ endmodule
             .args(["-g2012", "-o", "sim", "fabric.v", "shell.v", "tb.v"])
             .output()
             .unwrap();
-        assert!(out.status.success(), "iverilog: {}", String::from_utf8_lossy(&out.stderr));
-        let run = std::process::Command::new("vvp").current_dir(&dir).arg("sim").output().unwrap();
+        assert!(
+            out.status.success(),
+            "iverilog: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = std::process::Command::new("vvp")
+            .current_dir(&dir)
+            .arg("sim")
+            .output()
+            .unwrap();
         let stdout = String::from_utf8_lossy(&run.stdout);
-        assert!(stdout.contains("FERROTHERM_PASS"), "emitted-hardware gate:\n{stdout}");
+        assert!(
+            stdout.contains("FERROTHERM_PASS"),
+            "emitted-hardware gate:\n{stdout}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1181,13 +1388,30 @@ endmodule
         let speckle: Vec<bool> = (0..64).map(|i| i % 5 != 0).collect();
         let observed = Image::new(8, 8, speckle).expect("8x8");
         let (chains, burn_in, sweeps) = (4usize, 200usize, 2_000usize);
-        let r = restore(&observed, 0.2, 0.7, Estimator::Fabric { chains, burn_in, sweeps }, 0xB0A7)
-            .expect("a posterior that fits, and chains that mixed");
+        let r = restore(
+            &observed,
+            0.2,
+            0.7,
+            Estimator::Fabric {
+                chains,
+                burn_in,
+                sweeps,
+            },
+            0xB0A7,
+        )
+        .expect("a posterior that fits, and chains that mixed");
 
         // THE COUNTS, EXACTLY. A netlist per chain, because the generators are reset constants.
         let n = 64u64;
-        assert_eq!(r.cost.writes, n * chains as u64, "a chain is a netlist on this fabric");
-        assert_eq!(r.cost.samples, n * chains as u64 * (burn_in + sweeps) as u64);
+        assert_eq!(
+            r.cost.writes,
+            n * chains as u64,
+            "a chain is a netlist on this fabric"
+        );
+        assert_eq!(
+            r.cost.samples,
+            n * chains as u64 * (burn_in + sweeps) as u64
+        );
         assert_eq!(r.cost.reads, n * chains as u64 * sweeps as u64);
 
         // It restores: the speckle is smoothed, so the answer is closer to plain white than the
@@ -1195,22 +1419,45 @@ endmodule
         let white = Image::new(8, 8, vec![true; 64]).expect("8x8");
         let before = observed.differences(&white).expect("same shape");
         let after = r.image.differences(&white).expect("same shape");
-        assert!(after < before, "the fabric did not restore anything: {after} vs {before}");
+        assert!(
+            after < before,
+            "the fabric did not restore anything: {after} vs {before}"
+        );
 
         // AND IT RESTORES THE RIGHT POSTERIOR, which "it restored something" does not check: a
         // fabric quantised at the wrong temperature smooths an image too, just a different one.
         // Held against the exact marginals, and against the same estimator in floating point, so
         // what is measured is the QUANTISATION and nothing else.
-        let long = Estimator::Fabric { chains: 4, burn_in: 500, sweeps: 20_000 };
+        let long = Estimator::Fabric {
+            chains: 4,
+            burn_in: 500,
+            sweeps: 20_000,
+        };
         let fab = restore(&observed, 0.2, 0.7, long, 1).expect("converged");
-        let cpu = restore(&observed, 0.2, 0.7, Estimator::Mpm { chains: 4, burn_in: 500, sweeps: 20_000 }, 1)
-            .expect("converged");
+        let cpu = restore(
+            &observed,
+            0.2,
+            0.7,
+            Estimator::Mpm {
+                chains: 4,
+                burn_in: 500,
+                sweeps: 20_000,
+            },
+            1,
+        )
+        .expect("converged");
         let (_, exact) = exact_mpm(&observed, 0.2, 0.7).expect("an 8-wide grid eliminates");
         let worst = |v: &[f64]| {
-            v.iter().zip(&exact).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max)
+            v.iter()
+                .zip(&exact)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f64, f64::max)
         };
         let (e_fab, e_cpu) = (worst(&fab.posterior), worst(&cpu.posterior));
-        assert!(e_fab < 0.01, "the fabric is not sampling this posterior: worst marginal off by {e_fab}");
+        assert!(
+            e_fab < 0.01,
+            "the fabric is not sampling this posterior: worst marginal off by {e_fab}"
+        );
         // Q.8 weights and a 1,024-entry sigmoid ROM cost a small multiple of the sampling error --
         // not a different problem. Stated as a band so it catches drift in either direction.
         assert!(
@@ -1230,7 +1477,11 @@ endmodule
                 );
             }
         }
-        assert!(decided * 10 >= 9 * exact.len(), "only {decided} of {} pixels decided", exact.len());
+        assert!(
+            decided * 10 >= 9 * exact.len(),
+            "only {decided} of {} pixels decided",
+            exact.len()
+        );
         eprintln!(
             "emitted p-bit fabric vs the exact posterior: worst marginal off by {e_fab:.4} \
              (floating point {e_cpu:.4}), {decided}/{} pixels decided and none disagree",
@@ -1254,35 +1505,67 @@ endmodule
     #[test]
     fn an_ill_posed_task_is_refused_by_name() {
         let ok = Image::new(3, 3, vec![true; 9]).expect("3x3");
-        assert!(Image::new(3, 3, vec![true; 8]).is_none(), "a shape that does not match its pixels");
+        assert!(
+            Image::new(3, 3, vec![true; 8]).is_none(),
+            "a shape that does not match its pixels"
+        );
         // p = 0.5: the observation says nothing. p = 0: it says everything, and the field is
         // infinite. Both are refused rather than clamped into a model that is not the caller's.
         for p in [0.0, 0.5, 0.75, f64::NAN] {
-            assert!(matches!(
-                restore(&ok, p, 1.0, Estimator::Map, 1),
-                Err(Refused::FlipProbability(_))
-            ), "flip probability {p}");
+            assert!(
+                matches!(
+                    restore(&ok, p, 1.0, Estimator::Map, 1),
+                    Err(Refused::FlipProbability(_))
+                ),
+                "flip probability {p}"
+            );
         }
         // Negative smoothness is the one that would silently break the ORACLE: it makes the energy
         // supermodular, and the MAP arm's max-flow is exact only on submodular energies.
         for j in [0.0, -1.0, f64::INFINITY, f64::NAN] {
-            assert!(matches!(
-                restore(&ok, 0.1, j, Estimator::Map, 1),
-                Err(Refused::Smoothness(_))
-            ), "smoothness {j}");
+            assert!(
+                matches!(
+                    restore(&ok, 0.1, j, Estimator::Map, 1),
+                    Err(Refused::Smoothness(_))
+                ),
+                "smoothness {j}"
+            );
         }
         assert!(matches!(
-            restore(&ok, 0.1, 1.0, Estimator::Mpm { chains: 1, burn_in: 10, sweeps: 10 }, 1),
+            restore(
+                &ok,
+                0.1,
+                1.0,
+                Estimator::Mpm {
+                    chains: 1,
+                    burn_in: 10,
+                    sweeps: 10
+                },
+                1
+            ),
             Err(Refused::TooFewChains(1))
         ));
         // A run too short to have mixed is refused, and the message is the diagnostic's own.
         let stripes: Vec<bool> = (0..64).map(|i| (i / 8) % 2 == 0).collect();
         let hard = Image::new(8, 8, stripes).expect("8x8");
-        let short = restore(&hard, 0.02, 3.0, Estimator::Mpm { chains: 4, burn_in: 0, sweeps: 6 }, 9);
+        let short = restore(
+            &hard,
+            0.02,
+            3.0,
+            Estimator::Mpm {
+                chains: 4,
+                burn_in: 0,
+                sweeps: 6,
+            },
+            9,
+        );
         assert!(
             matches!(short, Err(Refused::NotConverged(_))),
             "a six-sweep run on a frozen model must not be graded as converged: {}",
-            short.map_or_else(|e| e.to_string(), |r| format!("accepted, energy {}", r.energy))
+            short.map_or_else(
+                |e| e.to_string(),
+                |r| format!("accepted, energy {}", r.energy)
+            )
         );
     }
 }

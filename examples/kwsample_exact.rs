@@ -53,11 +53,16 @@ fn main() {
     let beta = 1.0;
     // Draws per size: each Kac–Ward draw is 2N dense determinants of order about 2E.
     println!("exact draws from each sampler, beta = {beta}, +-J glass; energy per spin");
-    println!("  side  spins  draws   Kac-Ward sampler     elimination sampler   Kac-Ward <E> (no sampling)   z(KW - elim)   secs/draw KW   worst |ln P - (-bE - ln Z)|");
+    println!(
+        "  side  spins  draws   Kac-Ward sampler     elimination sampler   Kac-Ward <E> (no sampling)   z(KW - elim)   secs/draw KW   worst |ln P - (-bE - ln Z)|"
+    );
     for &(side, draws) in &[(6usize, 1000usize), (8, 600), (10, 1500), (14, 100)] {
         let g = glass(side, 3);
         let n = g.n as f64;
-        let exact_e = pfaffian::solve(&g, beta).expect("planar").energy_density().expect("computed");
+        let exact_e = pfaffian::solve(&g, beta)
+            .expect("planar")
+            .energy_density()
+            .expect("computed");
         let mut rng = Pcg::new(7, 1);
         let t0 = std::time::Instant::now();
         let ln_z = pfaffian::log_partition(&g, beta).expect("planar");
@@ -70,9 +75,13 @@ fn main() {
             })
             .collect();
         let per = t0.elapsed().as_secs_f64() / draws as f64;
-        let elim = Elimination::default().draws(&g, beta).expect("small treewidth");
+        let elim = Elimination::default()
+            .draws(&g, beta)
+            .expect("small treewidth");
         let mut rng2 = Pcg::new(8, 1);
-        let el: Vec<f64> = (0..draws).map(|_| g.energy(&elim.draw(&mut rng2)) / n).collect();
+        let el: Vec<f64> = (0..draws)
+            .map(|_| g.energy(&elim.draw(&mut rng2)) / n)
+            .collect();
         let (mk, sk) = mean_se(&kw);
         let (me, se) = mean_se(&el);
         let z = (mk - me) / (sk * sk + se * se).sqrt();

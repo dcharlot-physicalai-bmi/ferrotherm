@@ -337,7 +337,17 @@ impl Ebm {
             let c = if bipartite { colour[i] as usize } else { 0 };
             classes[c].push(i as u32);
         }
-        Ebm { n, edges, j: vec![0.0; ne], h: vec![0.0; n], offset, nbr, eidx, classes, bipartite }
+        Ebm {
+            n,
+            edges,
+            j: vec![0.0; ne],
+            h: vec![0.0; n],
+            offset,
+            nbr,
+            eidx,
+            classes,
+            bipartite,
+        }
     }
 
     #[must_use]
@@ -458,7 +468,14 @@ impl Dtm {
     /// # Panics
     ///
     /// If `times.len()` is not `t_steps + 1`.
-    pub fn new(t_steps: usize, n: usize, nv: usize, edges: Vec<(u16, u16)>, gamma: f64, times: Vec<f64>) -> Dtm {
+    pub fn new(
+        t_steps: usize,
+        n: usize,
+        nv: usize,
+        edges: Vec<(u16, u16)>,
+        gamma: f64,
+        times: Vec<f64>,
+    ) -> Dtm {
         assert_eq!(times.len(), t_steps + 1);
         Dtm {
             steps: (0..t_steps).map(|_| Ebm::new(n, edges.clone())).collect(),
@@ -520,7 +537,9 @@ impl Dtm {
                 pos_s[i] += s[i] as f64;
             }
             // negative phase: everything free under the same clamp field
-            let mut sneg: Vec<i8> = (0..n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+            let mut sneg: Vec<i8> = (0..n)
+                .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+                .collect();
             ebm.gibbs(&mut sneg, &all, &extra, k_sweeps, rng);
             for (k, &(a, b)) in ebm.edges.iter().enumerate() {
                 neg_ss[k] += (sneg[a as usize] * sneg[b as usize]) as f64;
@@ -554,10 +573,14 @@ impl Dtm {
         let n = self.steps[0].n;
         let nv = self.nv;
         let all: Vec<usize> = (0..n).collect();
-        let mut x: Vec<i8> = (0..nv).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+        let mut x: Vec<i8> = (0..nv)
+            .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+            .collect();
         for t in (0..self.steps.len()).rev() {
             let extra = self.clamp_field(t, &x);
-            let mut s: Vec<i8> = (0..n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+            let mut s: Vec<i8> = (0..n)
+                .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+                .collect();
             self.steps[t].gibbs(&mut s, &all, &extra, k_mix, rng);
             x.copy_from_slice(&s[..nv]);
         }
@@ -649,7 +672,9 @@ impl Dtm {
              above the {MAX_NLL_TRAJECTORIES} it will attempt; use exact_log_cond on sampled pairs"
         );
         let to_x = |m: usize| -> Vec<i8> {
-            (0..nv).map(|b| if m >> b & 1 == 1 { 1 } else { -1 }).collect()
+            (0..nv)
+                .map(|b| if m >> b & 1 == 1 { 1 } else { -1 })
+                .collect()
         };
         let step_q = |xa: &[i8], xb: &[i8], dt: f64| -> f64 {
             let keep = keep_prob(self.gamma, dt, 2);
@@ -666,7 +691,13 @@ impl Dtm {
             let x0 = to_x(traj[0]);
             let mut q = data
                 .iter()
-                .map(|d| if d[..] == x0[..] { 1.0 / data.len() as f64 } else { 0.0 })
+                .map(|d| {
+                    if d[..] == x0[..] {
+                        1.0 / data.len() as f64
+                    } else {
+                        0.0
+                    }
+                })
                 .sum::<f64>();
             if q > 0.0 {
                 for t in 0..t_steps {
@@ -729,11 +760,7 @@ pub fn acp_update(
     } else {
         (1.0 + delta) * lp
     };
-    if out < lambda_min {
-        0.0
-    } else {
-        out
-    }
+    if out < lambda_min { 0.0 } else { out }
 }
 
 /// Normalized autocorrelation of a series at lag k (time-average estimator).
@@ -788,8 +815,14 @@ mod tests {
         // `is_bipartite` re-inferred the answer as `!classes[1].is_empty()`, which is a different
         // question from the one the BFS had already answered. A graph with no edges IS bipartite --
         // every node lands in class 0 and the inference said false.
-        assert!(Ebm::new(4, vec![]).is_bipartite(), "no edges means trivially bipartite");
-        assert!(Ebm::new(2, vec![(0, 1)]).is_bipartite(), "a single edge is bipartite");
+        assert!(
+            Ebm::new(4, vec![]).is_bipartite(),
+            "no edges means trivially bipartite"
+        );
+        assert!(
+            Ebm::new(2, vec![(0, 1)]).is_bipartite(),
+            "a single edge is bipartite"
+        );
         assert!(
             !Ebm::new(3, vec![(0, 1), (1, 2), (2, 0)]).is_bipartite(),
             "a triangle has an odd cycle"
@@ -830,7 +863,10 @@ mod tests {
                 let wrong = 1.0 / (1.0 + g.exp());
                 assert!((wrong - (1.0 - keep_closed)).abs() < 1e-14);
                 if keep_closed - 0.5 > 1e-3 {
-                    assert!((wrong - keep_closed).abs() > 1e-3, "trap not discriminable at gamma {gamma}, t {t}");
+                    assert!(
+                        (wrong - keep_closed).abs() > 1e-3,
+                        "trap not discriminable at gamma {gamma}, t {t}"
+                    );
                 }
             }
         }
@@ -868,7 +904,12 @@ mod tests {
             }
             // an interior node: safely away from boundaries
             let i = (l / 2) * l + l / 2;
-            assert_eq!(count[i], deg, "interior degree for rule set of {} rules", rules.len());
+            assert_eq!(
+                count[i],
+                deg,
+                "interior degree for rule set of {} rules",
+                rules.len()
+            );
         }
     }
 
@@ -895,7 +936,9 @@ mod tests {
     /// Autocorrelation estimator: the alternating sequence gives exactly (-1)^k.
     #[test]
     fn autocorr_alternating_exact() {
-        let series: Vec<f64> = (0..1000).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+        let series: Vec<f64> = (0..1000)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
         for k in 0..5 {
             let want = if k % 2 == 0 { 1.0 } else { -1.0 };
             assert!((autocorr(&series, k) - want).abs() < 1e-12);
@@ -925,12 +968,16 @@ mod tests {
         let nv = 3usize;
         let nl = 2usize;
         let to_x = |m: usize| -> Vec<i8> {
-            (0..nv).map(|b| if m >> b & 1 == 1 { 1 } else { -1 }).collect()
+            (0..nv)
+                .map(|b| if m >> b & 1 == 1 { 1 } else { -1 })
+                .collect()
         };
         let keep = |dt: f64| keep_prob(1.0, dt, 2);
         let q_step = |xa: &[i8], xb: &[i8], dt: f64| -> f64 {
             let k = keep(dt);
-            (0..nv).map(|i| if xa[i] == xb[i] { k } else { 1.0 - k }).product()
+            (0..nv)
+                .map(|i| if xa[i] == xb[i] { k } else { 1.0 - k })
+                .product()
         };
         // Q(x^t = a, x^{t+1} = b) for t in {0, 1}
         let q_pair = |t: usize, a: usize, b: usize| -> f64 {
@@ -960,7 +1007,11 @@ mod tests {
             }
         };
         // exact conditional expectations of sufficient statistics
-        let stat = |dtm: &Dtm, t: usize, clamp_prev: Option<usize>, b_mask: usize| -> (Vec<f64>, Vec<f64>) {
+        let stat = |dtm: &Dtm,
+                    t: usize,
+                    clamp_prev: Option<usize>,
+                    b_mask: usize|
+         -> (Vec<f64>, Vec<f64>) {
             // returns (E[s_a s_b] per edge, E[s_i] per node) under P_theta(. | constraints)
             let ebm = &dtm.steps[t];
             let extra = dtm.clamp_field(t, &to_x(b_mask));
@@ -1090,7 +1141,12 @@ mod tests {
                         forward_step(&mut xa, dtm.gamma, dtm.times[t] - dtm.times[0], &mut rng);
                     }
                     let mut xb = xa.clone();
-                    forward_step(&mut xb, dtm.gamma, dtm.times[t + 1] - dtm.times[t], &mut rng);
+                    forward_step(
+                        &mut xb,
+                        dtm.gamma,
+                        dtm.times[t + 1] - dtm.times[t],
+                        &mut rng,
+                    );
                     batch.push((xa, xb));
                 }
                 dtm.train_step(t, &batch, 25, 0.05, 0.0, &mut rng);
@@ -1119,28 +1175,48 @@ mod tests {
     #[test]
     fn the_total_correlation_term_descends_the_conditionals_exact_total_correlation() {
         let n = 6usize;
-        let edges: Vec<(u16, u16)> = vec![(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 0), (0, 3), (1, 4)];
+        let edges: Vec<(u16, u16)> = vec![
+            (0, 1),
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (4, 5),
+            (5, 0),
+            (0, 3),
+            (1, 4),
+        ];
         let make = || {
             let mut d = Dtm::new(1, n, n, edges.clone(), 1.0, vec![0.0, 0.5]);
             let js = [0.6, -0.4, 0.5, 0.3, -0.5, 0.4, 0.35, -0.3];
             d.steps[0].j.copy_from_slice(&js);
-            d.steps[0].h.copy_from_slice(&[0.1, -0.2, 0.0, 0.15, -0.1, 0.05]);
+            d.steps[0]
+                .h
+                .copy_from_slice(&[0.1, -0.2, 0.0, 0.15, -0.1, 0.05]);
             d
         };
         let x_next: Vec<i8> = vec![1, -1, 1, 1, -1, 1];
-        let batch: Vec<(Vec<i8>, Vec<i8>)> = (0..512).map(|_| (x_next.clone(), x_next.clone())).collect();
+        let batch: Vec<(Vec<i8>, Vec<i8>)> =
+            (0..512).map(|_| (x_next.clone(), x_next.clone())).collect();
 
         let (mut off, mut on) = (make(), make());
         let rng = Pcg::new(3, 3);
         let (lr, lambda) = (1.0, 0.5);
         off.train_step(0, &batch, 40, lr, 0.0, &mut rng.clone());
         on.train_step(0, &batch, 40, lr, lambda, &mut rng.clone());
-        let step: Vec<f64> = on.steps[0].j.iter().zip(&off.steps[0].j).map(|(a, b)| a - b).collect();
+        let step: Vec<f64> = on.steps[0]
+            .j
+            .iter()
+            .zip(&off.steps[0].j)
+            .map(|(a, b)| a - b)
+            .collect();
         assert!(
             step.iter().any(|d| d.abs() > 1e-2),
             "premise: the TC term must move something, or the test compares a model with itself: {step:?}"
         );
-        assert_eq!(on.steps[0].h, off.steps[0].h, "and it must not touch the fields");
+        assert_eq!(
+            on.steps[0].h, off.steps[0].h,
+            "and it must not touch the fields"
+        );
 
         let base = make();
         let extra = base.clamp_field(0, &x_next);
@@ -1191,7 +1267,10 @@ mod tests {
             (marginal - joint, reverse)
         };
         let (along, here, against) = (tc_at(0.25), tc_at(0.0), tc_at(-0.25));
-        assert!(here.0 > 1e-3 && here.1 > 1e-3, "premise: there must BE total correlation to lose: {here:?}");
+        assert!(
+            here.0 > 1e-3 && here.1 > 1e-3,
+            "premise: there must BE total correlation to lose: {here:?}"
+        );
         assert!(
             along.0 < here.0 && here.0 < against.0,
             "joint-to-product: along {:.6}, here {:.6}, against {:.6}",

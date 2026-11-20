@@ -14,7 +14,11 @@ const BROWSER: &str = include_str!("fixtures/browser-lattice32.ftp");
 fn the_browser_writes_a_program_the_cpu_can_read() {
     let p = Program::from_ftp(BROWSER).expect("browser output must parse");
     assert_eq!(p.spins, 1024);
-    assert_eq!(p.factors.len(), 2048, "a periodic 32x32 lattice has 2 bonds per site");
+    assert_eq!(
+        p.factors.len(),
+        2048,
+        "a periodic 32x32 lattice has 2 bonds per site"
+    );
     assert_eq!(p.name.as_deref(), Some("lattice2d"));
     assert_eq!(p.target.as_deref(), Some("wasm"));
 }
@@ -28,7 +32,9 @@ fn it_is_the_same_model_the_crate_would_have_built() {
 
     let mut rng = Pcg::new(11, 0);
     for _ in 0..200 {
-        let s: Vec<i8> = (0..ours.n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
+        let s: Vec<i8> = (0..ours.n)
+            .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+            .collect();
         assert!(
             (theirs.energy(&s) - ours.energy(&s)).abs() < 1e-12,
             "the browser's lattice and ours disagree on an energy"
@@ -55,5 +61,8 @@ fn it_samples() {
     let g = Program::from_ftp(BROWSER).unwrap().to_graph().unwrap();
     let sched = ferrotherm::schedule::Schedule::geometric(0.05, 1.0, 30, 20);
     let (_s, e) = ferrotherm::tempering::anneal_scheduled(&g, &sched, 3, None);
-    assert!(e < -1800.0, "a 32x32 ferromagnet should anneal near its -2048 ground state, got {e}");
+    assert!(
+        e < -1800.0,
+        "a 32x32 ferromagnet should anneal near its -2048 ground state, got {e}"
+    );
 }

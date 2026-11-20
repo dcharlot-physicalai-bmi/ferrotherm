@@ -115,12 +115,20 @@ pub enum Finding {
 impl core::fmt::Display for Finding {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Finding::BetaMismatch { requested, effective, ci } => write!(
+            Finding::BetaMismatch {
+                requested,
+                effective,
+                ci,
+            } => write!(
                 f,
                 "sampled at beta {effective:.4} (95% CI {:.4}..{:.4}), not the requested {requested:.4}",
                 ci.0, ci.1
             ),
-            Finding::Undermixed { tau_int, ess, draws } => write!(
+            Finding::Undermixed {
+                tau_int,
+                ess,
+                draws,
+            } => write!(
                 f,
                 "draws are correlated: tau_int {tau_int:.1}, so {draws} draws are worth about \
                  {ess:.0} independent samples; thin the chain or run longer"
@@ -158,7 +166,11 @@ impl core::fmt::Display for Finding {
                  long-batch-means {batch:.3} is carried instead, never below 1/2. Thinning by an \
                  even number of sweeps turns an alternating chain into a positively correlated one"
             ),
-            Finding::TauLowerBound { tau_int, ess, draws } => write!(
+            Finding::TauLowerBound {
+                tau_int,
+                ess,
+                draws,
+            } => write!(
                 f,
                 "{draws} draws are only {:.0} autocorrelation times, too few for tau_int \
                  {tau_int:.2} to be more than a lower bound or ess {ess:.0} more than an upper \
@@ -209,8 +221,13 @@ impl core::fmt::Display for Certificate {
         writeln!(
             f,
             "draws {}  beta {:.4} (asked {:.4}, CI {:.4}..{:.4})  tau_int {:.1}  ess {:.0}",
-            self.draws, self.beta_eff, self.beta_requested, self.beta_ci.0, self.beta_ci.1,
-            self.tau_int, self.ess
+            self.draws,
+            self.beta_eff,
+            self.beta_requested,
+            self.beta_ci.0,
+            self.beta_ci.1,
+            self.tau_int,
+            self.ess
         )?;
         if let (Some(tv), Some(fl)) = (self.tv_exact, self.noise_floor) {
             writeln!(f, "tv {tv:.4} against a {fl:.4} noise floor")?;
@@ -274,7 +291,9 @@ fn fit_beta(g: &Graph, samples: &[Vec<i8>]) -> (f64, f64) {
 
     // d(log L)/d(beta), which is strictly decreasing because the log-likelihood is concave.
     let d1 = |b: f64| -> f64 {
-        obs.iter().map(|&(x, y)| x * (y - 1.0 / (1.0 + (-b * x).exp()))).sum()
+        obs.iter()
+            .map(|&(x, y)| x * (y - 1.0 / (1.0 + (-b * x).exp())))
+            .sum()
     };
 
     // Bisection rather than Newton. Newton is faster and wrong here: far from the optimum the
@@ -515,17 +534,19 @@ fn tau_int_by(trace: &[f64], fft: bool) -> f64 {
         return f64::INFINITY; // a constant trace never decorrelates
     }
     let max_lag = (n / 4).max(1);
-    let cov = if fft { Some(crate::fft::autocovariance(trace, max_lag)) } else { None };
-    sokal_window(max_lag, |k| {
-        match &cov {
-            Some(cov) => cov[k] / var,
-            None => {
-                let mut c = 0.0;
-                for t in 0..(n - k) {
-                    c += (trace[t] - mean) * (trace[t + k] - mean);
-                }
-                c / ((n - k) as f64 * var)
+    let cov = if fft {
+        Some(crate::fft::autocovariance(trace, max_lag))
+    } else {
+        None
+    };
+    sokal_window(max_lag, |k| match &cov {
+        Some(cov) => cov[k] / var,
+        None => {
+            let mut c = 0.0;
+            for t in 0..(n - k) {
+                c += (trace[t] - mean) * (trace[t + k] - mean);
             }
+            c / ((n - k) as f64 * var)
         }
     })
 }
@@ -582,8 +603,9 @@ pub fn tau_int_batch(trace: &[f64], batches: usize) -> f64 {
         return f64::INFINITY;
     }
     let k = batches.max(2);
-    let means: Vec<f64> =
-        (0..k).map(|i| trace[i * b..(i + 1) * b].iter().sum::<f64>() / b as f64).collect();
+    let means: Vec<f64> = (0..k)
+        .map(|i| trace[i * b..(i + 1) * b].iter().sum::<f64>() / b as f64)
+        .collect();
     let vb = means.iter().map(|m| (m - mean).powi(2)).sum::<f64>() / (k as f64 - 1.0);
     (b as f64 * vb / (2.0 * var)).max(0.5)
 }
@@ -737,7 +759,13 @@ pub fn tau_estimate(traces: &[&[f64]]) -> TauEstimate {
         // which is the most a trace this short can claim, rather than no value at all.
         tau = 0.5;
     }
-    TauEstimate { tau, geyer, batch, draws, unresolved }
+    TauEstimate {
+        tau,
+        geyer,
+        batch,
+        draws,
+        unresolved,
+    }
 }
 
 /// Certify a set of samples against the model and temperature they claim to come from.
@@ -786,8 +814,16 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
     // share spins, which `fit_beta`'s sandwich handles; BETWEEN configurations a chain is
     // autocorrelated, which is this inflation. Applying only one of them was worth a factor of two
     // in the interval's width -- see `fit_beta`.
-    let se = if beta_var.is_finite() && beta_var > 0.0 { beta_var.sqrt() } else { f64::INFINITY };
-    let inflate = if t.is_finite() { (2.0 * t).sqrt().max(1.0) } else { 1.0 };
+    let se = if beta_var.is_finite() && beta_var > 0.0 {
+        beta_var.sqrt()
+    } else {
+        f64::INFINITY
+    };
+    let inflate = if t.is_finite() {
+        (2.0 * t).sqrt().max(1.0)
+    } else {
+        1.0
+    };
     let half = 1.96 * se * inflate;
     let beta_ci = (beta_eff - half, beta_eff + half);
 
@@ -807,19 +843,33 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
     // tau 43 with ess 35 out of 3,000 draws is undermixed by any reading, and an earlier ess < 30
     // line let exactly that through.
     if !t.is_finite() || ess < 50.0 || t > draws as f64 / 50.0 {
-        findings.push(Finding::Undermixed { tau_int: t, ess, draws });
+        findings.push(Finding::Undermixed {
+            tau_int: t,
+            ess,
+            draws,
+        });
     }
     if est.truncated() {
-        findings.push(Finding::TauTruncated { geyer: est.geyer, batch: est.batch });
+        findings.push(Finding::TauTruncated {
+            geyer: est.geyer,
+            batch: est.batch,
+        });
     }
     if let Some(geyer) = est.unresolved {
-        findings.push(Finding::TauUnresolved { geyer, batch: est.batch });
+        findings.push(Finding::TauUnresolved {
+            geyer,
+            batch: est.batch,
+        });
     }
     // Resolved or not is a statement about the MEASUREMENT, separate from Undermixed's statement
     // about the chain: at fewer than RESOLVED_TAUS autocorrelation times, the tau above is a lower
     // bound and the ess an upper one, whatever the draw count looks like.
     if est.lower_bound() {
-        findings.push(Finding::TauLowerBound { tau_int: t, ess, draws });
+        findings.push(Finding::TauLowerBound {
+            tau_int: t,
+            ess,
+            draws,
+        });
     }
 
     // A Geweke-style check. beta_eff cannot do this job: pseudolikelihood is a LOCAL statistic, and
@@ -835,12 +885,20 @@ pub fn certify(g: &Graph, beta_requested: f64, samples: &[Vec<i8>], trace: &[f64
             v.iter().map(|x| (x - mu).powi(2)).sum::<f64>() / (v.len() as f64 - 1.0).max(1.0)
         };
         // standard errors inflated by the autocorrelation, or the test fires on every chain
-        let infl = if t.is_finite() { (2.0 * t).max(1.0) } else { 1.0 };
+        let infl = if t.is_finite() {
+            (2.0 * t).max(1.0)
+        } else {
+            1.0
+        };
         let se = ((var(early, me) + var(late, ml)) * infl / cut as f64).sqrt();
         if se > 0.0 {
             let z = (me - ml).abs() / se;
             if z > 4.0 {
-                findings.push(Finding::NotConverged { early: me, late: ml, sigma: z });
+                findings.push(Finding::NotConverged {
+                    early: me,
+                    late: ml,
+                    sigma: z,
+                });
             }
         }
     }
@@ -953,9 +1011,14 @@ mod tests {
     /// Draw from a graph with a sampler that may be deliberately wrong.
     ///
     /// `beta_actual` is what the sampler really runs at; `thin` is sweeps between recorded draws.
-    fn run(g: &Graph, beta_actual: f64, thin: usize, burn: usize, draws: usize, seed: u64)
-        -> (Vec<Vec<i8>>, Vec<f64>)
-    {
+    fn run(
+        g: &Graph,
+        beta_actual: f64,
+        thin: usize,
+        burn: usize,
+        draws: usize,
+        seed: u64,
+    ) -> (Vec<Vec<i8>>, Vec<f64>) {
         let mut smp = Sampler::new(g, beta_actual, seed);
         smp.sweeps(burn, None);
         let mut samples = Vec::with_capacity(draws);
@@ -1031,7 +1094,9 @@ mod tests {
             for _ in 0..200 {
                 let u = rng.f64() * total;
                 let m = cdf.partition_point(|&c| c < u).min(p.len() - 1);
-                let st: Vec<i8> = (0..g.n).map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 }).collect();
+                let st: Vec<i8> = (0..g.n)
+                    .map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 trace.push(g.energy(&st));
                 samples.push(st);
             }
@@ -1045,7 +1110,11 @@ mod tests {
             );
             let c = certify(&g, beta, &samples, &trace);
             let half = 0.5 * (c.beta_ci.1 - c.beta_ci.0);
-            let inflate = if c.tau_int.is_finite() { (2.0 * c.tau_int).sqrt().max(1.0) } else { 1.0 };
+            let inflate = if c.tau_int.is_finite() {
+                (2.0 * c.tau_int).sqrt().max(1.0)
+            } else {
+                1.0
+            };
             let from_var = 1.96 * var.sqrt() * inflate;
             assert!(
                 (half - from_var).abs() <= 1e-12 * from_var.max(1.0),
@@ -1071,8 +1140,9 @@ mod tests {
             for _ in 0..draws {
                 let u = rng.f64() * total;
                 let m = cdf.partition_point(|&c| c < u).min(p.len() - 1);
-                let st: Vec<i8> =
-                    (0..g.n).map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 }).collect();
+                let st: Vec<i8> = (0..g.n)
+                    .map(|i| if (m >> i) & 1 == 1 { 1i8 } else { -1 })
+                    .collect();
                 trace.push(g.energy(&st));
                 samples.push(st);
             }
@@ -1166,7 +1236,11 @@ mod tests {
         let (s, t) = run(&g, 0.6, 10, 500, 6000, 1);
         let c = certify(&g, 0.6, &s, &t);
         assert!(c.passed(), "a correct sampler should certify clean:\n{c}");
-        assert!((c.beta_eff - 0.6).abs() < 0.05, "beta_eff {} off", c.beta_eff);
+        assert!(
+            (c.beta_eff - 0.6).abs() < 0.05,
+            "beta_eff {} off",
+            c.beta_eff
+        );
     }
 
     #[test]
@@ -1178,11 +1252,17 @@ mod tests {
         let c = certify(&g, 0.6, &s, &t); // claims 0.6, actually ran at 1.4
         assert!(!c.passed(), "a wrong temperature must be caught");
         assert!(
-            c.findings.iter().any(|f| matches!(f, Finding::BetaMismatch { .. })),
+            c.findings
+                .iter()
+                .any(|f| matches!(f, Finding::BetaMismatch { .. })),
             "expected a BetaMismatch, got {:?}",
             c.findings
         );
-        assert!((c.beta_eff - 1.4).abs() < 0.1, "should recover the true beta, got {}", c.beta_eff);
+        assert!(
+            (c.beta_eff - 1.4).abs() < 0.1,
+            "should recover the true beta, got {}",
+            c.beta_eff
+        );
     }
 
     #[test]
@@ -1201,10 +1281,15 @@ mod tests {
             let (s, t) = run(&g, 0.44, 1, 500, 3000, seed);
             let c = certify(&g, 0.44, &s, &t);
             assert!(
-                c.findings.iter().any(|f| matches!(f, Finding::Undermixed { .. })),
+                c.findings
+                    .iter()
+                    .any(|f| matches!(f, Finding::Undermixed { .. })),
                 "seed {seed}: critical slowing down must be flagged: {c}"
             );
-            assert!(c.ess < c.draws as f64 / 10.0, "seed {seed}: ess too high: {c}");
+            assert!(
+                c.ess < c.draws as f64 / 10.0,
+                "seed {seed}: ess too high: {c}"
+            );
         }
     }
 
@@ -1212,14 +1297,24 @@ mod tests {
     fn thinning_repairs_what_correlation_broke() {
         // The finding has to be actionable, so the prescribed fix must actually work.
         let g = crate::ising::lattice2d(24, 1.0);
-        let tight = { let (s, t) = run(&g, 0.7, 1, 0, 600, 3); certify(&g, 0.7, &s, &t) };
-        let fixed = { let (s, t) = run(&g, 0.7, 50, 500, 600, 3); certify(&g, 0.7, &s, &t) };
+        let tight = {
+            let (s, t) = run(&g, 0.7, 1, 0, 600, 3);
+            certify(&g, 0.7, &s, &t)
+        };
+        let fixed = {
+            let (s, t) = run(&g, 0.7, 50, 500, 600, 3);
+            certify(&g, 0.7, &s, &t)
+        };
         assert!(!tight.passed(), "the unfixed run should be flagged");
-        assert!(fixed.passed(), "burning in and thinning should clear it: {fixed}");
+        assert!(
+            fixed.passed(),
+            "burning in and thinning should clear it: {fixed}"
+        );
         assert!(
             fixed.ess > tight.ess * 10.0,
             "ess should improve by an order of magnitude: {:.0} -> {:.0}",
-            tight.ess, fixed.ess
+            tight.ess,
+            fixed.ess
         );
     }
 
@@ -1244,7 +1339,9 @@ mod tests {
         let (s, t) = run(&g, 0.7, 1, 0, 2_000, 4);
         let c = certify(&g, 0.7, &s, &t);
         assert!(
-            c.findings.iter().any(|f| matches!(f, Finding::Undermixed { .. })),
+            c.findings
+                .iter()
+                .any(|f| matches!(f, Finding::Undermixed { .. })),
             "an unburned coarsening chain must be reported undermixed, not just short:\n{c}"
         );
 
@@ -1320,8 +1417,14 @@ mod tests {
             .iter()
             .find(|f| matches!(f, Finding::NotConverged { .. }))
         {
-            assert!(late.abs() > early.abs(), "it leaves disorder: early {early} late {late}");
-            assert!(*sigma > 4.0, "and it must clear the threshold it uses: z = {sigma}");
+            assert!(
+                late.abs() > early.abs(),
+                "it leaves disorder: early {early} late {late}"
+            );
+            assert!(
+                *sigma > 4.0,
+                "and it must clear the threshold it uses: z = {sigma}"
+            );
         }
 
         // A steady chain must NOT trip it, or the check is an alarm that is always on.
@@ -1339,7 +1442,10 @@ mod tests {
             .collect();
         let clean = certify(&g, 0.5, &steady, &trace_s);
         assert!(
-            !clean.findings.iter().any(|f| matches!(f, Finding::NotConverged { .. })),
+            !clean
+                .findings
+                .iter()
+                .any(|f| matches!(f, Finding::NotConverged { .. })),
             "a stationary chain must not be reported as drifting; findings were {:?}",
             clean.findings
         );
@@ -1367,7 +1473,9 @@ mod tests {
             let samples: Vec<Vec<i8>> = (0..draws)
                 .map(|_| {
                     let r = next();
-                    (0..g.n).map(|b| if r >> (b % 64) & 1 == 1 { 1 } else { -1 }).collect()
+                    (0..g.n)
+                        .map(|b| if r >> (b % 64) & 1 == 1 { 1 } else { -1 })
+                        .collect()
                 })
                 .collect();
             let trace: Vec<f64> = samples.iter().map(|s| g.energy(s)).collect();
@@ -1375,12 +1483,22 @@ mod tests {
             assert!(!c.passed(), "n={} pure noise must not pass", g.n);
             // Either it caught the discrepancy, or it said it could not look. Never silence.
             let spoke = c.findings.iter().any(|f| {
-                matches!(f, Finding::AboveNoiseFloor { .. } | Finding::TooFewSamples { .. })
+                matches!(
+                    f,
+                    Finding::AboveNoiseFloor { .. } | Finding::TooFewSamples { .. }
+                )
             });
-            assert!(spoke, "n={} said nothing about the distribution: {:?}", g.n, c.findings);
+            assert!(
+                spoke,
+                "n={} said nothing about the distribution: {:?}",
+                g.n, c.findings
+            );
             if let Some(floor) = c.noise_floor {
                 assert!(
-                    floor < 1.0 || c.findings.iter().any(|f| matches!(f, Finding::TooFewSamples { .. })),
+                    floor < 1.0
+                        || c.findings
+                            .iter()
+                            .any(|f| matches!(f, Finding::TooFewSamples { .. })),
                     "n={}: floor {floor} is vacuous and nothing said so",
                     g.n
                 );
@@ -1395,13 +1513,24 @@ mod tests {
         let g = crate::ising::ring(10, 1.0, 0.3);
         let mut rng = Pcg::new(9, 0);
         let samples: Vec<Vec<i8>> = (0..4000)
-            .map(|_| (0..g.n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect())
+            .map(|_| {
+                (0..g.n)
+                    .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+                    .collect()
+            })
             .collect();
         let trace: Vec<f64> = samples.iter().map(|s| g.energy(s)).collect();
         let c = certify(&g, 1.0, &samples, &trace);
-        assert!(!c.passed(), "uniform noise must never certify as Boltzmann:\n{c}");
+        assert!(
+            !c.passed(),
+            "uniform noise must never certify as Boltzmann:\n{c}"
+        );
         // and it is caught for the right reason: noise is infinite temperature
-        assert!(c.beta_eff.abs() < 0.15, "noise should fit beta near 0, got {}", c.beta_eff);
+        assert!(
+            c.beta_eff.abs() < 0.15,
+            "noise should fit beta near 0, got {}",
+            c.beta_eff
+        );
     }
 
     #[test]
@@ -1439,7 +1568,10 @@ mod tests {
                 .collect();
             let want = (1.0 + p) / (2.0 * (1.0 - p));
             let got = tau_int(&trace);
-            assert!((got - want).abs() / want < 0.25, "p={p}: got {got}, want {want}");
+            assert!(
+                (got - want).abs() / want < 0.25,
+                "p={p}: got {got}, want {want}"
+            );
         }
     }
 
@@ -1491,7 +1623,10 @@ mod tests {
             "batch means over 20 batches of {} draws should sit near {exact:.1}: {batch:.1}",
             trace.len() / 20
         );
-        assert!(batch > 2.0 * sokal, "the window and batch means must resolvably disagree here");
+        assert!(
+            batch > 2.0 * sokal,
+            "the window and batch means must resolvably disagree here"
+        );
         let geyer = tau_int(trace);
         assert!(
             geyer > 0.7 * exact && geyer < 1.4 * exact,
@@ -1502,14 +1637,30 @@ mod tests {
             !est.truncated() && est.unresolved.is_none(),
             "on a reversible spectrum Geyer and batch means agree, and nothing may be reported: {est:?}"
         );
-        assert!(est.tau >= geyer && est.tau > 0.7 * exact, "the carried value is the larger: {est:?}");
+        assert!(
+            est.tau >= geyer && est.tau > 0.7 * exact,
+            "the carried value is the larger: {est:?}"
+        );
 
         // The control: one mode, every estimator agrees with the closed form.
         let want_f = (1.0 + p_f) / (2.0 * (1.0 - p_f));
-        let (s1, b1, g1) = (tau_int_sokal(fast_only), tau_int_batch(fast_only, 20), tau_int(fast_only));
-        assert!((s1 - want_f).abs() / want_f < 0.1, "single mode, Sokal {s1} vs {want_f}");
-        assert!((b1 - want_f).abs() / want_f < 0.4, "single mode, batch {b1} vs {want_f}");
-        assert!((g1 - want_f).abs() / want_f < 0.1, "single mode, Geyer {g1} vs {want_f}");
+        let (s1, b1, g1) = (
+            tau_int_sokal(fast_only),
+            tau_int_batch(fast_only, 20),
+            tau_int(fast_only),
+        );
+        assert!(
+            (s1 - want_f).abs() / want_f < 0.1,
+            "single mode, Sokal {s1} vs {want_f}"
+        );
+        assert!(
+            (b1 - want_f).abs() / want_f < 0.4,
+            "single mode, batch {b1} vs {want_f}"
+        );
+        assert!(
+            (g1 - want_f).abs() / want_f < 0.1,
+            "single mode, Geyer {g1} vs {want_f}"
+        );
     }
 
     /// The 3x3 +-J glass with small random fields that the audit's exact sequences were taken on,
@@ -1555,7 +1706,14 @@ mod tests {
         let mut v = e.clone();
         for _ in 0..lags {
             v = apply(g, beta, kernel, &v);
-            rho.push(pi.iter().zip(&e).zip(&v).map(|((p, x), y)| p * x * y).sum::<f64>() / c0);
+            rho.push(
+                pi.iter()
+                    .zip(&e)
+                    .zip(&v)
+                    .map(|((p, x), y)| p * x * y)
+                    .sum::<f64>()
+                    / c0,
+            );
         }
         rho
     }
@@ -1570,15 +1728,27 @@ mod tests {
     /// the window reads 19% low and Geyer within 1%.
     #[test]
     fn geyer_reads_on_exact_sequences_what_the_window_truncates() {
-        use crate::autocorr::{tau_int_fundamental, Kernel};
+        use crate::autocorr::{Kernel, tau_int_fundamental};
         let g = glass3x3();
         let energy = |s: &[i8]| g.energy(s);
-        let exact = tau_int_fundamental(&g, 1.0, Kernel::ChromaticGibbs, energy).unwrap().tau_int;
-        assert!((exact - 5.4205).abs() < 1e-3, "the fixture's exact energy tau is 5.4205: {exact}");
+        let exact = tau_int_fundamental(&g, 1.0, Kernel::ChromaticGibbs, energy)
+            .unwrap()
+            .tau_int;
+        assert!(
+            (exact - 5.4205).abs() < 1e-3,
+            "the fixture's exact energy tau is 5.4205: {exact}"
+        );
         let rho = exact_rho(&g, 1.0, Kernel::ChromaticGibbs, energy, 3_000);
-        assert!(rho[3_000].abs() < 1e-12, "3,000 lags must reach the tail: {}", rho[3_000]);
+        assert!(
+            rho[3_000].abs() < 1e-12,
+            "3,000 lags must reach the tail: {}",
+            rho[3_000]
+        );
         let sokal = sokal_window(3_000, |k| rho[k]);
-        assert!((sokal - 2.978).abs() < 2e-3, "the window reads 2.978 here, measured: {sokal}");
+        assert!(
+            (sokal - 2.978).abs() < 2e-3,
+            "the window reads 2.978 here, measured: {sokal}"
+        );
         let geyer = geyer_initial_monotone(3_000, |k| rho[k]);
         assert!(
             (geyer / exact - 1.0).abs() < 1e-4,
@@ -1587,14 +1757,28 @@ mod tests {
 
         let ring = crate::ising::ring(8, -1.0, 0.3);
         let mag = |s: &[i8]| s.iter().map(|&v| f64::from(v)).sum::<f64>();
-        let exact = tau_int_fundamental(&ring, 1.5, Kernel::SequentialGibbs, mag).unwrap().tau_int;
-        assert!((exact - 0.9199).abs() < 1e-3, "exact magnetisation tau 0.9199: {exact}");
+        let exact = tau_int_fundamental(&ring, 1.5, Kernel::SequentialGibbs, mag)
+            .unwrap()
+            .tau_int;
+        assert!(
+            (exact - 0.9199).abs() < 1e-3,
+            "exact magnetisation tau 0.9199: {exact}"
+        );
         let rho = exact_rho(&ring, 1.5, Kernel::SequentialGibbs, mag, 2_000);
-        assert!(rho.iter().any(|&r| r < -0.01), "the fixture must actually have a negative lobe");
+        assert!(
+            rho.iter().any(|&r| r < -0.01),
+            "the fixture must actually have a negative lobe"
+        );
         let sokal = sokal_window(2_000, |k| rho[k]);
-        assert!(sokal < 0.85 * exact, "the window must read the lobe low (-19%): {sokal} vs {exact}");
+        assert!(
+            sokal < 0.85 * exact,
+            "the window must read the lobe low (-19%): {sokal} vs {exact}"
+        );
         let geyer = geyer_initial_monotone(2_000, |k| rho[k]);
-        assert!((geyer / exact - 1.0).abs() < 0.02, "Geyer within 1% here: {geyer} vs {exact}");
+        assert!(
+            (geyer / exact - 1.0).abs() < 0.02,
+            "Geyer within 1% here: {geyer} vs {exact}"
+        );
     }
 
     /// GEYER ALONE IS NOT CONSERVATIVE ON A NON-REVERSIBLE CHAIN, and the long-batch cross-check
@@ -1610,14 +1794,26 @@ mod tests {
     /// entry point must carry batch means' value, not Geyer's, and must say they disagree.
     #[test]
     fn geyer_alone_under_reads_a_non_reversible_chain_and_the_batch_cross_check_is_carried() {
-        use crate::autocorr::{tau_int_fundamental, Kernel};
+        use crate::autocorr::{Kernel, tau_int_fundamental};
         let ring = crate::ising::ring(8, -1.0, 0.0);
         let f = |s: &[i8]| {
             let m: f64 = s.iter().map(|&v| f64::from(v)).sum();
-            let stag: f64 = s.iter().enumerate().map(|(i, &v)| if i % 2 == 0 { f64::from(v) } else { -f64::from(v) }).sum();
+            let stag: f64 = s
+                .iter()
+                .enumerate()
+                .map(|(i, &v)| {
+                    if i % 2 == 0 {
+                        f64::from(v)
+                    } else {
+                        -f64::from(v)
+                    }
+                })
+                .sum();
             m + 0.001 * stag
         };
-        let exact = tau_int_fundamental(&ring, 2.0, Kernel::SequentialGibbs, f).unwrap().tau_int;
+        let exact = tau_int_fundamental(&ring, 2.0, Kernel::SequentialGibbs, f)
+            .unwrap()
+            .tau_int;
         assert!((exact - 2.46501).abs() < 1e-3, "exact tau 2.46501: {exact}");
         let rho = exact_rho(&ring, 2.0, Kernel::SequentialGibbs, f, 60_000);
         let geyer = geyer_initial_monotone(60_000, |k| rho[k]);
@@ -1632,9 +1828,13 @@ mod tests {
         let den = (1.0 - zr).powi(2) + zi * zi;
         let exact = 0.5 + a * (zr * (1.0 - zr) - zi * zi) / den + (1.0 - a) * lam / (1.0 - lam);
         assert!((exact - 19.942).abs() < 1e-3, "closed form {exact}");
-        let closed = |k: usize| a * r.powi(k as i32) * (w * k as f64).cos() + (1.0 - a) * lam.powi(k as i32);
+        let closed =
+            |k: usize| a * r.powi(k as i32) * (w * k as f64).cos() + (1.0 - a) * lam.powi(k as i32);
         let geyer = geyer_initial_monotone(20_000, closed);
-        assert!((geyer - 0.698).abs() < 1e-3, "Geyer stops at lag 2 and reads 0.698: {geyer}");
+        assert!(
+            (geyer - 0.698).abs() < 1e-3,
+            "Geyer stops at lag 2 and reads 0.698: {geyer}"
+        );
 
         let n = 200_000usize;
         let mut rng = Pcg::new(5, 0x2A);
@@ -1646,7 +1846,10 @@ mod tests {
         let (mut zre, mut zim, mut y) = (0.0f64, 0.0f64, 0.0f64);
         let mut x = Vec::with_capacity(n);
         for t in 0..(n + 5_000) {
-            let (nr, ni) = (cr * zre - ci * zim + s * gauss(), cr * zim + ci * zre + s * gauss());
+            let (nr, ni) = (
+                cr * zre - ci * zim + s * gauss(),
+                cr * zim + ci * zre + s * gauss(),
+            );
             zre = nr;
             zim = ni;
             y = lam * y + (1.0 - lam * lam).sqrt() * gauss();
@@ -1655,9 +1858,15 @@ mod tests {
             }
         }
         let alone = tau_int(&x);
-        assert!(alone < 0.1 * exact, "Geyer alone on the simulated trace: {alone} against {exact}");
+        assert!(
+            alone < 0.1 * exact,
+            "Geyer alone on the simulated trace: {alone} against {exact}"
+        );
         let est = tau_estimate(&[&x]);
-        assert!(est.truncated(), "the entry point must report the disagreement: {est:?}");
+        assert!(
+            est.truncated(),
+            "the entry point must report the disagreement: {est:?}"
+        );
         assert!(
             est.tau >= est.batch && est.tau > 0.4 * exact,
             "and carry the batch value, not Geyer's: {est:?} against {exact}"
@@ -1686,7 +1895,9 @@ mod tests {
         }
         let hot = certify(&g, 0.4, &samples, &energy);
         assert!(
-            !hot.findings.iter().any(|f| matches!(f, Finding::TauTruncated { .. })),
+            !hot.findings
+                .iter()
+                .any(|f| matches!(f, Finding::TauTruncated { .. })),
             "a single-mode chain must not trigger the cross-check: {hot}"
         );
 
@@ -1716,10 +1927,23 @@ mod tests {
         });
         let (geyer, batch) = fired.expect("the rotating observable must trigger TauTruncated");
         assert!(batch > 2.0 * geyer);
-        assert!(geyer < 0.1 * exact, "and Geyer must sit far below the exact {exact}: {geyer}");
-        assert!(c.tau_int >= batch - 1e-12, "the certificate must carry the batch value: {c}");
-        assert!(c.tau_int > 0.4 * exact, "which is near the truth: {} vs {exact}", c.tau_int);
-        assert!(c.ess <= c.draws as f64 / (2.0 * batch) + 1e-9, "ess must be the conservative one");
+        assert!(
+            geyer < 0.1 * exact,
+            "and Geyer must sit far below the exact {exact}: {geyer}"
+        );
+        assert!(
+            c.tau_int >= batch - 1e-12,
+            "the certificate must carry the batch value: {c}"
+        );
+        assert!(
+            c.tau_int > 0.4 * exact,
+            "which is near the truth: {} vs {exact}",
+            c.tau_int
+        );
+        assert!(
+            c.ess <= c.draws as f64 / (2.0 * batch) + 1e-9,
+            "ess must be the conservative one"
+        );
     }
 
     /// ESS NEVER EXCEEDS THE DRAWS, and a failed sum is a finding, not a number.
@@ -1748,11 +1972,20 @@ mod tests {
             })
             .collect();
         let raw = tau_int_geyer_raw(&mild);
-        assert!(raw > 0.0 && raw < 0.5, "the case must reach the floor: Geyer's raw sum {raw}");
+        assert!(
+            raw > 0.0 && raw < 0.5,
+            "the case must reach the floor: Geyer's raw sum {raw}"
+        );
         assert_eq!(tau_int(&mild), 0.5, "tau_int floors it");
         let est = tau_estimate(&[&mild]);
-        assert!(est.batch.is_nan(), "200 draws are too few for batch means: {est:?}");
-        assert!(est.tau == 0.5 && est.ess() == 200.0, "and so does the entry point: {est:?}");
+        assert!(
+            est.batch.is_nan(),
+            "200 draws are too few for batch means: {est:?}"
+        );
+        assert!(
+            est.tau == 0.5 && est.ess() == 200.0,
+            "and so does the entry point: {est:?}"
+        );
         for n in [200usize, 20_000] {
             let mut x = 0.0f64;
             let anti: Vec<f64> = (0..n)
@@ -1764,15 +1997,27 @@ mod tests {
             // The exact value is 0.026, so Geyer's sum is either floored or -- on 200 draws, where
             // its noise is as large as the value -- zero or less, which is a failure and no value.
             let g = tau_int(&anti);
-            assert!(g == 0.5 || g.is_nan(), "n {n}: never below the independent value: {g}");
+            assert!(
+                g == 0.5 || g.is_nan(),
+                "n {n}: never below the independent value: {g}"
+            );
             let est = tau_estimate(&[&anti]);
             assert!(est.tau >= 0.5 && est.ess() <= n as f64, "n {n}: {est:?}");
 
             let alternating: Vec<f64> = (0..n).map(|t| sign(t) + 0.5 * gauss()).collect();
-            assert!(tau_int(&alternating).is_nan(), "n {n}: a non-positive sum is no value");
+            assert!(
+                tau_int(&alternating).is_nan(),
+                "n {n}: a non-positive sum is no value"
+            );
             let est = tau_estimate(&[&alternating]);
-            assert!(est.unresolved.is_some_and(|v| v <= 0.0), "n {n}: the failure is recorded: {est:?}");
-            assert!(est.tau >= 0.5 && est.ess() <= n as f64, "n {n}: and nothing optimistic carried: {est:?}");
+            assert!(
+                est.unresolved.is_some_and(|v| v <= 0.0),
+                "n {n}: the failure is recorded: {est:?}"
+            );
+            assert!(
+                est.tau >= 0.5 && est.ess() <= n as f64,
+                "n {n}: and nothing optimistic carried: {est:?}"
+            );
         }
 
         // Through the certificate: exact independent draws for the configurations, the alternating
@@ -1790,17 +2035,26 @@ mod tests {
         for _ in 0..draws {
             let u = rng.f64() * total;
             let k = cdf.partition_point(|&c| c < u).min(p.len() - 1);
-            samples.push((0..g.n).map(|i| if (k >> i) & 1 == 1 { 1i8 } else { -1 }).collect::<Vec<i8>>());
+            samples.push(
+                (0..g.n)
+                    .map(|i| if (k >> i) & 1 == 1 { 1i8 } else { -1 })
+                    .collect::<Vec<i8>>(),
+            );
         }
         let alternating: Vec<f64> = (0..draws).map(|t| sign(t) + 0.5 * rng.f64()).collect();
         let c = certify(&g, 0.5, &samples, &alternating);
         assert!(
-            c.findings.iter().any(|f| matches!(f, Finding::TauUnresolved { .. })),
+            c.findings
+                .iter()
+                .any(|f| matches!(f, Finding::TauUnresolved { .. })),
             "a failed sum must be reported: {c}"
         );
         assert!(c.tau_int >= 0.5 && c.ess <= draws as f64, "{c}");
         let iid_floor = 0.5 * ((1usize << g.n) as f64 / draws as f64).sqrt();
-        assert!(c.noise_floor.unwrap() >= iid_floor - 1e-15, "the floor may not drop below the independent one: {c}");
+        assert!(
+            c.noise_floor.unwrap() >= iid_floor - 1e-15,
+            "the floor may not drop below the independent one: {c}"
+        );
 
         // And through a sample set: every estimate's ess is at most its draws.
         let energies: Vec<f64> = samples.iter().map(|s| g.energy(s)).collect();
@@ -1821,17 +2075,27 @@ mod tests {
         let (s, t) = run(&g, 0.6, 10, 500, 300, 1);
         let c = certify(&g, 0.6, &s, &t);
         let found = c.findings.iter().find_map(|f| match f {
-            Finding::TauLowerBound { tau_int, ess, draws } => Some((*tau_int, *ess, *draws)),
+            Finding::TauLowerBound {
+                tau_int,
+                ess,
+                draws,
+            } => Some((*tau_int, *ess, *draws)),
             _ => None,
         });
-        let (tau, ess, draws) = found.unwrap_or_else(|| panic!("300 draws must be reported short: {c}"));
+        let (tau, ess, draws) =
+            found.unwrap_or_else(|| panic!("300 draws must be reported short: {c}"));
         assert!((tau - c.tau_int).abs() < 1e-12 && (ess - c.ess).abs() < 1e-9 && draws == 300);
-        assert!(format!("{c}").contains("lower bound"), "and say what it means: {c}");
+        assert!(
+            format!("{c}").contains("lower bound"),
+            "and say what it means: {c}"
+        );
 
         let (s, t) = run(&g, 0.6, 10, 500, 6_000, 1);
         let c = certify(&g, 0.6, &s, &t);
         assert!(
-            !c.findings.iter().any(|f| matches!(f, Finding::TauLowerBound { .. })),
+            !c.findings
+                .iter()
+                .any(|f| matches!(f, Finding::TauLowerBound { .. })),
             "6,000 draws at tau near 1/2 are thousands of tau: {c}"
         );
     }

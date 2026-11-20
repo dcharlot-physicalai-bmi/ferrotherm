@@ -5,7 +5,7 @@
 //! tests only — the CRC is anchored to the published CRC-32C test vector, so the implementation
 //! is verified against a value nobody in this project chose.
 
-use crate::bitstream::{cmd, reg, type1_write, type2_write, DUMMY, NOOP, SYNC};
+use crate::bitstream::{DUMMY, NOOP, SYNC, cmd, reg, type1_write, type2_write};
 
 /// 7-series frame geometry.
 pub const WORDS_PER_FRAME: usize = 101;
@@ -18,7 +18,11 @@ pub fn crc32c(data: &[u8]) -> u32 {
     for &b in data {
         crc ^= b as u32;
         for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0x82F6_3B78 } else { crc >> 1 };
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0x82F6_3B78
+            } else {
+                crc >> 1
+            };
         }
     }
     !crc
@@ -37,7 +41,11 @@ impl ConfigCrc {
     pub fn update(&mut self, addr: u32, data: u32) {
         // shift the 32 data bits then the 5 address bits through the CRC-32C polynomial
         for i in 0..37 {
-            let bit = if i < 32 { (data >> i) & 1 } else { (addr >> (i - 32)) & 1 };
+            let bit = if i < 32 {
+                (data >> i) & 1
+            } else {
+                (addr >> (i - 32)) & 1
+            };
             let top = (self.value ^ bit) & 1;
             self.value >>= 1;
             if top != 0 {
@@ -56,13 +64,18 @@ impl ConfigCrc {
 #[must_use]
 pub fn preamble(idcode: u32) -> Vec<u32> {
     vec![
-        DUMMY, DUMMY,
+        DUMMY,
+        DUMMY,
         SYNC,
         NOOP,
-        type1_write(reg::CMD, 1), cmd::RCRC,
-        NOOP, NOOP,
-        type1_write(reg::IDCODE, 1), idcode,
-        type1_write(reg::CMD, 1), cmd::WCFG,
+        type1_write(reg::CMD, 1),
+        cmd::RCRC,
+        NOOP,
+        NOOP,
+        type1_write(reg::IDCODE, 1),
+        idcode,
+        type1_write(reg::CMD, 1),
+        cmd::WCFG,
         NOOP,
     ]
 }
@@ -86,11 +99,15 @@ pub fn frame_write(far: u32, frames: &[u32]) -> Vec<u32> {
 #[must_use]
 pub fn epilogue(crc: u32) -> Vec<u32> {
     vec![
-        type1_write(reg::CRC, 1), crc,
-        type1_write(reg::CMD, 1), cmd::START,
+        type1_write(reg::CRC, 1),
+        crc,
+        type1_write(reg::CMD, 1),
+        cmd::START,
         NOOP,
-        type1_write(reg::CMD, 1), cmd::DESYNC,
-        NOOP, NOOP,
+        type1_write(reg::CMD, 1),
+        cmd::DESYNC,
+        NOOP,
+        NOOP,
     ]
 }
 
@@ -99,7 +116,6 @@ pub fn epilogue(crc: u32) -> Vec<u32> {
 pub fn words_to_bytes(words: &[u32]) -> Vec<u8> {
     words.iter().flat_map(|w| w.to_be_bytes()).collect()
 }
-
 
 /// Bus-width auto-detect pattern that precedes the sync word.
 pub const BUS_WIDTH_SYNC: u32 = 0x0000_00BB;
@@ -186,22 +202,38 @@ mod tests {
     fn header_matches_the_accepted_stream() {
         const WITNESS: [u32; 34] = [
             NOOP,
-            0x3000_8001, cmd::RCRC,      // CMD <= RCRC
-            NOOP, NOOP,
-            0x3002_2001, 0x0000_0000,    // TIMER  <= 0
-            0x3002_0001, 0x0000_0000,    // WBSTAR <= 0
-            0x3000_8001, cmd::NULL,      // CMD <= NULL
-            0x3001_2001, 0x0200_3FE5,    // COR0
-            0x3001_C001, 0x0000_0000,    // COR1
-            0x3001_8001, 0x0363_1093,    // IDCODE (XC7A100T)
-            0x3000_8001, cmd::SWITCH,    // CMD <= SWITCH
-            NOOP, NOOP,
-            0x3000_C001, 0x0000_0401,    // MASK
-            0x3000_A001, 0x0000_0501,    // CTL0
-            0x3000_C001, 0x0000_0000,    // MASK
-            0x3003_0001, 0x0000_0000,    // CTL1
-            0x3000_2001, 0x0000_0000,    // FAR <= 0
-            0x3000_8001, cmd::WCFG,      // CMD <= WCFG
+            0x3000_8001,
+            cmd::RCRC, // CMD <= RCRC
+            NOOP,
+            NOOP,
+            0x3002_2001,
+            0x0000_0000, // TIMER  <= 0
+            0x3002_0001,
+            0x0000_0000, // WBSTAR <= 0
+            0x3000_8001,
+            cmd::NULL, // CMD <= NULL
+            0x3001_2001,
+            0x0200_3FE5, // COR0
+            0x3001_C001,
+            0x0000_0000, // COR1
+            0x3001_8001,
+            0x0363_1093, // IDCODE (XC7A100T)
+            0x3000_8001,
+            cmd::SWITCH, // CMD <= SWITCH
+            NOOP,
+            NOOP,
+            0x3000_C001,
+            0x0000_0401, // MASK
+            0x3000_A001,
+            0x0000_0501, // CTL0
+            0x3000_C001,
+            0x0000_0000, // MASK
+            0x3003_0001,
+            0x0000_0000, // CTL1
+            0x3000_2001,
+            0x0000_0000, // FAR <= 0
+            0x3000_8001,
+            cmd::WCFG, // CMD <= WCFG
             NOOP,
         ];
         let mut fb = crate::framebuf::FrameBuf::new();
@@ -263,7 +295,10 @@ mod tests {
     fn preamble_stamps_the_idcode() {
         let p = preamble(0x1363_1093);
         assert_eq!(p[2], SYNC);
-        let idx = p.iter().position(|&w| w == 0x1363_1093).expect("idcode present");
+        let idx = p
+            .iter()
+            .position(|&w| w == 0x1363_1093)
+            .expect("idcode present");
         assert_eq!(p[idx - 1], type1_write(reg::IDCODE, 1));
     }
 

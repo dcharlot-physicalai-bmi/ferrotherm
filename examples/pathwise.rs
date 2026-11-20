@@ -83,12 +83,17 @@ fn main() {
             worst = worst.max((grads.d_k[i * n + j] - fd).abs());
         }
     }
-    println!("  {} coupling entries, worst |adjoint - finite difference| = {worst:.3e}", n * (n - 1));
+    println!(
+        "  {} coupling entries, worst |adjoint - finite difference| = {worst:.3e}",
+        n * (n - 1)
+    );
     println!("  (the forward map is pinned to the two-oscillator closed form in the tests first:");
     println!("   a gradient check alone validates the derivative of whatever was implemented)");
 
     // ---- 2. what the integrator costs the gradient ---------------------------------------
-    println!("\n== 2. Euler against a fourth-order reference, in the trajectory and the gradient ==");
+    println!(
+        "\n== 2. Euler against a fourth-order reference, in the trajectory and the gradient =="
+    );
     println!("  each error relative to the size of the quantity it belongs to");
     let cases: [(&str, usize, u64, f64, usize); 5] = [
         ("n=4  K~1.4   20 steps", 4, 2026, 1.4, 20),
@@ -103,7 +108,10 @@ fn main() {
         let phi0: Vec<f64> = (0..n).map(|i| 0.4 * (i as f64 + 1.0)).collect();
         let g: Vec<f64> = (0..2 * n).map(|i| 0.5 + 0.2 * i as f64).collect();
         println!("  -- {label} --");
-        println!("  {:>8} {:>12} {:>12} {:>9}", "dt", "phase rel", "grad rel", "penalty");
+        println!(
+            "  {:>8} {:>12} {:>12} {:>9}",
+            "dt", "phase rel", "grad rel", "penalty"
+        );
         for dt in [0.2f64, 0.1, 0.05, 0.025, 0.0125] {
             let gap = integrator_gap(&sys, &phi0, dt, steps, 64, &g);
             let p = gap.gradient_penalty();
@@ -122,7 +130,9 @@ fn main() {
     println!("  the gradient's relative error exceeds the trajectory's in {above} of {total},");
     println!("  by as much as {biggest:.0}x. The exceptions are the smallest, most weakly coupled");
     println!("  system at its finest steps, where both errors are already under a percent --");
-    println!("  they are kept because the temptation is to state this as a theorem, and it is not.");
+    println!(
+        "  they are kept because the temptation is to state this as a theorem, and it is not."
+    );
     println!("  What it is: the two errors are not proxies for one another, and dt is a trained");
     println!("  parameter in disguise. A model fitted through a coarse Euler map absorbed that");
     println!("  map's error into its weights, and silicon has no such error to cancel.");
@@ -131,9 +141,7 @@ fn main() {
     println!("\n== 3. fitting a coupling with it ==");
     let target = fixture(4, 909, 1.0);
     let phi0: Vec<f64> = (0..4).map(|i| 0.25 * (i as f64 + 1.0)).collect();
-    let want = features_of(
-        trajectory(&target, &phi0, 0.05, 40).last().expect("tape"),
-    );
+    let want = features_of(trajectory(&target, &phi0, 0.05, 40).last().expect("tape"));
     // Start from no coupling at all, keeping the target's natural frequencies.
     let mut k = vec![0.0f64; 16];
     let mut report = Vec::new();

@@ -11,12 +11,17 @@
 // agree with itself. Checking against a foreign bitstream makes the device the witness.
 //
 // usage: readback <reference.bit> [n_frames]
-use ferrotherm_silicon::bitstream::{decode, find_sync, parse_bit, reg, to_words, Packet};
+use ferrotherm_silicon::bitstream::{Packet, decode, find_sync, parse_bit, reg, to_words};
 use ferrotherm_silicon::flash::{Ftdi, Tap};
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: readback <reference.bit> [n_frames]");
-    let n: usize = std::env::args().nth(2).and_then(|s| s.parse().ok()).unwrap_or(4);
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: readback <reference.bit> [n_frames]");
+    let n: usize = std::env::args()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(4);
     let raw = std::fs::read(&path).expect("read");
     let bit = parse_bit(&raw);
     let sync = find_sync(bit.config).expect("sync");
@@ -46,7 +51,11 @@ fn main() {
         };
     }
     let far = far.unwrap_or(0);
-    println!("reference: FAR 0x{far:08X}, {} payload words ({} frames)", payload.len(), payload.len() / 101);
+    println!(
+        "reference: FAR 0x{far:08X}, {} payload words ({} frames)",
+        payload.len(),
+        payload.len() / 101
+    );
     if payload.len() < n * 101 {
         println!("reference has fewer than {n} frames");
         return;
@@ -72,14 +81,22 @@ fn main() {
             matches += 1;
         } else {
             if diffs < 5 {
-                println!("  word {i:4} (frame {}, w{}): device 0x{:08X}  reference 0x{:08X}",
-                         i / 101, i % 101, got[i], payload[i]);
+                println!(
+                    "  word {i:4} (frame {}, w{}): device 0x{:08X}  reference 0x{:08X}",
+                    i / 101,
+                    i % 101,
+                    got[i],
+                    payload[i]
+                );
             }
             diffs += 1;
         }
     }
     let total = matches + diffs;
-    println!("\n{matches}/{total} words match ({:.1}%)", 100.0 * matches as f64 / total.max(1) as f64);
+    println!(
+        "\n{matches}/{total} words match ({:.1}%)",
+        100.0 * matches as f64 / total.max(1) as f64
+    );
     println!(
         "verdict: {}",
         if total > 0 && matches * 100 / total >= 95 {

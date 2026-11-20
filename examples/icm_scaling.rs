@@ -21,9 +21,9 @@
 
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::host::Timing;
+use ferrotherm::icm;
 use ferrotherm::rng::Pcg;
 use ferrotherm::tempering::geometric_ladder;
-use ferrotherm::icm;
 
 /// A periodic 2D spin glass: couplings uniform in {-1, +1}, no fields.
 fn glass(l: usize, seed: u64) -> Graph {
@@ -32,8 +32,16 @@ fn glass(l: usize, seed: u64) -> Graph {
     for y in 0..l {
         for x in 0..l {
             let i = y * l + x;
-            gb.couple(i, y * l + (x + 1) % l, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
-            gb.couple(i, ((y + 1) % l) * l + x, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+            gb.couple(
+                i,
+                y * l + (x + 1) % l,
+                if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+            );
+            gb.couple(
+                i,
+                ((y + 1) % l) * l + x,
+                if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+            );
         }
     }
     gb.build()
@@ -43,11 +51,19 @@ fn main() {
     const SEEDS: u64 = 20;
     println!("parallel tempering, with and without isoenergetic cluster moves");
     println!("same ladder, same seeds, same sweep budget; 12 rungs from beta 0.1 to 4.0\n");
-    println!("  {:>7} {:>6} {:>7} {:>5} {:>5} {:>5} {:>12} {:>14}",
-             "lattice", "spins", "rounds", "win", "lose", "tie", "mean dE", "mean cluster");
+    println!(
+        "  {:>7} {:>6} {:>7} {:>5} {:>5} {:>5} {:>12} {:>14}",
+        "lattice", "spins", "rounds", "win", "lose", "tie", "mean dE", "mean cluster"
+    );
 
     let mut dirty: Option<String> = None;
-    for (l, rounds) in [(8usize, 300usize), (12, 200), (16, 200), (20, 150), (24, 150)] {
+    for (l, rounds) in [
+        (8usize, 300usize),
+        (12, 200),
+        (16, 200),
+        (20, 150),
+        (24, 150),
+    ] {
         let (mut w, mut lo, mut tie) = (0, 0, 0);
         let (mut de, mut spins, mut moves) = (0.0f64, 0u64, 0usize);
         for seed in 0..SEEDS {
@@ -61,8 +77,15 @@ fn main() {
             };
             let (pair, t) = Timing::around(|| {
                 let plain = icm::run(&g, &base, seed).expect("no fields");
-                let with = icm::run(&g, &icm::Params { icm_every: 1, ..base.clone() }, seed)
-                    .expect("no fields");
+                let with = icm::run(
+                    &g,
+                    &icm::Params {
+                        icm_every: 1,
+                        ..base.clone()
+                    },
+                    seed,
+                )
+                .expect("no fields");
                 (plain, with)
             });
             dirty = dirty.or_else(|| t.caveat());
@@ -80,9 +103,18 @@ fn main() {
         }
         // The mean cluster size is the diagnostic that says the move is a CLUSTER move: a mean of
         // one would be single-spin flips under a grander name.
-        let mean_cluster = if moves == 0 { 0.0 } else { spins as f64 / moves as f64 };
-        println!("  {:>7} {:>6} {rounds:>7} {w:>5} {lo:>5} {tie:>5} {:>12.2} {:>14.1}",
-                 format!("{l}x{l}"), l * l, de / SEEDS as f64, mean_cluster);
+        let mean_cluster = if moves == 0 {
+            0.0
+        } else {
+            spins as f64 / moves as f64
+        };
+        println!(
+            "  {:>7} {:>6} {rounds:>7} {w:>5} {lo:>5} {tie:>5} {:>12.2} {:>14.1}",
+            format!("{l}x{l}"),
+            l * l,
+            de / SEEDS as f64,
+            mean_cluster
+        );
     }
 
     if let Some(c) = &dirty {
@@ -91,7 +123,9 @@ fn main() {
         println!("number whoever else is on the CPU. No timing is reported.");
     }
     println!("\nREADING: `mean dE` below zero is the cluster move winning, and the column that");
-    println!("matters is how it MOVES with size. A single size cannot distinguish 'ICM helps' from");
+    println!(
+        "matters is how it MOVES with size. A single size cannot distinguish 'ICM helps' from"
+    );
     println!("'this instance was hard'; a trend can. Negative and growing is the literature's");
     println!("claim, and it is the reason the unit test for this runs at 16 and not at 8.");
 }

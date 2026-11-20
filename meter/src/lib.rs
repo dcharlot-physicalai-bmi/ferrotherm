@@ -87,7 +87,7 @@ const SETTLE: Duration = Duration::from_secs(3);
 // heat whether the machine has four cores or forty, and that heat lands in the same power reading
 // the baseline is made of. A percentage-of-cores threshold would quietly permit an
 // 18-core machine to take a "baseline" with four builds running.
-use ferrotherm::host::{load_average, QUIET_LOAD};
+use ferrotherm::host::{QUIET_LOAD, load_average};
 
 pub mod ina3221;
 
@@ -265,8 +265,20 @@ impl PowerIntegral {
     /// and it stays `NaN` rather than becoming zero.
     #[must_use]
     pub fn cadence_edge_j(&self) -> f64 {
-        let left = edge_term(self.left, self.left_gap_s, self.left_step_w, self.uncovered_left_s, self.power_span_w);
-        let right = edge_term(self.right, self.right_gap_s, self.right_step_w, self.uncovered_right_s, self.power_span_w);
+        let left = edge_term(
+            self.left,
+            self.left_gap_s,
+            self.left_step_w,
+            self.uncovered_left_s,
+            self.power_span_w,
+        );
+        let right = edge_term(
+            self.right,
+            self.right_gap_s,
+            self.right_step_w,
+            self.uncovered_right_s,
+            self.power_span_w,
+        );
         left + right
     }
 }
@@ -275,7 +287,11 @@ fn edge_term(edge: EdgeFix, gap: f64, step: f64, uncovered: f64, span: f64) -> f
     match edge {
         EdgeFix::OnSample => 0.0,
         EdgeFix::Interpolated => {
-            if gap.is_finite() && step.is_finite() { 0.5 * gap * step } else { f64::NAN }
+            if gap.is_finite() && step.is_finite() {
+                0.5 * gap * step
+            } else {
+                f64::NAN
+            }
         }
         EdgeFix::Uncovered => {
             if uncovered == 0.0 {
@@ -310,7 +326,9 @@ const EDGE_EPS: f64 = 1e-6;
 /// check.
 pub fn trapezoid(samples: &[(f64, f64)], start: f64, end: f64) -> Result<PowerIntegral, String> {
     if !start.is_finite() || !end.is_finite() || end <= start {
-        return Err(format!("energy window [{start}, {end}] is not a positive finite interval"));
+        return Err(format!(
+            "energy window [{start}, {end}] is not a positive finite interval"
+        ));
     }
     let mut pts: Vec<(f64, f64)> = samples
         .iter()
@@ -354,8 +372,16 @@ pub fn trapezoid(samples: &[(f64, f64)], start: f64, end: f64) -> Result<PowerIn
     let first_t = knots[0].0;
     let last_t = knots[knots.len() - 1].0;
     let covered_s = last_t - first_t;
-    let uncovered_left_s = if left == EdgeFix::Uncovered { (first_t - start).max(0.0) } else { 0.0 };
-    let uncovered_right_s = if right == EdgeFix::Uncovered { (end - last_t).max(0.0) } else { 0.0 };
+    let uncovered_left_s = if left == EdgeFix::Uncovered {
+        (first_t - start).max(0.0)
+    } else {
+        0.0
+    };
+    let uncovered_right_s = if right == EdgeFix::Uncovered {
+        (end - last_t).max(0.0)
+    } else {
+        0.0
+    };
     let inside: Vec<(f64, f64)> = pts
         .iter()
         .copied()
@@ -379,8 +405,16 @@ pub fn trapezoid(samples: &[(f64, f64)], start: f64, end: f64) -> Result<PowerIn
         }
     }
     let powers: Vec<f64> = knots.iter().map(|k| k.1).collect();
-    let (mn, mx) = powers.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), p| (mn.min(*p), mx.max(*p)));
-    let power_span_w = if powers.len() >= 2 && mn.is_finite() && mx.is_finite() { mx - mn } else { f64::NAN };
+    let (mn, mx) = powers
+        .iter()
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(mn, mx), p| {
+            (mn.min(*p), mx.max(*p))
+        });
+    let power_span_w = if powers.len() >= 2 && mn.is_finite() && mx.is_finite() {
+        mx - mn
+    } else {
+        f64::NAN
+    };
     Ok(PowerIntegral {
         joules,
         covered_s,
@@ -409,12 +443,24 @@ fn place_edge(
     if let Some((_, p)) = pts.iter().find(|(t, _)| on(*t, boundary)) {
         return (EdgeFix::OnSample, Some(*p), 0.0, 0.0);
     }
-    let before = pts.iter().rev().find(|(t, _)| *t < boundary - EDGE_EPS).copied();
+    let before = pts
+        .iter()
+        .rev()
+        .find(|(t, _)| *t < boundary - EDGE_EPS)
+        .copied();
     let after = pts.iter().find(|(t, _)| *t > boundary + EDGE_EPS).copied();
     if let (Some((t0, p0)), Some((t1, p1))) = (before, after) {
         let p = p0 + (p1 - p0) * (boundary - t0) / (t1 - t0);
-        let toward_inside = if is_left { t1 - boundary } else { boundary - t0 };
-        let toward_outside = if is_left { boundary - t0 } else { t1 - boundary };
+        let toward_inside = if is_left {
+            t1 - boundary
+        } else {
+            boundary - t0
+        };
+        let toward_outside = if is_left {
+            boundary - t0
+        } else {
+            t1 - boundary
+        };
         let window = (other - boundary).abs();
         let gap = toward_inside.min(toward_outside).min(window);
         return (EdgeFix::Interpolated, Some(p), gap, (p1 - p0).abs());
@@ -423,13 +469,21 @@ fn place_edge(
 }
 
 fn median_positive(xs: &[f64]) -> f64 {
-    let mut v: Vec<f64> = xs.iter().copied().filter(|x| x.is_finite() && *x > 0.0).collect();
+    let mut v: Vec<f64> = xs
+        .iter()
+        .copied()
+        .filter(|x| x.is_finite() && *x > 0.0)
+        .collect();
     if v.is_empty() {
         return f64::NAN;
     }
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let n = v.len();
-    if n.is_multiple_of(2) { 0.5 * (v[n / 2 - 1] + v[n / 2]) } else { v[n / 2] }
+    if n.is_multiple_of(2) {
+        0.5 * (v[n / 2 - 1] + v[n / 2])
+    } else {
+        v[n / 2]
+    }
 }
 
 /// What a measured run cost.
@@ -501,19 +555,27 @@ impl Meter {
         let machine = format!("INA3221 rail {}", rails.total().label);
         let readings: Arc<Mutex<Vec<(Instant, f64)>>> = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&readings);
-        std::thread::spawn(move || loop {
-            let Ok(w) = rails.watts() else { return };
-            {
-                let mut v = sink.lock().unwrap();
-                v.push((Instant::now(), w));
-                if v.len() > 4096 {
-                    v.drain(..2048);
+        std::thread::spawn(move || {
+            loop {
+                let Ok(w) = rails.watts() else { return };
+                {
+                    let mut v = sink.lock().unwrap();
+                    v.push((Instant::now(), w));
+                    if v.len() > 4096 {
+                        v.drain(..2048);
+                    }
                 }
+                std::thread::sleep(ina3221::POLL);
             }
-            std::thread::sleep(ina3221::POLL);
         });
         // A board rail carries everything downstream of it, discrete parts included.
-        let m = Meter { child: None, readings, machine, backend: "ina3221", scope: backend_scope("ina3221", "") };
+        let m = Meter {
+            child: None,
+            readings,
+            machine,
+            backend: "ina3221",
+            scope: backend_scope("ina3221", ""),
+        };
         m.wait_for_first(Duration::from_secs(4))?;
         Some(m)
     }
@@ -570,7 +632,13 @@ impl Meter {
             .unwrap_or_else(|| "unknown x86".into());
         let machine = format!("{cpu} [{}]", rapl::scope_note(kind));
         let scope = backend_scope("rapl", kind);
-        let m = Meter { child: None, readings, machine, backend: "rapl", scope };
+        let m = Meter {
+            child: None,
+            readings,
+            machine,
+            backend: "rapl",
+            scope,
+        };
         m.wait_for_first(Duration::from_secs(3))?;
         Some(m)
     }
@@ -613,7 +681,13 @@ impl Meter {
             .unwrap_or_else(|| "unknown Apple silicon".into());
         // `sys_power` is SoC telemetry, integrated GPU included. It is not a wall-plug reading,
         // and a discrete GPU on its own feed is outside it.
-        let m = Meter { child: Some(child), readings, machine, backend: "macmon", scope: backend_scope("macmon", "") };
+        let m = Meter {
+            child: Some(child),
+            readings,
+            machine,
+            backend: "macmon",
+            scope: backend_scope("macmon", ""),
+        };
         // macmon does not produce its first reading for over a second. Waiting for it here means a
         // caller's measurement window covers their workload rather than the backend's warm-up --
         // which is what made a 1.2 s idle window collect exactly one sample.
@@ -731,7 +805,10 @@ impl Meter {
         std::thread::sleep(at_least.max(Duration::from_millis(MIN_SAMPLES as u64 * INTERVAL_MS)));
         let seconds = from.elapsed().as_secs_f64();
         let series = self.readings_secs(from);
-        let n = series.iter().filter(|(t, _)| *t >= -EDGE_EPS && *t <= seconds + EDGE_EPS).count();
+        let n = series
+            .iter()
+            .filter(|(t, _)| *t >= -EDGE_EPS && *t <= seconds + EDGE_EPS)
+            .count();
         if n < MIN_SAMPLES {
             return Err(format!(
                 "idle needs at least {MIN_SAMPLES} readings and got {n} in {:.2} s; the backend \
@@ -751,7 +828,13 @@ impl Meter {
             .collect();
         let amean = inside.iter().sum::<f64>() / inside.len() as f64;
         let var = inside.iter().map(|w| (w - amean).powi(2)).sum::<f64>() / inside.len() as f64;
-        Ok(Baseline { watts, sigma: var.sqrt(), samples: integ.samples, load1: load_average(), cadence_s: integ.cadence_s })
+        Ok(Baseline {
+            watts,
+            sigma: var.sqrt(),
+            samples: integ.samples,
+            load1: load_average(),
+            cadence_s: integ.cadence_s,
+        })
     }
 
     /// Integrate power over `f` and return both gross and above-idle joules, including a delta
@@ -761,7 +844,11 @@ impl Meter {
     /// # Errors
     ///
     /// Too few samples for an integral, or the edges leave fewer than two knots.
-    pub fn integrate<R>(&mut self, idle: Baseline, f: impl FnOnce() -> R) -> Result<(Run, R), String> {
+    pub fn integrate<R>(
+        &mut self,
+        idle: Baseline,
+        f: impl FnOnce() -> R,
+    ) -> Result<(Run, R), String> {
         let t0 = Instant::now();
         let value = f();
         let seconds = t0.elapsed().as_secs_f64();
@@ -839,7 +926,10 @@ impl Meter {
 
     fn integrate_window(&self, idle: Baseline, t0: Instant, seconds: f64) -> Result<Run, String> {
         let series = self.readings_secs(t0);
-        let samples = series.iter().filter(|(t, _)| *t >= -EDGE_EPS && *t <= seconds + EDGE_EPS).count();
+        let samples = series
+            .iter()
+            .filter(|(t, _)| *t >= -EDGE_EPS && *t <= seconds + EDGE_EPS)
+            .count();
         if samples < MIN_SAMPLES {
             return Err(format!(
                 "that workload ran for {seconds:.3} s and produced {samples} power reading(s). \
@@ -1013,7 +1103,11 @@ mod tests {
             machine: "test".into(),
             backend: "test",
         };
-        let l = Ledger { samples: 1_000_000, reads: 0, writes: 0 };
+        let l = Ledger {
+            samples: 1_000_000,
+            reads: 0,
+            writes: 0,
+        };
         let p = m.prices_from(&l).expect("a sample-dominated run");
         assert_eq!(p.evidence, ferrotherm::ledger::Evidence::Metered);
         assert!(p.source.contains("measured on"));
@@ -1023,7 +1117,6 @@ mod tests {
             ferrotherm::ledger::Evidence::Simulated
         );
     }
-
 
     /// Measuring power means OWNING the machine.
     ///
@@ -1079,7 +1172,10 @@ mod tests {
         assert_eq!(backend_scope("macmon", ""), Scope::SocTelemetry);
         assert_eq!(Scope::SocTelemetry.label(), "soc-telemetry");
         assert!(Scope::SocTelemetry.covers(false));
-        assert!(!Scope::SocTelemetry.covers(true), "sys_power does not see a discrete card");
+        assert!(
+            !Scope::SocTelemetry.covers(true),
+            "sys_power does not see a discrete card"
+        );
         assert_eq!(backend_scope("rapl", "package"), Scope::CpuPackage);
         assert_eq!(backend_scope("rapl", "psys"), Scope::WholeSystem);
         assert!(Scope::CpuPackage.covers(false));
@@ -1114,7 +1210,11 @@ mod tests {
         assert_eq!(edges.right, EdgeFix::Interpolated);
         assert_eq!(edges.samples, 2);
         assert!((edges.cadence_s - 0.4).abs() < 1e-12);
-        assert!((edges.cadence_edge_j() - 2.0).abs() < 1e-9, "{}", edges.cadence_edge_j());
+        assert!(
+            (edges.cadence_edge_j() - 2.0).abs() < 1e-9,
+            "{}",
+            edges.cadence_edge_j()
+        );
 
         let open = [(0.25, 4.0), (0.75, 8.0)];
         let missing = trapezoid(&open, 0.0, 1.0).unwrap();
@@ -1124,7 +1224,11 @@ mod tests {
         assert!((missing.uncovered_right_s - 0.25).abs() < 1e-12);
         assert_eq!(missing.left, EdgeFix::Uncovered);
         assert_eq!(missing.right, EdgeFix::Uncovered);
-        assert!((missing.cadence_edge_j() - 2.0).abs() < 1e-12, "{}", missing.cadence_edge_j());
+        assert!(
+            (missing.cadence_edge_j() - 2.0).abs() < 1e-12,
+            "{}",
+            missing.cadence_edge_j()
+        );
         assert_eq!(missing.samples, 2);
         assert!((missing.cadence_s - 0.5).abs() < 1e-12);
     }
@@ -1147,7 +1251,10 @@ mod tests {
         // Tested on the DECISION, not on whatever this machine happens to be doing, so deleting
         // the guard fails here on a quiet machine and a busy one alike.
         assert!(quiet_enough(Some(0.0)).is_ok());
-        assert!(quiet_enough(Some(QUIET_LOAD)).is_ok(), "the threshold itself is allowed");
+        assert!(
+            quiet_enough(Some(QUIET_LOAD)).is_ok(),
+            "the threshold itself is allowed"
+        );
         assert!(
             quiet_enough(None).is_ok(),
             "a platform with no load average must still be measurable; the unknown is recorded"
@@ -1155,7 +1262,10 @@ mod tests {
 
         // 82 is not arbitrary: it is the load this project actually published a table at.
         let e = quiet_enough(Some(82.0)).unwrap_err();
-        assert!(e.contains("load average"), "the refusal must name the reason: {e}");
+        assert!(
+            e.contains("load average"),
+            "the refusal must name the reason: {e}"
+        );
         assert!(e.contains("82"), "and the value it saw: {e}");
         assert!(
             e.contains("INFLATED"),
@@ -1175,10 +1285,16 @@ mod tests {
         let verdict = m.idle(Duration::from_millis(1200));
         match (observed, &verdict) {
             (Some(l), Err(e)) if l > QUIET_LOAD => {
-                assert!(e.contains("load average"), "refused for the wrong reason: {e}");
+                assert!(
+                    e.contains("load average"),
+                    "refused for the wrong reason: {e}"
+                );
             }
             (Some(l), Ok(b)) => {
-                assert!(l <= QUIET_LOAD, "granted a baseline at load {l}, above {QUIET_LOAD}");
+                assert!(
+                    l <= QUIET_LOAD,
+                    "granted a baseline at load {l}, above {QUIET_LOAD}"
+                );
                 assert_eq!(b.load1.map(|x| x <= QUIET_LOAD), Some(true));
             }
             // No load average, or refused for one of the other reasons (too few readings). Both
@@ -1193,10 +1309,19 @@ mod tests {
         // own clock, so a fast workload simply is not observable, and returning a number anyway
         // would be inventing precision.
         let (mut m, _own) = meter_or_skip!();
-        let zero = Baseline { watts: 0.0, sigma: 0.0, samples: MIN_SAMPLES, load1: None, cadence_s: 0.1 };
+        let zero = Baseline {
+            watts: 0.0,
+            sigma: 0.0,
+            samples: MIN_SAMPLES,
+            load1: None,
+            cadence_s: 0.1,
+        };
         let e = m.measure(zero, || std::hint::black_box(1 + 1)).unwrap_err();
         assert!(e.contains("reading"), "must say what was short: {e}");
-        assert!(e.contains("not an estimate"), "and why that is refused: {e}");
+        assert!(
+            e.contains("not an estimate"),
+            "and why that is refused: {e}"
+        );
     }
 
     #[test]
@@ -1232,7 +1357,9 @@ mod tests {
         let idle = match m.idle(Duration::from_millis(1200)) {
             Ok(i) => i,
             Err(e) => {
-                skipped(&format!("machine was not quiet enough to take a baseline: {e}"));
+                skipped(&format!(
+                    "machine was not quiet enough to take a baseline: {e}"
+                ));
                 return;
             }
         };
@@ -1266,14 +1393,25 @@ mod tests {
         );
 
         let p = run.prices_from(&led).unwrap();
-        assert!(p.e_sample > 0.0 && p.e_sample.is_finite(), "e_sample = {}", p.e_sample);
-        assert!(p.source.contains("measured on"), "provenance must travel: {}", p.source);
+        assert!(
+            p.e_sample > 0.0 && p.e_sample.is_finite(),
+            "e_sample = {}",
+            p.e_sample
+        );
+        assert!(
+            p.source.contains("measured on"),
+            "provenance must travel: {}",
+            p.source
+        );
         assert!(
             p.e_read.is_nan() && p.e_write.is_nan(),
             "reads and writes were not measured here, and zero would claim they are free"
         );
         // NOT stated as a whole table: one measurement fixes one of three costs.
-        assert!(!p.is_stated(), "one measured term does not make a complete price table");
+        assert!(
+            !p.is_stated(),
+            "one measured term does not make a complete price table"
+        );
 
         // AND YET IT PRICES THIS RUN EXACTLY, which is the whole point of `Ledger::joules` charging
         // PER OPERATION rather than all-or-nothing. A serial sweep performs samples and nothing
@@ -1287,7 +1425,9 @@ mod tests {
         // it reached this line perhaps once in a preflight run. See `skipped`.
         assert_eq!(led.reads, 0, "a serial sweep reads nothing out");
         assert_eq!(led.writes, 0, "and flashes nothing");
-        let total = led.joules(&p).expect("a sample-only ledger is priceable by a sample-only table");
+        let total = led
+            .joules(&p)
+            .expect("a sample-only ledger is priceable by a sample-only table");
         assert!(
             (total - led.samples as f64 * p.e_sample).abs() < 1e-9 * total.abs().max(1.0),
             "the total is the sampling cost and nothing else: {total} against {} samples at {}",
@@ -1325,12 +1465,23 @@ mod tests {
             machine: "test".into(),
             backend: "test",
         };
-        let mixed = Ledger { samples: 100, reads: 50, writes: 10 };
+        let mixed = Ledger {
+            samples: 100,
+            reads: 50,
+            writes: 10,
+        };
         let e = run.prices_from(&mixed).unwrap_err();
         assert!(e.contains("sample-dominated"), "{e}");
-        assert!(e.contains("solve the pair"), "and say how to do it properly: {e}");
+        assert!(
+            e.contains("solve the pair"),
+            "and say how to do it properly: {e}"
+        );
 
-        let clean = Ledger { samples: 10_000, reads: 0, writes: 0 };
+        let clean = Ledger {
+            samples: 10_000,
+            reads: 0,
+            writes: 0,
+        };
         assert!(run.prices_from(&clean).is_ok());
     }
 }

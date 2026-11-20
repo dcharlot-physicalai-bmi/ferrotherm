@@ -32,7 +32,7 @@
 //! the full bit; a tighter one would need the conditional entropy per update, which the exact
 //! kernel can supply and which is a later addition.
 
-use crate::autocorr::{apply_distribution, own_law, AutocorrError, Kernel, MAX_DENSE_SPINS};
+use crate::autocorr::{AutocorrError, Kernel, MAX_DENSE_SPINS, apply_distribution, own_law};
 use crate::graph::Graph;
 use crate::ledger::Prices;
 use std::collections::BTreeMap;
@@ -77,7 +77,10 @@ pub struct Fluctuation {
 /// As [`own_law`], and [`AutocorrError::TooManyForDense`] above [`MAX_DENSE_SPINS`].
 pub fn fluctuation(g: &Graph, beta: f64, kernel: Kernel) -> Result<Fluctuation, AutocorrError> {
     if g.n > MAX_DENSE_SPINS {
-        return Err(AutocorrError::TooManyForDense { n: g.n, max: MAX_DENSE_SPINS });
+        return Err(AutocorrError::TooManyForDense {
+            n: g.n,
+            max: MAX_DENSE_SPINS,
+        });
     }
     let pi = own_law(g, beta, kernel)?;
     let m = 1usize << g.n;
@@ -121,10 +124,17 @@ pub fn fluctuation(g: &Graph, beta: f64, kernel: Kernel) -> Result<Fluctuation, 
     for (key, p_plus) in &plus {
         let a = f64::from_bits(*key);
         let want = a.exp();
-        let ratio = minus.get(key).map_or(f64::INFINITY, |p_minus| p_plus / p_minus);
+        let ratio = minus
+            .get(key)
+            .map_or(f64::INFINITY, |p_minus| p_plus / p_minus);
         defect = defect.max((ratio - want).abs() / want);
     }
-    Ok(Fluctuation { mean, integral, symmetry_defect: defect, one_way_mass: one_way })
+    Ok(Fluctuation {
+        mean,
+        integral,
+        symmetry_defect: defect,
+        one_way_mass: one_way,
+    })
 }
 
 #[cfg(test)]
@@ -159,11 +169,20 @@ mod tests {
     #[test]
     fn the_floor_at_room_temperature_and_the_devices_above_it() {
         let floor = landauer_bound(300.0);
-        assert!((floor - 2.870_978_e-21).abs() < 1e-26, "kT ln 2 at 300 K: {floor:e}");
+        assert!(
+            (floor - 2.870_978_e-21).abs() < 1e-26,
+            "kT ln 2 at 300 K: {floor:e}"
+        );
         let kv = floor_ratio(&KV260_MEASURED, 300.0);
         let z1 = floor_ratio(&Z1_SPICE, 300.0);
-        assert!((kv / 3.778e9 - 1.0).abs() < 1e-3, "KV260: {kv:e} Landauer bits per flip");
-        assert!((z1 / 2.469e6 - 1.0).abs() < 1e-3, "Z1 SPICE: {z1:e} Landauer bits per update");
+        assert!(
+            (kv / 3.778e9 - 1.0).abs() < 1e-3,
+            "KV260: {kv:e} Landauer bits per flip"
+        );
+        assert!(
+            (z1 / 2.469e6 - 1.0).abs() < 1e-3,
+            "Z1 SPICE: {z1:e} Landauer bits per update"
+        );
     }
 
     /// On a kernel whose every transition has a reverse the integral theorem holds to rounding,
@@ -172,13 +191,29 @@ mod tests {
     #[test]
     fn the_fluctuation_theorems_hold_exactly_on_a_reversible_support_kernel() {
         let g = grid_glass(3, 3, 5);
-        for kernel in [Kernel::ChromaticGibbs, Kernel::SequentialGibbs, Kernel::Synchronous] {
+        for kernel in [
+            Kernel::ChromaticGibbs,
+            Kernel::SequentialGibbs,
+            Kernel::Synchronous,
+        ] {
             let f = fluctuation(&g, 1.1, kernel).unwrap();
-            assert!((f.integral - 1.0).abs() < 1e-12, "{kernel:?}: <exp(-ds)> = {}", f.integral);
-            assert!(f.symmetry_defect < 1e-9, "{kernel:?}: symmetry defect {:e}", f.symmetry_defect);
+            assert!(
+                (f.integral - 1.0).abs() < 1e-12,
+                "{kernel:?}: <exp(-ds)> = {}",
+                f.integral
+            );
+            assert!(
+                f.symmetry_defect < 1e-9,
+                "{kernel:?}: symmetry defect {:e}",
+                f.symmetry_defect
+            );
             assert_eq!(f.one_way_mass, 0.0, "{kernel:?}: one-way mass");
             let sigma = entropy_production(&g, 1.1, kernel).unwrap();
-            assert!((f.mean - sigma).abs() < 1e-12 * sigma.max(1.0), "{kernel:?}: mean {} vs Sigma {sigma}", f.mean);
+            assert!(
+                (f.mean - sigma).abs() < 1e-12 * sigma.max(1.0),
+                "{kernel:?}: mean {} vs Sigma {sigma}",
+                f.mean
+            );
         }
     }
 
@@ -191,8 +226,21 @@ mod tests {
         // The one-way mass is small -- 1.4e-7 here, the steady-state weight of the states whose
         // exits are forbidden -- and the integral falls short by exactly that much.
         let f = fluctuation(&g, 2.0, Kernel::FixedFabric).unwrap();
-        assert!(f.one_way_mass > 1e-9, "the fabric at beta 2 has forbidden flips: one-way mass {:e}", f.one_way_mass);
-        assert!(f.integral < 1.0 - 1e-9, "<exp(-ds)> over the reversible support = {}", f.integral);
-        assert!((1.0 - f.integral - f.one_way_mass).abs() < 1e-9, "the shortfall must be the one-way mass: {} vs {}", 1.0 - f.integral, f.one_way_mass);
+        assert!(
+            f.one_way_mass > 1e-9,
+            "the fabric at beta 2 has forbidden flips: one-way mass {:e}",
+            f.one_way_mass
+        );
+        assert!(
+            f.integral < 1.0 - 1e-9,
+            "<exp(-ds)> over the reversible support = {}",
+            f.integral
+        );
+        assert!(
+            (1.0 - f.integral - f.one_way_mass).abs() < 1e-9,
+            "the shortfall must be the one-way mass: {} vs {}",
+            1.0 - f.integral,
+            f.one_way_mass
+        );
     }
 }

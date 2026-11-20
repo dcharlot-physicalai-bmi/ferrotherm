@@ -88,7 +88,11 @@ fn arms(visible: usize, latents: usize) -> Vec<(&'static str, Option<Graph>)> {
         }
         Some(ebm::dbm(visible, &vec![latents / k; k]))
     };
-    vec![("wide", Some(ebm::rbm(visible, latents))), ("deep", split(2)), ("deeper", split(3))]
+    vec![
+        ("wide", Some(ebm::rbm(visible, latents))),
+        ("deep", split(2)),
+        ("deeper", split(3)),
+    ]
 }
 
 fn main() {
@@ -114,7 +118,14 @@ fn main() {
         "latents", "arm", "edges", "spins", "log-likelihood", "learned", "tau_int"
     );
 
-    let p = Params { epochs: 400, k: 10, positive_sweeps: 5, learning_rate: 0.05, batch: 7, persistent: false };
+    let p = Params {
+        epochs: 400,
+        k: 10,
+        positive_sweeps: 5,
+        learning_rate: 0.05,
+        batch: 7,
+        persistent: false,
+    };
     // (latents, arm, depth, learned %, tau) for the collapse below.
     let mut rows: Vec<(usize, &'static str, usize, f64, f64)> = Vec::new();
 
@@ -212,12 +223,26 @@ fn main() {
          latents, tau {:.1}, and the fastest is the {} arm at {} latents, {:.1}. Depth does not\n\
          independently make this sampler's life harder; what the model learned does.",
         learned_summary(&rows),
-        slowest.1, slowest.0, slowest.4, fastest.1, fastest.0, fastest.4
+        slowest.1,
+        slowest.0,
+        slowest.4,
+        fastest.1,
+        fastest.0,
+        fastest.4
     );
     // The arm pair where learning is nearly equal: twelve latents, wide against deep.
-    let at12 = |arm: &str| rows.iter().find(|r| r.0 == 12 && r.1 == arm).copied().expect("row");
+    let at12 = |arm: &str| {
+        rows.iter()
+            .find(|r| r.0 == 12 && r.1 == arm)
+            .copied()
+            .expect("row")
+    };
     let (w12, d12) = (at12("wide"), at12("deep"));
-    let least = rows.iter().copied().min_by(|a, b| a.3.total_cmp(&b.3)).expect("rows");
+    let least = rows
+        .iter()
+        .copied()
+        .min_by(|a, b| a.3.total_cmp(&b.3))
+        .expect("rows");
     println!(
         "\nBECAUSE A MODEL THAT HAS NOT LEARNED HAS NOTHING TO GET STUCK IN. tau_int = 0.5 is the\n\
          FLOOR -- the value for perfectly independent draws -- and the model that learned least,\n\
@@ -230,9 +255,15 @@ fn main() {
          latents, where wide and deep land within a few points of each other at {:.1}% and {:.1}%\n\
          -- and there the deep model is {}, {:.1} against {:.1}. That comparison is the one the\n\
          sentence is about; it is one pair, with spreads printed in the table above.",
-        least.1, least.0, least.3, least.4,
-        w12.3, d12.3,
-        if d12.4 > w12.4 { "slower" } else { "faster" }, d12.4, w12.4
+        least.1,
+        least.0,
+        least.3,
+        least.4,
+        w12.3,
+        d12.3,
+        if d12.4 > w12.4 { "slower" } else { "faster" },
+        d12.4,
+        w12.4
     );
 
     // TEETH. Every sentence above is now interpolated from `rows`, but interpolation only stops the
@@ -247,7 +278,10 @@ fn main() {
                 w[0].3 > w[1].3,
                 "claim (A): at {latents} latents the {} arm learned {:.1}% and the deeper {} arm \
                  learned {:.1}% -- depth must buy strictly LESS expressivity",
-                w[0].1, w[0].3, w[1].1, w[1].3
+                w[0].1,
+                w[0].3,
+                w[1].1,
+                w[1].3
             );
         }
     }

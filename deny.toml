@@ -1,0 +1,60 @@
+# Supply-chain gate for the workspace lock.
+#
+# The core library has no dependencies. This file covers the crates that do:
+# ferrotherm-gpu (wgpu, pollster), ferrotherm-cloud (ureq), and
+# ferrotherm-silicon's `flash` feature (nusb). `all-features` is on so the
+# optional USB stack is in the graph, not only the default build.
+#
+# There is no advisory ignore list. A vulnerability or a yanked crate fails
+# the check. A license that is not in `allow` fails the check; adding one
+# means naming the crate and why, not widening this list in advance.
+
+[graph]
+all-features = true
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "wasm32-unknown-unknown",
+    "aarch64-unknown-linux-gnu",
+]
+
+[advisories]
+yanked = "deny"
+unmaintained = "workspace"
+
+[licenses]
+confidence-threshold = 0.93
+# Every expression in the lock is an OR/AND of these identifiers.
+# CDLA-Permissive-2.0 is webpki-roots 1.0, the Mozilla CA bundle ureq's TLS
+# stack ships. It is a permissive data license on that bundle, not code.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "Zlib",
+    "ISC",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "Unicode-3.0",
+    "CDLA-Permissive-2.0",
+]
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+# wgpu 30's own tree needs two majors of each of these. They are not versions
+# we can unify: syn 2 is zerocopy-derive (via half → naga) and syn 3 is
+# bytemuck_derive / thiserror-impl / wasm-bindgen-macro-support; hashbrown
+# 0.16 and 0.17 are likewise split inside that tree. Drop the skip when a wgpu
+# release no longer pulls both.
+skip = [
+    { crate = "syn@2", reason = "wgpu 30 → naga → half → zerocopy-derive still uses syn 2" },
+    { crate = "syn@3", reason = "wgpu 30 → bytemuck_derive, thiserror-impl, and wasm-bindgen-macro-support use syn 3" },
+    { crate = "hashbrown@0.16", reason = "one hashbrown major inside the wgpu 30 graph" },
+    { crate = "hashbrown@0.17", reason = "the other hashbrown major inside the wgpu 30 graph" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

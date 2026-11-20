@@ -36,9 +36,9 @@
 // 4,900-site chain and the whole ladder takes minutes.
 // run: cargo run --release --example kmix_certified
 
-use ferrotherm::autocorr::{apply_distribution, boltzmann, total_variation, Kernel};
+use ferrotherm::autocorr::{Kernel, apply_distribution, boltzmann, total_variation};
 use ferrotherm::cftp::Bounding;
-use ferrotherm::dtm::{forward_step, gamma_coupling, Dtm};
+use ferrotherm::dtm::{Dtm, forward_step, gamma_coupling};
 use ferrotherm::gibbs;
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
@@ -64,15 +64,29 @@ fn data_model(w: usize, h: usize, seed: u64) -> Graph {
     let mut rng = Pcg::new(seed, 0xDA7A);
     let mut b = GraphBuilder::new(w * h);
     for &(a, c) in &grid_edges(w, h) {
-        b.couple(a as usize, c as usize, if rng.f64() < 0.5 { -1.0 } else { 1.0 });
+        b.couple(
+            a as usize,
+            c as usize,
+            if rng.f64() < 0.5 { -1.0 } else { 1.0 },
+        );
     }
     b.build()
 }
 
 enum Data {
-    Enumerated { cdf: Vec<f64>, n: usize },
-    Perfect { g: Graph, beta: f64, next: u64 },
-    Chain { s: Box<gibbs::Sampler<'static>>, thin: usize },
+    Enumerated {
+        cdf: Vec<f64>,
+        n: usize,
+    },
+    Perfect {
+        g: Graph,
+        beta: f64,
+        next: u64,
+    },
+    Chain {
+        s: Box<gibbs::Sampler<'static>>,
+        thin: usize,
+    },
 }
 
 impl Data {
@@ -88,11 +102,17 @@ impl Data {
             Data::Enumerated { cdf, n } => {
                 let u = rng.f64();
                 let x = cdf.partition_point(|&c| c < u).min(cdf.len() - 1);
-                (0..*n).map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 }).collect()
+                (0..*n)
+                    .map(|i| if (x >> i) & 1 == 1 { 1 } else { -1 })
+                    .collect()
             }
             Data::Perfect { g, beta, next } => {
                 *next += 1;
-                Bounding::new(g, *beta).expect("finite beta").draw(*next, None).expect("coalesced when probed").state
+                Bounding::new(g, *beta)
+                    .expect("finite beta")
+                    .draw(*next, None)
+                    .expect("coalesced when probed")
+                    .state
             }
             Data::Chain { s, thin } => {
                 s.sweeps(*thin, None);
@@ -111,7 +131,11 @@ fn conditional(dtm: &Dtm, t: usize, x_next: &[i8]) -> Graph {
         b.couple(a as usize, c as usize, ebm.j[k]);
     }
     for i in 0..ebm.n {
-        let extra = if i < dtm.nv { 0.5 * g * f64::from(x_next[i]) } else { 0.0 };
+        let extra = if i < dtm.nv {
+            0.5 * g * f64::from(x_next[i])
+        } else {
+            0.0
+        };
         b.bias(i, ebm.h[i] + extra);
     }
     b.build()
@@ -139,32 +163,80 @@ fn main() {
     let (contexts, draws_per_context, cap) = (8u64, 32usize, 1usize << 16);
     let data_beta = 0.8;
 
-    println!("K_mix, CERTIFIED: the look-back at which a bounding chain has forgotten EVERY start\n");
-    println!("  chain     T = {t_steps} steps, gamma = {gamma}, times {times:?}; visible = all sites, no latents");
-    println!("  training  {train_iters} contrastive steps per stage, batch {batch}, {k_sweeps} sweeps per phase, lr {lr}");
-    println!("  data      a frustrated +-J grid at beta {data_beta}; how it is drawn is stated per size");
-    println!("  score     {contexts} clamp contexts per step x {draws_per_context} exact draws each; cap {cap} sweeps\n");
+    println!(
+        "K_mix, CERTIFIED: the look-back at which a bounding chain has forgotten EVERY start\n"
+    );
+    println!(
+        "  chain     T = {t_steps} steps, gamma = {gamma}, times {times:?}; visible = all sites, no latents"
+    );
+    println!(
+        "  training  {train_iters} contrastive steps per stage, batch {batch}, {k_sweeps} sweeps per phase, lr {lr}"
+    );
+    println!(
+        "  data      a frustrated +-J grid at beta {data_beta}; how it is drawn is stated per size"
+    );
+    println!(
+        "  score     {contexts} clamp contexts per step x {draws_per_context} exact draws each; cap {cap} sweeps\n"
+    );
     println!(
         "  {:>7} {:>5} {:>4}   {:>6} {:>6}   {:>9}   {:>10} {:>10} {:>8}   {:>11}",
-        "grid", "n", "step", "|J|avg", "|J|max", "exact K1%", "cert. med", "cert. max", "refused", "250 covers?"
+        "grid",
+        "n",
+        "step",
+        "|J|avg",
+        "|J|max",
+        "exact K1%",
+        "cert. med",
+        "cert. max",
+        "refused",
+        "250 covers?"
     );
 
-    for &(w, h) in &[(3usize, 3usize), (4, 3), (6, 6), (8, 8), (12, 12), (16, 16), (24, 24), (32, 32), (48, 48), (70, 70)] {
+    for &(w, h) in &[
+        (3usize, 3usize),
+        (4, 3),
+        (6, 6),
+        (8, 8),
+        (12, 12),
+        (16, 16),
+        (24, 24),
+        (32, 32),
+        (48, 48),
+        (70, 70),
+    ] {
         let n = w * h;
         let model = data_model(w, h, 1);
         let mut data = if n <= 16 {
             let pi = boltzmann(&model, data_beta).expect("small");
             let mut acc = 0.0;
-            let cdf = pi.iter().map(|p| { acc += p; acc }).collect();
+            let cdf = pi
+                .iter()
+                .map(|p| {
+                    acc += p;
+                    acc
+                })
+                .collect();
             Data::Enumerated { cdf, n }
-        } else if Bounding::new(&model, data_beta).expect("finite").with_max_steps(1 << 12).draw(7, None).is_ok() {
-            Data::Perfect { g: model, beta: data_beta, next: 0 }
+        } else if Bounding::new(&model, data_beta)
+            .expect("finite")
+            .with_max_steps(1 << 12)
+            .draw(7, None)
+            .is_ok()
+        {
+            Data::Perfect {
+                g: model,
+                beta: data_beta,
+                next: 0,
+            }
         } else {
             // The sampler borrows its graph; the graph lives for the program, so leak one per size.
             let g: &'static Graph = Box::leak(Box::new(model));
             let mut s = gibbs::Sampler::new(g, data_beta, 0xDA7A + n as u64);
             s.sweeps(2_000, None);
-            Data::Chain { s: Box::new(s), thin: 50 }
+            Data::Chain {
+                s: Box::new(s),
+                thin: 50,
+            }
         };
 
         let mut rng = Pcg::new(9, 0xD7);
@@ -219,7 +291,11 @@ fn main() {
             println!(
                 "  {:>7} {n:>5} {t:>4}   {javg:>6.3} {jmax:>6.3}   {:>9}   {med:>10} {max:>10} {refused:>8}   {:>11}",
                 format!("{w}x{h}"),
-                if n <= 12 { k1max.to_string() } else { "-".to_string() },
+                if n <= 12 {
+                    k1max.to_string()
+                } else {
+                    "-".to_string()
+                },
                 if covered { "yes" } else { "NO" }
             );
         }

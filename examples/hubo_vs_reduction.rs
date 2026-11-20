@@ -156,8 +156,7 @@ fn main() {
 
             let ladder = geometric_ladder(REDUCED_BETA_MIN, 8.0, STAGES);
             for (i, mult) in budgets.iter().enumerate() {
-                let sched: Vec<(f64, usize)> =
-                    ladder.iter().map(|&b| (b, SWEEPS * mult)).collect();
+                let sched: Vec<(f64, usize)> = ladder.iter().map(|&b| (b, SWEEPS * mult)).collect();
                 let (state, reduced_e) = tempering::anneal(&g, &sched, seed, None);
                 let original_e = h.energy(&state[..n]);
                 reduced[i] += original_e;

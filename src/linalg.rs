@@ -100,10 +100,7 @@ mod tests {
     fn eigendecomposition_reconstructs() {
         let n = 4;
         let a = vec![
-            4.0, 1.0, 0.5, 0.0,
-            1.0, 3.0, 0.7, 0.2,
-            0.5, 0.7, 3.5, 1.0,
-            0.0, 0.2, 1.0, 2.5,
+            4.0, 1.0, 0.5, 0.0, 1.0, 3.0, 0.7, 0.2, 0.5, 0.7, 3.5, 1.0, 0.0, 0.2, 1.0, 2.5,
         ];
         let mut d = a.clone();
         let v = jacobi_eig(&mut d, n);
@@ -114,7 +111,12 @@ mod tests {
                 for c in 0..n {
                     s += v[i * n + c] * d[c * n + c] * v[j * n + c];
                 }
-                assert!((s - a[i * n + j]).abs() < 1e-9, "A[{i}{j}] {} vs {}", s, a[i * n + j]);
+                assert!(
+                    (s - a[i * n + j]).abs() < 1e-9,
+                    "A[{i}{j}] {} vs {}",
+                    s,
+                    a[i * n + j]
+                );
             }
         }
     }

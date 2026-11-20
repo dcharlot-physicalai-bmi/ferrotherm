@@ -306,7 +306,12 @@ impl Info {
             mean[i] = e / p;
             variance[i] = 1.0 / p;
         }
-        Ok(Beliefs { mean, variance, iterations, residual })
+        Ok(Beliefs {
+            mean,
+            variance,
+            iterations,
+            residual,
+        })
     }
 }
 
@@ -332,14 +337,26 @@ pub fn grid(w: usize, h: usize, prior: f64, coupling: f64) -> Info {
             }
         }
     }
-    Info { n, diag: vec![prior; n], edges, eta: vec![0.0; n] }
+    Info {
+        n,
+        diag: vec![prior; n],
+        edges,
+        eta: vec![0.0; n],
+    }
 }
 
 /// A chain of `n` scalar nodes — a tree, so belief propagation is exact on it.
 #[must_use]
 pub fn chain(n: usize, prior: f64, coupling: f64) -> Info {
-    let edges = (0..n.saturating_sub(1)).map(|i| (i, i + 1, coupling)).collect();
-    Info { n, diag: vec![prior; n], edges, eta: vec![0.0; n] }
+    let edges = (0..n.saturating_sub(1))
+        .map(|i| (i, i + 1, coupling))
+        .collect();
+    Info {
+        n,
+        diag: vec![prior; n],
+        edges,
+        eta: vec![0.0; n],
+    }
 }
 
 #[cfg(test)]
@@ -361,7 +378,9 @@ mod tests {
         for (n, prior, coupling) in [(2usize, 1.0, -0.4), (8, 1.5, -0.6), (25, 2.0, 0.9)] {
             let m = with_information(chain(n, prior, coupling), 0x11 + n as u64);
             let (mean, var) = m.exact().expect("a chain is well conditioned here");
-            let b = m.belief_propagation(500, 1e-13, 0.0).expect("a tree converges");
+            let b = m
+                .belief_propagation(500, 1e-13, 0.0)
+                .expect("a tree converges");
             for i in 0..n {
                 assert!(
                     (b.mean[i] - mean[i]).abs() < 1e-9,
@@ -397,7 +416,9 @@ mod tests {
         // Ten times the iterations, and the same answer: the error is the fixed point's.
         let mut at = Vec::new();
         for iters in [200usize, 2_000, 20_000] {
-            let b = m.belief_propagation(iters, 1e-14, 0.0).expect("this grid converges");
+            let b = m
+                .belief_propagation(iters, 1e-14, 0.0)
+                .expect("this grid converges");
             worst_mean = 0.0;
             worst_var = 0.0;
             underestimates = 0;
@@ -410,7 +431,10 @@ mod tests {
             }
             at.push(worst_var);
         }
-        assert!(worst_mean < 1e-9, "the means must be EXACT on a converged run: {worst_mean:e}");
+        assert!(
+            worst_mean < 1e-9,
+            "the means must be EXACT on a converged run: {worst_mean:e}"
+        );
         assert!(
             worst_var > 1e-3,
             "the variances must be wrong, and by a margin no tolerance explains: {worst_var:e}"
@@ -460,7 +484,10 @@ mod tests {
         // It must actually be converging, not merely small: ten times the samples buys about
         // sqrt(10) = 3.16x, and asserting only the last would pass for a biased estimator that
         // happened to sit near the answer.
-        assert!(errs[0] > errs[2] * 2.0, "the sampler is not converging: {errs:?}");
+        assert!(
+            errs[0] > errs[2] * 2.0,
+            "the sampler is not converging: {errs:?}"
+        );
         // The crossover itself.
         assert!(
             errs[2] < bp_err,

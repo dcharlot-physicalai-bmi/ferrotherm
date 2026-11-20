@@ -11,12 +11,14 @@
 // hand, and it is the one to read when you want to see how a stage works. This one finds the
 // files, runs the stages, and says at each point what it did and what would have gone wrong --
 // so a first session ends with a configured board rather than with a path error.
-use ferrotherm_silicon::bitstream::{decode, find_sync, to_words, write_bit, Packet};
+use ferrotherm_silicon::bitstream::{Packet, decode, find_sync, to_words, write_bit};
 use ferrotherm_silicon::frame::{assemble, words_to_bytes};
 use ferrotherm_silicon::framebuf::FrameBuf;
 use ferrotherm_silicon::lut::bsn_threshold_init;
 use ferrotherm_silicon::pips::{PipDb, Ppips};
-use ferrotherm_silicon::route::{contentions, interconnect_with_endpoints, parse_tileconn, Fabric, RouteStep};
+use ferrotherm_silicon::route::{
+    Fabric, RouteStep, contentions, interconnect_with_endpoints, parse_tileconn,
+};
 use ferrotherm_silicon::segbits::SegBits;
 use ferrotherm_silicon::tilegrid::TileGrid;
 use std::collections::HashMap;
@@ -35,7 +37,10 @@ struct Needed {
 }
 
 fn needed(db: &Path, rel: &str, purpose: &'static str) -> Needed {
-    Needed { path: db.join(rel), purpose }
+    Needed {
+        path: db.join(rel),
+        purpose,
+    }
 }
 
 fn read(n: &Needed) -> Option<String> {
@@ -64,15 +69,43 @@ fn main() {
     // ---- stage 1: the map ----------------------------------------------------------------
     println!("== 1. the fabric map ==");
     let files = [
-        needed(&db, &format!("{PART}/tilegrid.json"), "every tile and the frame its bits live in"),
-        needed(&db, &format!("{PART}/tileconn.json"), "which wires continue across tile boundaries"),
+        needed(
+            &db,
+            &format!("{PART}/tilegrid.json"),
+            "every tile and the frame its bits live in",
+        ),
+        needed(
+            &db,
+            &format!("{PART}/tileconn.json"),
+            "which wires continue across tile boundaries",
+        ),
         needed(&db, "tile_type_INT_L.json", "the left switchbox's switches"),
-        needed(&db, "tile_type_INT_R.json", "the right switchbox's switches"),
+        needed(
+            &db,
+            "tile_type_INT_R.json",
+            "the right switchbox's switches",
+        ),
         needed(&db, "tile_type_CLBLL_L.json", "the logic tile's site pins"),
-        needed(&db, "segbits_int_l.db", "which bit turns each left switch on"),
-        needed(&db, "segbits_int_r.db", "which bit turns each right switch on"),
-        needed(&db, "segbits_clbll_l.db", "which bits hold a lookup table's truth table"),
-        needed(&db, "ppips_clbll_l.db", "logic-tile connections that are permanent, not switches"),
+        needed(
+            &db,
+            "segbits_int_l.db",
+            "which bit turns each left switch on",
+        ),
+        needed(
+            &db,
+            "segbits_int_r.db",
+            "which bit turns each right switch on",
+        ),
+        needed(
+            &db,
+            "segbits_clbll_l.db",
+            "which bits hold a lookup table's truth table",
+        ),
+        needed(
+            &db,
+            "ppips_clbll_l.db",
+            "logic-tile connections that are permanent, not switches",
+        ),
         needed(&db, "ppips_int_l.db", "the same for the left switchbox"),
         needed(&db, "ppips_int_r.db", "and the right"),
     ];
@@ -87,7 +120,11 @@ fn main() {
     }
     let grid = TileGrid::parse(&text[0]).expect("tilegrid");
     let conns = parse_tileconn(&text[1]).expect("tileconn");
-    println!("  {} tiles, {} wire-continuation rules", grid.tiles.len(), conns.len());
+    println!(
+        "  {} tiles, {} wire-continuation rules",
+        grid.tiles.len(),
+        conns.len()
+    );
 
     let mut dbs = HashMap::new();
     for (i, k) in [(2, "INT_L"), (3, "INT_R"), (4, "CLBLL_L")] {
@@ -116,7 +153,10 @@ fn main() {
     tiles.sort_by_key(|t| (t.grid_x, t.grid_y));
     let placed: Vec<_> = tiles.into_iter().take(n_neurons).collect();
     if placed.len() < n_neurons {
-        println!("  only {} slices match; ask for fewer neurons", placed.len());
+        println!(
+            "  only {} slices match; ask for fewer neurons",
+            placed.len()
+        );
         return;
     }
     println!(
@@ -129,14 +169,20 @@ fn main() {
     println!("\n== 3. the neuron ==");
     let init = bsn_threshold_init(THRESHOLD);
     println!("  fire when popcount(5 neighbours) + coin >= {THRESHOLD}");
-    println!("  that rule as a 64-entry table: 0x{init:016X}  ({} of 64 patterns fire)", init.count_ones());
+    println!(
+        "  that rule as a 64-entry table: 0x{init:016X}  ({} of 64 patterns fire)",
+        init.count_ones()
+    );
     let init_bits = clb_seg
         .lut_init_bits("CLBLL_L.SLICEL_X0.ALUT")
         .expect("a complete 64-bit INIT map");
     let mut fb = FrameBuf::new();
     let mut written = 0usize;
     for t in &placed {
-        if fb.write_lut_init(&t.logic_block().unwrap(), &init_bits, init).is_ok() {
+        if fb
+            .write_lut_init(&t.logic_block().unwrap(), &init_bits, init)
+            .is_ok()
+        {
             written += 1;
         }
     }
@@ -145,8 +191,16 @@ fn main() {
     // ---- stage 4: routing ----------------------------------------------------------------
     println!("\n== 4. couplings ==");
     let clb_pips = PipDb::parse(&text[4]).expect("CLBLL_L");
-    let out_wire = clb_pips.sites[0].pins.get("A").expect("output pin A").clone();
-    let in_wire = clb_pips.sites[0].pins.get("A1").expect("input pin A1").clone();
+    let out_wire = clb_pips.sites[0]
+        .pins
+        .get("A")
+        .expect("output pin A")
+        .clone();
+    let in_wire = clb_pips.sites[0]
+        .pins
+        .get("A1")
+        .expect("input pin A1")
+        .clone();
     let fab = Fabric::with_ppips(&grid, dbs, pp, conns);
     let mut nets: Vec<Vec<RouteStep>> = Vec::new();
     let (mut routed, mut switches, mut failed) = (0usize, 0usize, 0usize);
@@ -163,7 +217,10 @@ fn main() {
         let mut ok = true;
         for s in &path {
             let bits = seg.get(&s.tile_type).and_then(|d| d.get(&s.feature()));
-            let blk = grid.tiles.get(&s.tile).and_then(ferrotherm_silicon::tilegrid::Tile::logic_block);
+            let blk = grid
+                .tiles
+                .get(&s.tile)
+                .and_then(ferrotherm_silicon::tilegrid::Tile::logic_block);
             match (bits, blk) {
                 (Some(b), Some(bl)) if fb.apply_feature(&bl, b).is_ok() => {}
                 _ => ok = false,
@@ -188,15 +245,25 @@ fn main() {
     println!(
         "  {} wires driven twice{}",
         clashes.len(),
-        if clashes.is_empty() { " -- safe to write" } else { " -- DO NOT LOAD THIS" }
+        if clashes.is_empty() {
+            " -- safe to write"
+        } else {
+            " -- DO NOT LOAD THIS"
+        }
     );
 
     // ---- stage 6: the parity every vendor frame carries -----------------------------------
     println!("\n== 6. frame parity ==");
     let odd_before = fb.odd_frames();
     let sealed = fb.set_x7_parity();
-    println!("  {odd_before} of {} frames had the parity no vendor frame has", fb.len());
-    println!("  {sealed} parity bits written; {} frames still odd", fb.odd_frames());
+    println!(
+        "  {odd_before} of {} frames had the parity no vendor frame has",
+        fb.len()
+    );
+    println!(
+        "  {sealed} parity bits written; {} frames still odd",
+        fb.odd_frames()
+    );
 
     // ---- stage 7: the stream -------------------------------------------------------------
     println!("\n== 7. the bitstream ==");
@@ -209,21 +276,38 @@ fn main() {
     let raw = words_to_bytes(&assemble(IDCODE, &fb));
     let sync = find_sync(&raw).expect("a sync word");
     let packets = decode(&to_words(&raw[sync..]));
-    let unknown = packets.iter().filter(|p| matches!(p, Packet::Unknown(_))).count();
+    let unknown = packets
+        .iter()
+        .filter(|p| matches!(p, Packet::Unknown(_)))
+        .count();
     println!(
         "  {} bytes, {frames} frames touched, {set_bits} bits set, {} packets ({unknown} unknown)",
         raw.len(),
         packets.len()
     );
     std::fs::write("lab_fabric.bin", &raw).expect("write");
-    let wrapped = write_bit("lab_fabric;UserID=0XFFFFFFFF", "7a100tfgg484", "2026/01/01", "00:00:00", &raw);
+    let wrapped = write_bit(
+        "lab_fabric;UserID=0XFFFFFFFF",
+        "7a100tfgg484",
+        "2026/01/01",
+        "00:00:00",
+        &raw,
+    );
     std::fs::write("lab_fabric.bit", &wrapped).expect("write");
     println!("  wrote lab_fabric.bin (raw) and lab_fabric.bit (with a header)");
 
     // ---- what to do next -----------------------------------------------------------------
     let even = fb.odd_frames() == 0;
-    let complete = written == n_neurons && failed == 0 && unknown == 0 && clashes.is_empty() && even;
-    println!("\n== {} ==", if complete { "READY" } else { "INCOMPLETE -- read the counts above" });
+    let complete =
+        written == n_neurons && failed == 0 && unknown == 0 && clashes.is_empty() && even;
+    println!(
+        "\n== {} ==",
+        if complete {
+            "READY"
+        } else {
+            "INCOMPLETE -- read the counts above"
+        }
+    );
     if complete {
         println!("  openFPGALoader -c ft2232 --fpga-part xc7a100tfgg484 lab_fabric.bit");
         println!();

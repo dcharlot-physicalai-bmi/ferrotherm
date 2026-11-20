@@ -26,7 +26,9 @@
 //
 // run: cargo run --release --example fabric_exact
 
-use ferrotherm::autocorr::{boltzmann, kemeny_constant, stationary_solved, tau_int_fundamental, total_variation, Kernel};
+use ferrotherm::autocorr::{
+    Kernel, boltzmann, kemeny_constant, stationary_solved, tau_int_fundamental, total_variation,
+};
 use ferrotherm::graph::{Graph, GraphBuilder};
 use ferrotherm::rng::Pcg;
 
@@ -82,13 +84,30 @@ fn main() {
     let g = grid_glass(w, h, 7);
     let n = g.n;
     println!("THE FABRIC'S STATIONARY LAW AGAINST BOLTZMANN, EXACTLY, ON ALL 2^{n} STATES\n");
-    println!("  model    {w}x{h} open grid, random +-1 couplings, fields in [-0.2, 0.2]; {} colour classes", g.classes.len());
-    println!("  fabric   Q.{} weights, {}-entry ROM, 16-bit comparator, ideal uniforms (hdl::FixedFabric's arithmetic)",
-             ferrotherm::hdl::FRAC, 1usize << ferrotherm::hdl::LUT_BITS);
-    println!("  oracle   autocorr::stationary_solved and tau_int_fundamental: one direct solve per law, no iteration, no lag budget\n");
+    println!(
+        "  model    {w}x{h} open grid, random +-1 couplings, fields in [-0.2, 0.2]; {} colour classes",
+        g.classes.len()
+    );
+    println!(
+        "  fabric   Q.{} weights, {}-entry ROM, 16-bit comparator, ideal uniforms (hdl::FixedFabric's arithmetic)",
+        ferrotherm::hdl::FRAC,
+        1usize << ferrotherm::hdl::LUT_BITS
+    );
+    println!(
+        "  oracle   autocorr::stationary_solved and tau_int_fundamental: one direct solve per law, no iteration, no lag budget\n"
+    );
     println!(
         "  {:>5}   {:>10} {:>9} {:>10}   {:>12} {:>12} {:>7}   {:>12} {:>12} {:>7}",
-        "beta", "TV(fab,B)", "beta_eff", "TV at eff", "tau fabric", "tau f64", "ratio", "K fabric", "K f64", "ratio"
+        "beta",
+        "TV(fab,B)",
+        "beta_eff",
+        "TV at eff",
+        "tau fabric",
+        "tau f64",
+        "ratio",
+        "K fabric",
+        "K f64",
+        "ratio"
     );
     let mut worst_tv = 0.0f64;
     let mut worst_ratio = 1.0f64;
@@ -98,8 +117,12 @@ fn main() {
         let pi = boltzmann(&g, beta).expect("small");
         let tv = total_variation(&fab, &pi);
         let (b_eff, tv_eff) = nearest_beta(&g, &fab, 0.25 * beta, 2.0 * beta);
-        let t_fab = tau_int_fundamental(&g, beta, Kernel::FixedFabric, |s| g.energy(s)).expect("small").tau_int;
-        let t_f64 = tau_int_fundamental(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s)).expect("small").tau_int;
+        let t_fab = tau_int_fundamental(&g, beta, Kernel::FixedFabric, |s| g.energy(s))
+            .expect("small")
+            .tau_int;
+        let t_f64 = tau_int_fundamental(&g, beta, Kernel::ChromaticGibbs, |s| g.energy(s))
+            .expect("small")
+            .tau_int;
         let k_fab = kemeny_constant(&g, beta, Kernel::FixedFabric).expect("small");
         let k_f64 = kemeny_constant(&g, beta, Kernel::ChromaticGibbs).expect("small");
         println!(
@@ -113,12 +136,28 @@ fn main() {
     }
     // THE PRECISION SWEEP: the knob the RTL does not have, turned exactly. One knob at a time,
     // the other two held fine enough not to be the limit.
-    println!("\n  PRECISION SWEEP -- exact TV from Boltzmann, one knob at a time (Quantised kernel)\n");
+    println!(
+        "\n  PRECISION SWEEP -- exact TV from Boltzmann, one knob at a time (Quantised kernel)\n"
+    );
     println!(
         "  {:>5}   {:>8} {:>8} {:>8} {:>8}   {:>8} {:>8} {:>8} {:>8}   {:>8} {:>8} {:>8}",
-        "beta", "frac4", "frac6", "frac8", "frac12", "rom6", "rom8", "rom10", "rom12", "prob4", "prob8", "prob16"
+        "beta",
+        "frac4",
+        "frac6",
+        "frac8",
+        "frac12",
+        "rom6",
+        "rom8",
+        "rom10",
+        "rom12",
+        "prob4",
+        "prob8",
+        "prob16"
     );
-    println!("  {:>5}   {:>35}   {:>35}   {:>26}", "", "(ROM 10 bits, prob 16)", "(field 12 bits, prob 16)", "(field 12, ROM 12)");
+    println!(
+        "  {:>5}   {:>35}   {:>35}   {:>26}",
+        "", "(ROM 10 bits, prob 16)", "(field 12 bits, prob 16)", "(field 12, ROM 12)"
+    );
     for &beta in &[0.5f64, 1.0, 1.5, 2.0, 3.0] {
         let pi = boltzmann(&g, beta).expect("small");
         let gap = |k: Kernel| -> f64 {
@@ -126,34 +165,86 @@ fn main() {
         };
         let frac: Vec<f64> = [4u32, 6, 8, 12]
             .iter()
-            .map(|&f| gap(Kernel::Quantised { frac_bits: f, lut_bits: 10, prob_bits: 16 }))
+            .map(|&f| {
+                gap(Kernel::Quantised {
+                    frac_bits: f,
+                    lut_bits: 10,
+                    prob_bits: 16,
+                })
+            })
             .collect();
         let rom: Vec<f64> = [6u32, 8, 10, 12]
             .iter()
-            .map(|&l| gap(Kernel::Quantised { frac_bits: 12, lut_bits: l, prob_bits: 16 }))
+            .map(|&l| {
+                gap(Kernel::Quantised {
+                    frac_bits: 12,
+                    lut_bits: l,
+                    prob_bits: 16,
+                })
+            })
             .collect();
         let prob: Vec<f64> = [4u32, 8, 16]
             .iter()
-            .map(|&p| gap(Kernel::Quantised { frac_bits: 12, lut_bits: 12, prob_bits: p }))
+            .map(|&p| {
+                gap(Kernel::Quantised {
+                    frac_bits: 12,
+                    lut_bits: 12,
+                    prob_bits: p,
+                })
+            })
             .collect();
         println!(
             "  {beta:>5.2}   {:>8.1e} {:>8.1e} {:>8.1e} {:>8.1e}   {:>8.1e} {:>8.1e} {:>8.1e} {:>8.1e}   {:>8.1e} {:>8.1e} {:>8.1e}",
-            frac[0], frac[1], frac[2], frac[3], rom[0], rom[1], rom[2], rom[3], prob[0], prob[1], prob[2]
+            frac[0],
+            frac[1],
+            frac[2],
+            frac[3],
+            rom[0],
+            rom[1],
+            rom[2],
+            rom[3],
+            prob[0],
+            prob[1],
+            prob[2]
         );
     }
-    println!("\n  Read each block left to right: the distance a bit buys, exactly, at each temperature. Where a");
-    println!("  block stops falling, that knob has stopped being the limit and one of the other two is.");
+    println!(
+        "\n  Read each block left to right: the distance a bit buys, exactly, at each temperature. Where a"
+    );
+    println!(
+        "  block stops falling, that knob has stopped being the limit and one of the other two is."
+    );
 
     println!("\n  WHAT THE TABLE SAYS.\n");
-    println!("  TV(fab,B) is the exact distance between what the fabric's arithmetic samples and the Boltzmann");
-    println!("  distribution it was programmed for; beta_eff is the temperature whose Boltzmann law it is nearest");
-    println!("  to, and TV at eff what remains after that shift -- the part no temperature correction removes.");
-    println!("  tau fabric / tau f64 is how far the emulator's mixing time sits from the exact kernel's; a ratio");
-    println!("  near 1 is what lets `fabric_vs_cpu` use the emulator's tau in the fabric's price per independent");
-    println!("  sample. K is Kemeny's constant, the sum of every mode's relaxation time, a property of the kernel");
-    println!("  alone: tau_int weights each mode by the share of the ENERGY's variance it carries, so a law that");
-    println!("  moves mass out of a slow valley lowers tau without touching any crossing rate. K cannot fall that");
-    println!("  way, so where the two ratios disagree, the tau ratio is about the two laws and the K ratio about");
+    println!(
+        "  TV(fab,B) is the exact distance between what the fabric's arithmetic samples and the Boltzmann"
+    );
+    println!(
+        "  distribution it was programmed for; beta_eff is the temperature whose Boltzmann law it is nearest"
+    );
+    println!(
+        "  to, and TV at eff what remains after that shift -- the part no temperature correction removes."
+    );
+    println!(
+        "  tau fabric / tau f64 is how far the emulator's mixing time sits from the exact kernel's; a ratio"
+    );
+    println!(
+        "  near 1 is what lets `fabric_vs_cpu` use the emulator's tau in the fabric's price per independent"
+    );
+    println!(
+        "  sample. K is Kemeny's constant, the sum of every mode's relaxation time, a property of the kernel"
+    );
+    println!(
+        "  alone: tau_int weights each mode by the share of the ENERGY's variance it carries, so a law that"
+    );
+    println!(
+        "  moves mass out of a slow valley lowers tau without touching any crossing rate. K cannot fall that"
+    );
+    println!(
+        "  way, so where the two ratios disagree, the tau ratio is about the two laws and the K ratio about"
+    );
     println!("  the two kernels.");
-    println!("\n  Worst TV over the five temperatures: {worst_tv:.3e}; worst tau ratio either way: {worst_ratio:.3}; worst K ratio either way: {worst_k:.3}.");
+    println!(
+        "\n  Worst TV over the five temperatures: {worst_tv:.3e}; worst tau ratio either way: {worst_ratio:.3}; worst K ratio either way: {worst_k:.3}."
+    );
 }

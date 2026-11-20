@@ -28,7 +28,7 @@ categories = ["science", "algorithms", "simulation"]
 [dependencies]
 ferrotherm = { version = "0.44", path = ".." }
 wgpu = "30"
-pollster = "0.4"
+pollster = "1"
 
 # The energy comparison needs both a GPU and a meter. A dev-dependency rather than a real one:
 # nothing in this crate needs to measure power, but the question "is it also cheaper" cannot be

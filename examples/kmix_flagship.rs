@@ -47,7 +47,7 @@
 // run: cargo run --release --example kmix_flagship [max_L] [base|frontier] [min_L] [arm-filter]
 
 use ferrotherm::cftp::Bounding;
-use ferrotherm::dtm::{acp_update, forward_step, gamma_coupling, pattern_grid, Dtm, G12};
+use ferrotherm::dtm::{Dtm, G12, acp_update, forward_step, gamma_coupling, pattern_grid};
 use ferrotherm::floors::Convergence;
 use ferrotherm::gibbs;
 use ferrotherm::graph::{Graph, GraphBuilder};
@@ -78,7 +78,11 @@ fn conditional(dtm: &Dtm, t: usize, x_next: &[i8]) -> Graph {
         b.couple(a as usize, c as usize, ebm.j[k]);
     }
     for i in 0..ebm.n {
-        let extra = if i < dtm.nv { 0.5 * g * f64::from(x_next[i]) } else { 0.0 };
+        let extra = if i < dtm.nv {
+            0.5 * g * f64::from(x_next[i])
+        } else {
+            0.0
+        };
         b.bias(i, ebm.h[i] + extra);
     }
     b.build()
@@ -172,12 +176,23 @@ fn layer_autocorrelation(g: &Graph, lag: usize, trace: usize, seed: u64) -> f64 
         total += (c / (trace - lag) as f64 - mean * mean) / var;
         counted += 1;
     }
-    if counted == 0 { 0.0 } else { total / counted as f64 }
+    if counted == 0 {
+        0.0
+    } else {
+        total / counted as f64
+    }
 }
 
 /// Scale `layer`'s couplings down by a tenth until `per` bounding-chain draws on its conditional
 /// under EACH of `contexts` all coalesce within `cap` sweeps. Returns the factor applied.
-fn project_layer(dtm: &mut Dtm, layer: usize, contexts: &[Vec<i8>], per: u64, cap: usize, seed: u64) -> f64 {
+fn project_layer(
+    dtm: &mut Dtm,
+    layer: usize,
+    contexts: &[Vec<i8>],
+    per: u64,
+    cap: usize,
+    seed: u64,
+) -> f64 {
     let mut factor = 1.0;
     for _ in 0..80 {
         let mut ok = true;
@@ -205,7 +220,10 @@ fn edge_correlations(samples: &[Vec<i8>], side: usize) -> Vec<f64> {
     for y in 0..side {
         for x in 0..side {
             let i = y * side + x;
-            for j in [if x + 1 < side { Some(i + 1) } else { None }, if y + 1 < side { Some(i + side) } else { None }] {
+            for j in [
+                if x + 1 < side { Some(i + 1) } else { None },
+                if y + 1 < side { Some(i + side) } else { None },
+            ] {
                 let Some(j) = j else { continue };
                 let mut acc = 0.0;
                 for v in samples {
@@ -219,11 +237,17 @@ fn edge_correlations(samples: &[Vec<i8>], side: usize) -> Vec<f64> {
 }
 
 fn main() {
-    let max_l: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(28);
+    let max_l: usize = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(28);
     // `base` is the two arms the first measurement ran; `frontier` is the adaptive penalty beside a
     // sweep of fixed strengths, which is what the controller is supposed to find its way along.
     let frontier = std::env::args().nth(2).is_some_and(|a| a == "frontier");
-    let min_l: usize = std::env::args().nth(3).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let min_l: usize = std::env::args()
+        .nth(3)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let only: Option<String> = std::env::args().nth(4);
     let arms: Vec<(&str, Arm)> = if frontier {
         vec![
@@ -247,15 +271,41 @@ fn main() {
     let (batch, k_sweeps, lr) = (8usize, 25usize, 0.02);
     let (k_mix, cap) = (250usize, 1usize << 13);
 
-    println!("K_mix ON THE FLAGSHIP SHAPE, AS THE MODEL LEARNS: G12 wiring, 16% visible at random, T = {t_steps}\n");
-    println!("  training  round-robin over the layers, batch {batch}, k = {k_sweeps}, lr {lr}; two arms, TC penalty 0.35 and 0");
-    println!("  data      +-J grid on the visible sites at beta 0.8, persistent Gibbs chain (NOT Fashion-MNIST)");
-    println!("  learned   share of the data's nearest-neighbour correlations that GENERATED samples reproduce:");
-    println!("            1 - mean|c_model - c_data| / mean|c_data|; zero for a model that learned nothing");
-    println!("  score     certificate over every layer (cap {cap}); R-hat: worst layer, 4 dispersed chains after {k_mix}\n");
+    println!(
+        "K_mix ON THE FLAGSHIP SHAPE, AS THE MODEL LEARNS: G12 wiring, 16% visible at random, T = {t_steps}\n"
+    );
+    println!(
+        "  training  round-robin over the layers, batch {batch}, k = {k_sweeps}, lr {lr}; two arms, TC penalty 0.35 and 0"
+    );
+    println!(
+        "  data      +-J grid on the visible sites at beta 0.8, persistent Gibbs chain (NOT Fashion-MNIST)"
+    );
+    println!(
+        "  learned   share of the data's nearest-neighbour correlations that GENERATED samples reproduce:"
+    );
+    println!(
+        "            1 - mean|c_model - c_data| / mean|c_data|; zero for a model that learned nothing"
+    );
+    println!(
+        "  score     certificate over every layer (cap {cap}); R-hat: worst layer, 4 dispersed chains after {k_mix}\n"
+    );
     println!(
         "  {:>3} {:>5} {:>4} {:>5}  {:>7} {:>6}   {:>7} {:>6} {:>6}   {:>9} {:>9} {:>8}   {:>9} {:>7}  {:>17}  verdict",
-        "L", "n", "nv", "deg", "arm", "steps", "learned", "|J|avg", "|J|max", "cert. med", "cert. max", "refused", "R-hat@250", "a(K)", "lambda min/avg/max"
+        "L",
+        "n",
+        "nv",
+        "deg",
+        "arm",
+        "steps",
+        "learned",
+        "|J|avg",
+        "|J|max",
+        "cert. med",
+        "cert. max",
+        "refused",
+        "R-hat@250",
+        "a(K)",
+        "lambda min/avg/max"
     );
 
     for &l in &[10usize, 20, 28, 40, 70] {
@@ -279,10 +329,17 @@ fn main() {
             name[old] = new;
         }
         let raw = pattern_grid(l, &G12);
-        let edges: Vec<(u16, u16)> = raw.iter().map(|&(a, b)| (name[a as usize] as u16, name[b as usize] as u16)).collect();
+        let edges: Vec<(u16, u16)> = raw
+            .iter()
+            .map(|&(a, b)| (name[a as usize] as u16, name[b as usize] as u16))
+            .collect();
         let degree = 2.0 * edges.len() as f64 / n as f64;
         let model = data_model(side, 1);
-        let checkpoints: &[usize] = if n >= 1_600 { &[2_000, 8_000] } else { &[2_000, 8_000, 32_000] };
+        let checkpoints: &[usize] = if n >= 1_600 {
+            &[2_000, 8_000]
+        } else {
+            &[2_000, 8_000, 32_000]
+        };
         let gen_samples = if n >= 1_600 { 120usize } else { 300usize };
 
         for &(arm, how) in &arms {
@@ -344,37 +401,77 @@ fn main() {
                             match how {
                                 Arm::Fixed(_) => {}
                                 Arm::Acp(_) => {
-                                    let a = layer_autocorrelation(&g, k_sweeps, 40 * k_sweeps, 0xACB0 + done as u64 + layer as u64);
-                                    lambda[layer] = acp_update(lambda[layer], a, a_prev[layer], acp_eps, acp_delta, acp_min);
+                                    let a = layer_autocorrelation(
+                                        &g,
+                                        k_sweeps,
+                                        40 * k_sweeps,
+                                        0xACB0 + done as u64 + layer as u64,
+                                    );
+                                    lambda[layer] = acp_update(
+                                        lambda[layer],
+                                        a,
+                                        a_prev[layer],
+                                        acp_eps,
+                                        acp_delta,
+                                        acp_min,
+                                    );
                                     a_prev[layer] = Some(a);
                                 }
                                 Arm::Rhat(_) => {
                                     // Held to the constraint that matters at deployment: K_mix sweeps.
                                     let disagree = rhat_after(&g, k_mix, 200).refusal().is_some();
                                     let lp = lambda[layer].max(acp_min);
-                                    lambda[layer] = if disagree { (1.0 + acp_delta) * lp } else { (1.0 - acp_delta) * lp };
+                                    lambda[layer] = if disagree {
+                                        (1.0 + acp_delta) * lp
+                                    } else {
+                                        (1.0 - acp_delta) * lp
+                                    };
                                 }
                                 Arm::Project => {
-                                    shrunk[layer] *= project_layer(&mut dtm, layer, core::slice::from_ref(&x), 4, k_mix / 2, 0x9807 + done as u64 * 8 + layer as u64 * 4);
+                                    shrunk[layer] *= project_layer(
+                                        &mut dtm,
+                                        layer,
+                                        core::slice::from_ref(&x),
+                                        4,
+                                        k_mix / 2,
+                                        0x9807 + done as u64 * 8 + layer as u64 * 4,
+                                    );
                                 }
                                 Arm::ProjectQ => {
                                     let mut ctxs = vec![x.clone()];
                                     for _ in 0..3 {
                                         let mut y = draw(&mut chain);
                                         for u in 0..=layer {
-                                            forward_step(&mut y, gamma, times[u + 1] - times[u], &mut rng);
+                                            forward_step(
+                                                &mut y,
+                                                gamma,
+                                                times[u + 1] - times[u],
+                                                &mut rng,
+                                            );
                                         }
                                         ctxs.push(y);
                                     }
-                                    shrunk[layer] *= project_layer(&mut dtm, layer, &ctxs, 2, k_mix / 8, 0x9A07 + done as u64 * 8 + layer as u64 * 4);
+                                    shrunk[layer] *= project_layer(
+                                        &mut dtm,
+                                        layer,
+                                        &ctxs,
+                                        2,
+                                        k_mix / 8,
+                                        0x9A07 + done as u64 * 8 + layer as u64 * 4,
+                                    );
                                 }
                                 Arm::Cert(_) => {
                                     // A refusal at this cap costs about 2 * K_mix sweeps, so asking
                                     // the deployment question directly is cheap.
-                                    let b = Bounding::new(&g, 1.0).expect("finite").with_max_steps(k_mix);
+                                    let b = Bounding::new(&g, 1.0)
+                                        .expect("finite")
+                                        .with_max_steps(k_mix);
                                     let (mut slowest, mut refused_here) = (0usize, false);
                                     for d in 0..4u64 {
-                                        match b.draw(0xCE27 + done as u64 * 8 + layer as u64 * 4 + d, None) {
+                                        match b.draw(
+                                            0xCE27 + done as u64 * 8 + layer as u64 * 4 + d,
+                                            None,
+                                        ) {
                                             Ok(x) => slowest = slowest.max(x.coalesced_at),
                                             Err(_) => refused_here = true,
                                         }
@@ -405,8 +502,19 @@ fn main() {
                             }
                             ctxs.push(x);
                         }
-                        let (per, cap) = if quantile { (2, k_mix / 8) } else { (4, k_mix / 2) };
-                        shrunk[layer] *= project_layer(&mut dtm, layer, &ctxs, per, cap, 0xDE91 + done as u64 * 16 + layer as u64 * 2);
+                        let (per, cap) = if quantile {
+                            (2, k_mix / 8)
+                        } else {
+                            (4, k_mix / 2)
+                        };
+                        shrunk[layer] *= project_layer(
+                            &mut dtm,
+                            layer,
+                            &ctxs,
+                            per,
+                            cap,
+                            0xDE91 + done as u64 * 16 + layer as u64 * 2,
+                        );
                     }
                 }
                 let mut srng = Pcg::new(77, done as u64);
@@ -415,7 +523,12 @@ fn main() {
                     generated.push(dtm.sample(k_mix, &mut srng));
                 }
                 let c_model = edge_correlations(&generated, side);
-                let err = c_model.iter().zip(&c_data).map(|(a, b)| (a - b).abs()).sum::<f64>() / c_data.len() as f64;
+                let err = c_model
+                    .iter()
+                    .zip(&c_data)
+                    .map(|(a, b)| (a - b).abs())
+                    .sum::<f64>()
+                    / c_data.len() as f64;
                 let learned = 1.0 - err / scale;
 
                 let (mut jsum, mut jcount, mut jmax) = (0.0f64, 0usize, 0.0f64);
@@ -423,7 +536,11 @@ fn main() {
                 let mut worst = 1.0f64;
                 let mut worst_a = f64::NEG_INFINITY;
                 let mut rhat_refused = false;
-                let (contexts, per) = if n >= 1_600 { (2u64, 3usize) } else { (3u64, 6usize) };
+                let (contexts, per) = if n >= 1_600 {
+                    (2u64, 3usize)
+                } else {
+                    (3u64, 6usize)
+                };
                 for t in 0..t_steps {
                     for &j in &dtm.steps[t].j {
                         jsum += j.abs();
@@ -447,7 +564,12 @@ fn main() {
                         if c == 0 {
                             // What the paper-style controller would read on this very layer, so
                             // the two diagnostics can be held against each other on one model.
-                            worst_a = worst_a.max(layer_autocorrelation(&g, k_sweeps, 40 * k_sweeps, 0xA11C + t as u64));
+                            worst_a = worst_a.max(layer_autocorrelation(
+                                &g,
+                                k_sweeps,
+                                40 * k_sweeps,
+                                0xA11C + t as u64,
+                            ));
                             let r = rhat_after(&g, k_mix, 400);
                             rhat_refused |= r.refusal().is_some();
                             if let Convergence::MultiChain { rhat } = r
@@ -472,7 +594,11 @@ fn main() {
                 };
                 let show = |v: Option<usize>| v.map_or("-".to_string(), |x| x.to_string());
                 // The last column is the penalty per layer, or for `Project` the scale per layer.
-                let shown = if matches!(how, Arm::Project | Arm::ProjectQ) { &shrunk } else { &lambda };
+                let shown = if matches!(how, Arm::Project | Arm::ProjectQ) {
+                    &shrunk
+                } else {
+                    &lambda
+                };
                 let lmin = shown.iter().copied().fold(f64::INFINITY, f64::min);
                 let lmax = shown.iter().copied().fold(0.0f64, f64::max);
                 let lavg = shown.iter().sum::<f64>() / t_steps as f64;

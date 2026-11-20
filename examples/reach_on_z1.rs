@@ -24,7 +24,7 @@
 //
 // run: cargo run --release --example reach_on_z1
 
-use ferrotherm::compile::{patch_kernel, Kernel};
+use ferrotherm::compile::{Kernel, patch_kernel};
 use ferrotherm::ledger::Z1_SPICE;
 use ferrotherm::rng::Pcg;
 use std::collections::BTreeMap;
@@ -76,7 +76,10 @@ fn joint_power(qd: &[f64; NJ], tau: &[f64; NJ]) -> f64 {
     let mut p = P_IDLE;
     for j in 0..NJ {
         let mech = tau[j] * qd[j];
-        p += K_CU[j] * tau[j] * tau[j] + K_VISC[j] * qd[j] * qd[j] + K_COUL[j] * qd[j].abs() + mech.max(0.0);
+        p += K_CU[j] * tau[j] * tau[j]
+            + K_VISC[j] * qd[j] * qd[j]
+            + K_COUL[j] * qd[j].abs()
+            + mech.max(0.0);
     }
     p
 }
@@ -120,7 +123,9 @@ fn rand_target(rr: &mut Pcg) -> (f64, f64) {
 const QLEV: usize = 5; // 5 coarse joint bins (4 thermometer bits each)
 const ALEV: usize = 4; // 4 action levels per joint (3 thermometer bits)
 const ACT_VALS: [f64; ALEV] = [-1.8, -0.6, 0.6, 1.8];
-const ETH: [f64; 10] = [-0.5, -0.25, -0.12, -0.06, -0.03, 0.03, 0.06, 0.12, 0.25, 0.5];
+const ETH: [f64; 10] = [
+    -0.5, -0.25, -0.12, -0.06, -0.03, 0.03, 0.06, 0.12, 0.25, 0.5,
+];
 const N_IN: usize = NJ * (QLEV - 1) + 2 * ETH.len(); // 12 + 20 = 32
 // Stated beside N_IN because the pair is the fabric's port width; the encoder below
 // derives its own output indices, so this one is documentation rather than a binding.
@@ -165,7 +170,11 @@ impl Enc {
             kq[j] = t.clamp(0.0, (QLEV - 1) as f64) as u8;
         }
         let (x, y) = fk(q);
-        Key { q: kq, ex: ebin(tgt.0 - x), ey: ebin(tgt.1 - y) }
+        Key {
+            q: kq,
+            ex: ebin(tgt.0 - x),
+            ey: ebin(tgt.1 - y),
+        }
     }
     fn bits(&self, k: &Key) -> Vec<i8> {
         let mut b = Vec::with_capacity(N_IN);
@@ -185,7 +194,8 @@ impl Enc {
     fn centers(&self, k: &Key) -> ([f64; NJ], f64, f64) {
         let mut q = [0.0; NJ];
         for j in 0..NJ {
-            q[j] = self.q_lo[j] + (k.q[j] as f64 + 0.5) * (self.q_hi[j] - self.q_lo[j]) / QLEV as f64;
+            q[j] =
+                self.q_lo[j] + (k.q[j] as f64 + 0.5) * (self.q_hi[j] - self.q_lo[j]) / QLEV as f64;
         }
         (q, ebin_center(k.ex), ebin_center(k.ey))
     }
@@ -278,10 +288,20 @@ fn rollout<F: FnMut(&Key) -> usize>(enc: &Enc, tgt: (f64, f64), mut act: F) -> R
         t += DT;
         ticks += 1;
         if ((cx - tgt.0).powi(2) + (cy - tgt.1).powi(2)).sqrt() <= TOL {
-            return Roll { ok: true, t, e_act, ticks };
+            return Roll {
+                ok: true,
+                t,
+                e_act,
+                ticks,
+            };
         }
     }
-    Roll { ok: false, t, e_act, ticks }
+    Roll {
+        ok: false,
+        t,
+        e_act,
+        ticks,
+    }
 }
 
 fn main() {
@@ -315,9 +335,16 @@ fn main() {
     };
     println!("state encoder (measured joint ranges, +-0.2 pad):");
     for j in 0..NJ {
-        println!("  q{j}: [{:.2}, {:.2}]  -> {QLEV} coarse bins ({} thermometer bits)", enc.q_lo[j], enc.q_hi[j], QLEV - 1);
+        println!(
+            "  q{j}: [{:.2}, {:.2}]  -> {QLEV} coarse bins ({} thermometer bits)",
+            enc.q_lo[j],
+            enc.q_hi[j],
+            QLEV - 1
+        );
     }
-    println!("  end-effector error e_x, e_y: sign + log-magnitude bins at +-{{3,6,12,25,50}} cm (10 bits each)");
+    println!(
+        "  end-effector error e_x, e_y: sign + log-magnitude bins at +-{{3,6,12,25,50}} cm (10 bits each)"
+    );
     println!("  action: {ALEV} levels/joint (thermometer)\n");
 
     // ---- GATE: the quantized pipeline itself must reach ----
@@ -333,10 +360,16 @@ fn main() {
         }
     }
     let gs = 100.0 * gok as f64 / 60.0;
-    println!("[gate] QUANTIZED expert closed-loop: {:.0}% success, {:.2} s, {:.1} J actuation",
-             gs, gt_ / gok.max(1) as f64, ge / gok.max(1) as f64);
+    println!(
+        "[gate] QUANTIZED expert closed-loop: {:.0}% success, {:.2} s, {:.1} J actuation",
+        gs,
+        gt_ / gok.max(1) as f64,
+        ge / gok.max(1) as f64
+    );
     if gs < 90.0 {
-        println!("       gate FAILED: the quantization has no coherent closed-loop target; stopping before compiling.");
+        println!(
+            "       gate FAILED: the quantization has no coherent closed-loop target; stopping before compiling."
+        );
         std::process::exit(1);
     }
     println!("       gate passed: the compilation target is achievable.\n");
@@ -361,8 +394,12 @@ fn main() {
     let total_mass: u64 = pats.iter().map(|p| p.1).sum();
     let kcap = 600.min(pats.len());
     let train_mass: u64 = pats[..kcap].iter().map(|p| p.1).sum();
-    println!("training set: {} distinct visited state patterns; top {} cover {:.1}% of visits",
-             pats.len(), kcap, 100.0 * train_mass as f64 / total_mass as f64);
+    println!(
+        "training set: {} distinct visited state patterns; top {} cover {:.1}% of visits",
+        pats.len(),
+        kcap,
+        100.0 * train_mass as f64 / total_mass as f64
+    );
 
     // ---- device kernels: the target is DETERMINISTIC, so P(a|s) = prod_j P(a_j|s) is EXACT —
     // factorize per joint, the same capacity-through-factorization move the DTM architecture and
@@ -377,7 +414,9 @@ fn main() {
     for &c in &[0usize, 6, 42, 48, 3, 45] {
         roles[c] = 0;
     }
-    let mut kerns: Vec<Kernel> = (0..NJ).map(|j| patch_kernel(7, 7, &roles, 1.0, 0x2124 + j as u64)).collect();
+    let mut kerns: Vec<Kernel> = (0..NJ)
+        .map(|j| patch_kernel(7, 7, &roles, 1.0, 0x2124 + j as u64))
+        .collect();
     {
         let k0 = &kerns[0];
         let mut in_deg = vec![0usize; k0.n_in];
@@ -385,10 +424,21 @@ fn main() {
             in_deg[i as usize] += 1;
         }
         let unreachable = in_deg.iter().filter(|&&d| d == 0).count();
-        println!("kernels: 3 x ({} in, {} out, {} hidden); native edges per kernel: {} free-free, {} input-free",
-                 k0.n_in, k0.n_out, k0.n_hid, k0.e_ff.len(), k0.e_if.len());
-        println!("  input reach: {} of {} input bits unreachable (min deg {}, mean {:.1})\n",
-                 unreachable, k0.n_in, in_deg.iter().min().unwrap(), in_deg.iter().sum::<usize>() as f64 / k0.n_in as f64);
+        println!(
+            "kernels: 3 x ({} in, {} out, {} hidden); native edges per kernel: {} free-free, {} input-free",
+            k0.n_in,
+            k0.n_out,
+            k0.n_hid,
+            k0.e_ff.len(),
+            k0.e_if.len()
+        );
+        println!(
+            "  input reach: {} of {} input bits unreachable (min deg {}, mean {:.1})\n",
+            unreachable,
+            k0.n_in,
+            in_deg.iter().min().unwrap(),
+            in_deg.iter().sum::<usize>() as f64 / k0.n_in as f64
+        );
         assert_eq!(k0.n_in, N_IN);
         assert_eq!(k0.n_out, ALEV - 1);
     }
@@ -419,9 +469,18 @@ fn main() {
         }
         let top1: f64 = train
             .iter()
-            .map(|(x, y, w)| if kern.argmax_out(x) == joint_mask(*y, j) { *w } else { 0.0 })
+            .map(|(x, y, w)| {
+                if kern.argmax_out(x) == joint_mask(*y, j) {
+                    *w
+                } else {
+                    0.0
+                }
+            })
             .sum();
-        println!("  joint {j}: NLL {nll_first:.3} -> {nll_last:.3} nats, train top-1 = {:.1}%", 100.0 * top1);
+        println!(
+            "  joint {j}: NLL {nll_first:.3} -> {nll_last:.3} nats, train top-1 = {:.1}%",
+            100.0 * top1
+        );
         eps_total += nll_last;
     }
     let top1_all: f64 = train
@@ -431,7 +490,10 @@ fn main() {
             if all { *w } else { 0.0 }
         })
         .sum();
-    println!("compiled: total per-factor eps = {eps_total:.3} nats; all-joints train top-1 = {:.1}%\n", 100.0 * top1_all);
+    println!(
+        "compiled: total per-factor eps = {eps_total:.3} nats; all-joints train top-1 = {:.1}%\n",
+        100.0 * top1_all
+    );
 
     // ---- trajectory-level post-training (the Thermalizers refinement = DAgger, measured this
     // morning to be the fix for exactly this failure): roll the COMPILED policy, label the states
@@ -473,7 +535,12 @@ fn main() {
                 last = nll;
             }
             if j == 0 {
-                println!("  post-train round {}: {} patterns, joint-0 NLL {:.3}", round + 1, cap2, last);
+                println!(
+                    "  post-train round {}: {} patterns, joint-0 NLL {:.3}",
+                    round + 1,
+                    cap2,
+                    last
+                );
             }
         }
     }
@@ -504,7 +571,9 @@ fn main() {
         }
         mask
     }));
-    println!("closed loop, IDEALIZED readout (exact argmax): {s1:.0}% success, {t1:.2} s, {e1:.1} J actuation");
+    println!(
+        "closed loop, IDEALIZED readout (exact argmax): {s1:.0}% success, {t1:.2} s, {e1:.1} J actuation"
+    );
 
     // ---- closed loop, arm 2: device-semantics readout (Gibbs, per-joint majority of 5) ----
     let sweeps = 40usize;
@@ -555,41 +624,94 @@ fn main() {
         }
         (100.0 * nok as f64 / 60.0, st / 60.0, se / 60.0, st, ticks)
     };
-    println!("closed loop, DEVICE readout (Gibbs x{sweeps} sweeps, majority of {n_votes}): {s2:.0}% success, {t2:.2} s, {e2:.1} J actuation\n");
+    println!(
+        "closed loop, DEVICE readout (Gibbs x{sweeps} sweeps, majority of {n_votes}): {s2:.0}% success, {t2:.2} s, {e2:.1} J actuation\n"
+    );
 
     // ---- the energy table: same trajectories, two compute platforms ----
     let p = Z1_SPICE;
     let e_cmp_jetson = 30.0 * wall2 / 60.0; // 30 W x mean wall-clock
-    let program_writes = kerns.iter().map(|k| (k.n_in + k.n_out + k.n_hid) as f64).sum::<f64>() * p.e_write;
+    let program_writes = kerns
+        .iter()
+        .map(|k| (k.n_in + k.n_out + k.n_hid) as f64)
+        .sum::<f64>()
+        * p.e_write;
     let per_attempt = |clamp_as_write: bool| -> f64 {
         let clamp_j = op_clamps as f64 * if clamp_as_write { p.e_write } else { p.e_read };
-        (op_samples as f64 * p.e_sample + op_reads as f64 * p.e_read + clamp_j + program_writes) / 60.0
+        (op_samples as f64 * p.e_sample + op_reads as f64 * p.e_read + clamp_j + program_writes)
+            / 60.0
     };
     println!("E_task per attempt (device-readout arm; actuation {e2:.1} J):");
-    println!("  compute on Jetson-class 30 W x wall-clock:          {:>10.2} J   -> E_task = {:.1} J", e_cmp_jetson, e_cmp_jetson + e2);
-    println!("  compute on Z1 device model (clamp = read-class):    {:>10.2e} J   -> E_task = {:.1} J", per_attempt(false), per_attempt(false) + e2);
-    println!("  compute on Z1 device model (clamp = write-class):   {:>10.2e} J   -> E_task = {:.1} J", per_attempt(true), per_attempt(true) + e2);
+    println!(
+        "  compute on Jetson-class 30 W x wall-clock:          {:>10.2} J   -> E_task = {:.1} J",
+        e_cmp_jetson,
+        e_cmp_jetson + e2
+    );
+    println!(
+        "  compute on Z1 device model (clamp = read-class):    {:>10.2e} J   -> E_task = {:.1} J",
+        per_attempt(false),
+        per_attempt(false) + e2
+    );
+    println!(
+        "  compute on Z1 device model (clamp = write-class):   {:>10.2e} J   -> E_task = {:.1} J",
+        per_attempt(true),
+        per_attempt(true) + e2
+    );
     let clamp_rate = op_clamps as f64 / wall2;
-    println!("  clamp ops: {clamp_rate:.0}/s vs the <=1/s coupling-reflash cap — if clamping is flash-class, the");
-    println!("  loop is INFEASIBLE as specced regardless of joules; if read-class, feasible. That one unpublished");
-    println!("  line item decides embodied viability. (SPICE prices for taped-out, uncharacterized silicon.)");
-    println!("\nREADING — the boundary is the result. A coherent quantized reach target exists (gate {gs:.0}%), and");
-    println!("the capacity ladder climbs but plateaus far below it: single 13-spin patch kernel 15-30% closed-loop;");
-    println!("per-joint factorization (exact for a deterministic target) {:.0}-{:.0}%; trajectory-level post-training", s1.min(s2), s1.max(s2));
+    println!(
+        "  clamp ops: {clamp_rate:.0}/s vs the <=1/s coupling-reflash cap — if clamping is flash-class, the"
+    );
+    println!(
+        "  loop is INFEASIBLE as specced regardless of joules; if read-class, feasible. That one unpublished"
+    );
+    println!(
+        "  line item decides embodied viability. (SPICE prices for taped-out, uncharacterized silicon.)"
+    );
+    println!(
+        "\nREADING — the boundary is the result. A coherent quantized reach target exists (gate {gs:.0}%), and"
+    );
+    println!(
+        "the capacity ladder climbs but plateaus far below it: single 13-spin patch kernel 15-30% closed-loop;"
+    );
+    println!(
+        "per-joint factorization (exact for a deterministic target) {:.0}-{:.0}%; trajectory-level post-training",
+        s1.min(s2),
+        s1.max(s2)
+    );
     // "~3 points" is a PRIOR measurement, not something this run computes -- post-training here
     // reports NLL, and no success-rate delta is evaluated before and after. Printing it inside the
     // run's own READING block made a remembered number look like an output of the program.
-    println!("(the Thermalizers refinement, i.e. DAgger) added ~3 points in an earlier run -- this run");
+    println!(
+        "(the Thermalizers refinement, i.e. DAgger) added ~3 points in an earlier run -- this run"
+    );
     println!("reports post-training NLL only and does not measure that delta. What is missing is");
     println!("MULTIPLICATIVE structure:");
-    println!("the reach law is J(q)^T e — products of state bits — and sparse local pairwise energies with a few");
-    println!("hidden spins cannot route them at this scale. So the answer to 'does a control workload map onto the");
-    println!("degree-16 fabric today' is NOT YET at patch scale, and no published work anywhere has demonstrated");
-    println!("otherwise. The ledger points stand regardless: IF the conditional compiled at gate quality, device");
-    println!("compute would be ~7 orders below the Jetson number and E_task actuation-dominated ({:.1} J of {:.1} J) —", e2, per_attempt(false) + e2);
-    println!("the Amdahl point — while clamp ops at {clamp_rate:.0}/s vs the <=1/s reflash cap remain the feasibility");
-    println!("wall the vendor has not priced. Encoding note: the gate itself only passed after applying our");
-    println!("capacity-vs-basis result (raw-angle bins gate-failed at 32%; error-vector log-bins reach 90%).");
+    println!(
+        "the reach law is J(q)^T e — products of state bits — and sparse local pairwise energies with a few"
+    );
+    println!(
+        "hidden spins cannot route them at this scale. So the answer to 'does a control workload map onto the"
+    );
+    println!(
+        "degree-16 fabric today' is NOT YET at patch scale, and no published work anywhere has demonstrated"
+    );
+    println!(
+        "otherwise. The ledger points stand regardless: IF the conditional compiled at gate quality, device"
+    );
+    println!(
+        "compute would be ~7 orders below the Jetson number and E_task actuation-dominated ({:.1} J of {:.1} J) —",
+        e2,
+        per_attempt(false) + e2
+    );
+    println!(
+        "the Amdahl point — while clamp ops at {clamp_rate:.0}/s vs the <=1/s reflash cap remain the feasibility"
+    );
+    println!(
+        "wall the vendor has not priced. Encoding note: the gate itself only passed after applying our"
+    );
+    println!(
+        "capacity-vs-basis result (raw-angle bins gate-failed at 32%; error-vector log-bins reach 90%)."
+    );
     // exit 0: the bench ran to completion and the boundary is the recorded finding
     std::process::exit(0);
 }

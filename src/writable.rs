@@ -59,7 +59,7 @@
 //! stays unstated in every price set this crate owns.
 
 use crate::graph::Graph;
-use crate::hdl::{FixedFabric, FRAC, LUT_BITS};
+use crate::hdl::{FRAC, FixedFabric, LUT_BITS};
 
 /// Bits in a weight or bias register: signed Q.8, so `[-8.0, +8.0)`.
 pub const WEIGHT_BITS: u32 = 12;
@@ -92,10 +92,16 @@ impl std::fmt::Display for WriteError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             WriteError::Topology { node } => {
-                write!(f, "node {node} is wired differently from the synthesised fabric")
+                write!(
+                    f,
+                    "node {node} is wired differently from the synthesised fabric"
+                )
             }
             WriteError::Range { node, value } => {
-                write!(f, "node {node}: {value} does not fit signed Q.8 in {WEIGHT_BITS} bits")
+                write!(
+                    f,
+                    "node {node}: {value} does not fit signed Q.8 in {WEIGHT_BITS} bits"
+                )
             }
         }
     }
@@ -172,7 +178,9 @@ impl WritableFabric {
     /// [`WriteError::Range`] if a value does not fit. On an error nothing has been written.
     pub fn program(&mut self, g: &Graph) -> Result<Vec<BusWrite>, WriteError> {
         if g.n != self.core.n {
-            return Err(WriteError::Topology { node: g.n.min(self.core.n) });
+            return Err(WriteError::Topology {
+                node: g.n.min(self.core.n),
+            });
         }
         // Validate everything before touching anything.
         let mut staged: Vec<(Vec<i32>, i32)> = Vec::with_capacity(g.n);
@@ -194,7 +202,10 @@ impl WritableFabric {
             for (word, pair) in (0..self.degree).step_by(2).enumerate() {
                 let lo = ws.get(pair).copied().unwrap_or(0) as u32 & mask;
                 let hi = ws.get(pair + 1).copied().unwrap_or(0) as u32 & mask;
-                bus.push(BusWrite { offset: base + 4 * word as u32, data: lo | (hi << 16) });
+                bus.push(BusWrite {
+                    offset: base + 4 * word as u32,
+                    data: lo | (hi << 16),
+                });
             }
             bus.push(BusWrite {
                 offset: base + 4 * self.degree.div_ceil(2) as u32,
@@ -293,7 +304,10 @@ impl WritableFabric {
                     "(state[{j}] ? {{{{4{{wj[{r}][{wt}]}}}}, wj[{r}]}} : -{{{{4{{wj[{r}][{wt}]}}}}, wj[{r}]}})"
                 ));
             }
-            v.push_str(&format!("  wire signed [15:0] f{i} = {};\n", terms.join(" + ")));
+            v.push_str(&format!(
+                "  wire signed [15:0] f{i} = {};\n",
+                terms.join(" + ")
+            ));
             v.push_str(&format!(
                 "  wire signed [15:0] fc{i} = f{i} > 16'sd2047 ? 16'sd2047 : (f{i} < -16'sd2048 ? -16'sd2048 : f{i});\n"
             ));
@@ -306,7 +320,11 @@ impl WritableFabric {
         // One ROM block per pair of nodes; an odd node out shares its block with itself.
         for pair in (0..n).step_by(2) {
             let b = (pair + 1).min(n - 1);
-            let q1 = if b == pair { String::new() } else { format!("p{b}") };
+            let q1 = if b == pair {
+                String::new()
+            } else {
+                format!("p{b}")
+            };
             v.push_str(&format!(
                 "  {module}_rom rom{pair} (.clk(clk), .en(en & ~sub), .a0(ad{pair}), .a1(ad{b}), .q0(p{pair}), .q1({q1}));\n"
             ));
@@ -316,7 +334,10 @@ impl WritableFabric {
         );
         for i in 0..n {
             v.push_str(&format!("      rng[{i}] <= 32'd{};\n", self.core.seeds[i]));
-            v.push_str(&format!("      state[{i}] <= 1'b{};\n", u8::from(self.core.init_s[i])));
+            v.push_str(&format!(
+                "      state[{i}] <= 1'b{};\n",
+                u8::from(self.core.init_s[i])
+            ));
         }
         // sub = 0: the ROM latches this class's probabilities. sub = 1: compare, update, move on.
         v.push_str("    end else if (en) begin\n      sub <= ~sub;\n      if (sub) begin\n        phase <= ~phase;\n");
@@ -324,7 +345,9 @@ impl WritableFabric {
             v.push_str(&format!("        if (phase == 1'b{ci}) begin\n"));
             for &iu in class {
                 let i = iu as usize;
-                v.push_str(&format!("          state[{i}] <= up{i}; rng[{i}] <= nr{i};\n"));
+                v.push_str(&format!(
+                    "          state[{i}] <= up{i}; rng[{i}] <= nr{i};\n"
+                ));
             }
             v.push_str("        end\n");
         }
@@ -495,7 +518,10 @@ module {module} (
             } else {
                 format!("{{{}'d0, state[{hi}:{lo}]}}", 32 - (hi - lo + 1))
             };
-            v.push_str(&format!("          8'h{:02X}: rdata_r <= {expr};\n", 0x20 + 4 * k));
+            v.push_str(&format!(
+                "          8'h{:02X}: rdata_r <= {expr};\n",
+                0x20 + 4 * k
+            ));
         }
         v.push_str(
             "          default: rdata_r <= 32'hDEADBEEF;
@@ -619,7 +645,8 @@ impl WritableRtl {
         }
         let target = WritableRtl::scaled(g, c)?;
         let fab = self.fabric.as_mut().ok_or("no netlist synthesised")?;
-        fab.program(&target).map_err(|e| format!("beta = {beta}: {e}"))?;
+        fab.program(&target)
+            .map_err(|e| format!("beta = {beta}: {e}"))?;
         self.held_scale = Some(c);
         self.ledger.writes += g.n as u64;
         Ok(())
@@ -691,7 +718,9 @@ impl crate::fabric::Device for WritableRtl {
                 self.held_scale = None;
                 self.graph = Some(g);
             }
-            Err(e) => bad.push(crate::fabric::Unsupported::Unplaceable { detail: e.to_string() }),
+            Err(e) => bad.push(crate::fabric::Unsupported::Unplaceable {
+                detail: e.to_string(),
+            }),
         }
         bad
     }
@@ -709,7 +738,8 @@ impl crate::fabric::Device for WritableRtl {
             let g = self.graph.as_ref().expect("checked");
             for stage in schedule.stages() {
                 let t = WritableRtl::scaled(g, stage.beta / ROM_BETA)?;
-                WritableFabric::new(&t, ROM_BETA, 0).map_err(|e| format!("beta = {}: {e}", stage.beta))?;
+                WritableFabric::new(&t, ROM_BETA, 0)
+                    .map_err(|e| format!("beta = {}: {e}", stage.beta))?;
             }
         }
         self.ensure_netlist(seed)?;
@@ -723,7 +753,12 @@ impl crate::fabric::Device for WritableRtl {
             let fab = self.fabric.as_mut().expect("synthesised");
             for _ in 0..stage.sweeps {
                 fab.core.sweep();
-                let st: Vec<i8> = fab.core.s.iter().map(|&up| if up { 1i8 } else { -1 }).collect();
+                let st: Vec<i8> = fab
+                    .core
+                    .s
+                    .iter()
+                    .map(|&up| if up { 1i8 } else { -1 })
+                    .collect();
                 let e = g.energy(&st);
                 if e < best_e {
                     best_e = e;
@@ -734,8 +769,13 @@ impl crate::fabric::Device for WritableRtl {
             self.ledger.reads += (g.n as u64) * (stage.sweeps as u64);
         }
         let fab = self.fabric.as_ref().expect("synthesised");
-        self.state = best
-            .unwrap_or_else(|| fab.core.s.iter().map(|&up| if up { 1i8 } else { -1 }).collect());
+        self.state = best.unwrap_or_else(|| {
+            fab.core
+                .s
+                .iter()
+                .map(|&up| if up { 1i8 } else { -1 })
+                .collect()
+        });
         Ok(self.state.clone())
     }
 
@@ -762,13 +802,24 @@ impl crate::fabric::Device for WritableRtl {
             for _ in 0..thin {
                 fab.core.sweep();
             }
-            let st: Vec<i8> = fab.core.s.iter().map(|&up| if up { 1i8 } else { -1 }).collect();
+            let st: Vec<i8> = fab
+                .core
+                .s
+                .iter()
+                .map(|&up| if up { 1i8 } else { -1 })
+                .collect();
             energies.push(g.energy(&st));
             states.push(st);
         }
         self.ledger.samples += (g.n as u64) * (plan.sweeps() as u64);
         self.ledger.reads += (plan.draws as u64) * (g.n as u64);
-        Ok(crate::samples::SampleSet::from_chain(states, energies, beta, plan.burn_in, thin))
+        Ok(crate::samples::SampleSet::from_chain(
+            states,
+            energies,
+            beta,
+            plan.burn_in,
+            thin,
+        ))
     }
 
     fn ledger(&self) -> crate::ledger::Ledger {
@@ -782,7 +833,10 @@ mod tests {
     use crate::ising::lattice2d;
 
     fn have_iverilog() -> bool {
-        std::process::Command::new("iverilog").arg("-V").output().is_ok()
+        std::process::Command::new("iverilog")
+            .arg("-V")
+            .output()
+            .is_ok()
     }
 
     /// A second problem on the first problem's wiring: same lattice, weights that differ per edge
@@ -815,7 +869,10 @@ mod tests {
             w.core.sweep();
             before.sweep();
         }
-        assert_eq!(w.core.s, before.s, "unprogrammed, it is the fabric it was synthesised from");
+        assert_eq!(
+            w.core.s, before.s,
+            "unprogrammed, it is the fabric it was synthesised from"
+        );
 
         let bus = w.program(&second).expect("same wiring, in range");
         assert_eq!(bus.len(), first.n * w.words_per_node());
@@ -825,10 +882,16 @@ mod tests {
             w.core.sweep();
             target.sweep();
             before.sweep();
-            assert_eq!(w.core.s, target.s, "programmed, it is the fixed fabric of the target");
+            assert_eq!(
+                w.core.s, target.s,
+                "programmed, it is the fixed fabric of the target"
+            );
             differed |= before.s != target.s;
         }
-        assert!(differed, "vacuous if the two problems sample the same trajectory");
+        assert!(
+            differed,
+            "vacuous if the two problems sample the same trajectory"
+        );
     }
 
     #[test]
@@ -840,21 +903,37 @@ mod tests {
         let last = hot.w.len() - 1;
         hot.w[last] = 8.0; // one step past +7.996
         assert!(matches!(w.program(&hot), Err(WriteError::Range { .. })));
-        assert_eq!(w.core.adj, kept, "a refused program must not be half-written");
+        assert_eq!(
+            w.core.adj, kept,
+            "a refused program must not be half-written"
+        );
         hot.w[last] = 2047.0 / 256.0;
-        assert!(w.program(&hot).is_ok(), "the largest representable weight is accepted");
+        assert!(
+            w.program(&hot).is_ok(),
+            "the largest representable weight is accepted"
+        );
         // Wires are not writable. A different node count is the easy case...
         let other = lattice2d(5, 1.0);
-        assert!(matches!(w.program(&other), Err(WriteError::Topology { .. })));
+        assert!(matches!(
+            w.program(&other),
+            Err(WriteError::Topology { .. })
+        ));
         // ...and the one that matters is the SAME count wired differently: sixteen nodes in a ring
         // would be written into a torus's slots without complaint if only `n` were compared.
         let ring = crate::ising::ring(16, 1.0, 0.0);
         assert_eq!(ring.n, w.core.n);
         assert!(matches!(w.program(&ring), Err(WriteError::Topology { .. })));
-        assert_eq!(w.core.adj[0].len(), 4, "and the refusal left the torus's wiring in place");
+        assert_eq!(
+            w.core.adj[0].len(),
+            4,
+            "and the refusal left the torus's wiring in place"
+        );
         assert!(WritableFabric::new(&hot, 0.4, 1).is_ok());
         hot.h[0] = -8.5;
-        assert!(matches!(WritableFabric::new(&hot, 0.4, 1), Err(WriteError::Range { node: 0, .. })));
+        assert!(matches!(
+            WritableFabric::new(&hot, 0.4, 1),
+            Err(WriteError::Range { node: 0, .. })
+        ));
     }
 
     /// Temperature is a write: scaling every weight and bias by `c` IS the fixed fabric at `c·β`,
@@ -882,9 +961,15 @@ mod tests {
             mc += unscaled.magnetization().abs();
         }
         let (ma, mb, mc) = (ma / sweeps as f64, mb / sweeps as f64, mc / sweeps as f64);
-        assert!((ma - mb).abs() < 0.01, "scaled weights |m| {ma} vs the fixed fabric at twice beta {mb}");
+        assert!(
+            (ma - mb).abs() < 0.01,
+            "scaled weights |m| {ma} vs the fixed fabric at twice beta {mb}"
+        );
         // And the comparison could have failed: the unscaled fabric is somewhere else.
-        assert!((mc - mb).abs() > 0.05, "vacuous: beta and 2*beta give |m| {mc} and {mb}");
+        assert!(
+            (mc - mb).abs() > 0.05,
+            "vacuous: beta and 2*beta give |m| {mc} and {mb}"
+        );
     }
 
     /// A frustrated instance on the torus: every edge its own weight, both signs.
@@ -915,10 +1000,24 @@ mod tests {
         assert!(fixed.program(&p).is_empty() && writable.program(&p).is_empty());
         fixed.run(&ladder, 1).unwrap();
         writable.run(&ladder, 1).unwrap();
-        assert_eq!(Device::ledger(&fixed).writes, n * rungs, "a bitstream a rung, the load being the first");
-        assert_eq!(Device::ledger(&writable).writes, n * (rungs + 1), "a load, then a register write a rung");
-        assert_eq!(Device::ledger(&fixed).samples, Device::ledger(&writable).samples);
-        assert_eq!(Device::ledger(&fixed).reads, Device::ledger(&writable).reads);
+        assert_eq!(
+            Device::ledger(&fixed).writes,
+            n * rungs,
+            "a bitstream a rung, the load being the first"
+        );
+        assert_eq!(
+            Device::ledger(&writable).writes,
+            n * (rungs + 1),
+            "a load, then a register write a rung"
+        );
+        assert_eq!(
+            Device::ledger(&fixed).samples,
+            Device::ledger(&writable).samples
+        );
+        assert_eq!(
+            Device::ledger(&fixed).reads,
+            Device::ledger(&writable).reads
+        );
 
         // CARRIED STATE, exactly: a rung boundary that changes nothing must be invisible. Two
         // rungs at one temperature are one rung of their total length, to the bit.
@@ -927,7 +1026,11 @@ mod tests {
         assert!(split.program(&p).is_empty() && whole.program(&p).is_empty());
         let mut two = Schedule::new();
         for sweeps in [9, 14] {
-            two.push(crate::schedule::Stage { beta: 0.7, sweeps, penalties: Default::default() });
+            two.push(crate::schedule::Stage {
+                beta: 0.7,
+                sweeps,
+                penalties: Default::default(),
+            });
         }
         split.run(&two, 5).unwrap();
         whole.run(&Schedule::constant(0.7, 23), 5).unwrap();
@@ -936,7 +1039,11 @@ mod tests {
             whole.fabric.as_ref().unwrap().core.s,
             "a write-free rung boundary moved the chain"
         );
-        assert_eq!(Device::ledger(&split).writes, Device::ledger(&whole).writes, "and an unchanged temperature is not charged twice");
+        assert_eq!(
+            Device::ledger(&split).writes,
+            Device::ledger(&whole).writes,
+            "and an unchanged temperature is not charged twice"
+        );
 
         // WHAT CARRYING STATE BUYS. Twelve rungs of eight sweeps is ninety-six sweeps of annealing
         // here and twelve cold starts of eight sweeps there; same sweeps, same reads, same seeds.
@@ -949,8 +1056,13 @@ mod tests {
             e_fixed += g.energy(&f.run(&ladder, seed).unwrap());
             e_writable += g.energy(&w.run(&ladder, seed).unwrap());
         }
-        let (e_fixed, e_writable) = (e_fixed / f64::from(seeds as u32), e_writable / f64::from(seeds as u32));
-        eprintln!("mean best energy over {seeds} seeds: annealed {e_writable:.2}, twelve restarts {e_fixed:.2}");
+        let (e_fixed, e_writable) = (
+            e_fixed / f64::from(seeds as u32),
+            e_writable / f64::from(seeds as u32),
+        );
+        eprintln!(
+            "mean best energy over {seeds} seeds: annealed {e_writable:.2}, twelve restarts {e_fixed:.2}"
+        );
         assert!(
             e_writable < e_fixed - 2.0,
             "annealing should beat restarts on a frustrated torus: {e_writable} vs {e_fixed}"
@@ -971,11 +1083,18 @@ mod tests {
         let err = d.run(&too_cold, 1).unwrap_err();
         assert!(err.contains("does not fit"), "{err}");
         let l = Device::ledger(&d);
-        assert_eq!((l.samples, l.reads, l.writes), (after_load.samples, after_load.reads, after_load.writes), "five good rungs must not run before the sixth is refused");
+        assert_eq!(
+            (l.samples, l.reads, l.writes),
+            (after_load.samples, after_load.reads, after_load.writes),
+            "five good rungs must not run before the sixth is refused"
+        );
         // And too HOT deletes couplings: 0.125 * 0.01 * 256 rounds to zero.
         let err = d.run(&Schedule::constant(0.01, 10), 1).unwrap_err();
         assert!(err.contains("rounds to ZERO"), "{err}");
-        assert!(d.run(&Schedule::geometric(0.2, 5.0, 6, 10), 1).is_ok(), "and the ladder that fits, runs");
+        assert!(
+            d.run(&Schedule::geometric(0.2, 5.0, 6, 10), 1).is_ok(),
+            "and the ladder that fits, runs"
+        );
     }
 
     #[test]
@@ -989,14 +1108,30 @@ mod tests {
         let at_rom_beta = Schedule::constant(ROM_BETA, 5);
         let once = d.run(&at_rom_beta, 3).unwrap();
         let end_once = d.fabric.as_ref().unwrap().core.s.clone();
-        assert_eq!(Device::ledger(&d).writes, n, "the load already holds the program at the ROM's beta");
+        assert_eq!(
+            Device::ledger(&d).writes,
+            n,
+            "the load already holds the program at the ROM's beta"
+        );
         let again = d.run(&at_rom_beta, 3).unwrap();
-        assert_eq!(Device::ledger(&d).writes, n, "the same seed is a soft reset, which writes no node");
+        assert_eq!(
+            Device::ledger(&d).writes,
+            n,
+            "the same seed is a soft reset, which writes no node"
+        );
         // A soft reset really is one: the second run is the first run, not its continuation.
         assert_eq!(once, again);
-        assert_eq!(end_once, d.fabric.as_ref().unwrap().core.s, "a run must start from reset, not from where the last one stopped");
+        assert_eq!(
+            end_once,
+            d.fabric.as_ref().unwrap().core.s,
+            "a run must start from reset, not from where the last one stopped"
+        );
         d.run(&at_rom_beta, 4).unwrap();
-        assert_eq!(Device::ledger(&d).writes, 2 * n, "seeds are reset constants of the netlist");
+        assert_eq!(
+            Device::ledger(&d).writes,
+            2 * n,
+            "seeds are reset constants of the netlist"
+        );
     }
 
     /// THE CARRY GATE. The device's ladder anneals only if the HARDWARE keeps its spins and its
@@ -1006,7 +1141,9 @@ mod tests {
     #[test]
     fn rtl_reprogrammed_mid_run_without_a_reset_carries_its_state() {
         if !have_iverilog() {
-            eprintln!("SKIP: iverilog not installed on this machine; the carry gate did not run, skipping");
+            eprintln!(
+                "SKIP: iverilog not installed on this machine; the carry gate did not run, skipping"
+            );
             return;
         }
         // SHORT after the reprogram, and COLD. The first version ran eleven hot sweeps after it,
@@ -1021,7 +1158,11 @@ mod tests {
         let mut w = WritableFabric::new(&first, 0.6, 0xCA44).expect("fits");
         let core = w.emit_verilog("wfab");
         let shell = w.emit_axi_shell("wf_axi", "wfab", "clk");
-        let word = |f: &FixedFabric| f.s.iter().enumerate().fold(0u32, |a, (i, &b)| a | (u32::from(b) << i));
+        let word = |f: &FixedFabric| {
+            f.s.iter()
+                .enumerate()
+                .fold(0u32, |a, (i, &b)| a | (u32::from(b) << i))
+        };
         for _ in 0..k {
             w.core.sweep();
         }
@@ -1037,7 +1178,11 @@ mod tests {
         for _ in 0..m {
             restarted.sweep();
         }
-        assert_ne!(carried, word(&restarted), "vacuous: a full restart reaches the same state");
+        assert_ne!(
+            carried,
+            word(&restarted),
+            "vacuous: a full restart reaches the same state"
+        );
         // ...and a reset after which the run RESUMES AT THE SAME STREAM POSITION, which is what a
         // shell that resets on a configuration write does, and what the first version could not
         // tell from carrying. Same random numbers, second problem throughout, spins from reset.
@@ -1045,10 +1190,17 @@ mod tests {
         for _ in 0..k + m {
             spins_lost.sweep();
         }
-        assert_ne!(carried, word(&spins_lost), "vacuous: the chains coalesced and the spins' memory is gone");
+        assert_ne!(
+            carried,
+            word(&spins_lost),
+            "vacuous: the chains coalesced and the spins' memory is gone"
+        );
         let mut writes = String::new();
         for wr in &bus {
-            writes.push_str(&format!("    wr(32'h{:08X}, 32'h{:08X});\n", wr.offset, wr.data));
+            writes.push_str(&format!(
+                "    wr(32'h{:08X}, 32'h{:08X});\n",
+                wr.offset, wr.data
+            ));
         }
         let total = k + m;
         let tb = format!(
@@ -1124,8 +1276,16 @@ endmodule
             .args(["-g2012", "-o", "sim", "fabric.v", "shell.v", "tb.v"])
             .output()
             .unwrap();
-        assert!(out.status.success(), "iverilog: {}", String::from_utf8_lossy(&out.stderr));
-        let run = std::process::Command::new("vvp").current_dir(&dir).arg("sim").output().unwrap();
+        assert!(
+            out.status.success(),
+            "iverilog: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = std::process::Command::new("vvp")
+            .current_dir(&dir)
+            .arg("sim")
+            .output()
+            .unwrap();
         let stdout = String::from_utf8_lossy(&run.stdout);
         assert!(stdout.contains("FERROTHERM_PASS"), "carry gate:\n{stdout}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1227,7 +1387,8 @@ module tb;
 endmodule
 "#
         );
-        let dir = std::env::temp_dir().join(format!("ferrotherm_stress_{top}_{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("ferrotherm_stress_{top}_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("fabric.v"), core).unwrap();
         std::fs::write(dir.join("shell.v"), shell).unwrap();
@@ -1237,8 +1398,16 @@ endmodule
             .args(["-g2012", "-o", "sim", "fabric.v", "shell.v", "tb.v"])
             .output()
             .unwrap();
-        assert!(out.status.success(), "iverilog: {}", String::from_utf8_lossy(&out.stderr));
-        let run = std::process::Command::new("vvp").current_dir(&dir).arg("sim").output().unwrap();
+        assert!(
+            out.status.success(),
+            "iverilog: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = std::process::Command::new("vvp")
+            .current_dir(&dir)
+            .arg("sim")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         String::from_utf8_lossy(&run.stdout).into_owned()
     }
@@ -1246,16 +1415,34 @@ endmodule
     #[test]
     fn neither_shell_deadlocks_under_a_badly_behaved_master() {
         if !have_iverilog() {
-            eprintln!("SKIP: iverilog not installed on this machine; the bus stress gate did not run, skipping");
+            eprintln!(
+                "SKIP: iverilog not installed on this machine; the bus stress gate did not run, skipping"
+            );
             return;
         }
         let g = lattice2d(4, 0.9);
         let w = WritableFabric::new(&g, 0.25, 7).expect("fits");
-        let out = stress(&w.emit_axi_shell("wf_axi", "wfab", "clk"), "wf_axi", &w.emit_verilog("wfab"), true);
-        assert!(out.contains("FERROTHERM_PASS"), "writable shell under stress:\n{out}");
+        let out = stress(
+            &w.emit_axi_shell("wf_axi", "wfab", "clk"),
+            "wf_axi",
+            &w.emit_verilog("wfab"),
+            true,
+        );
+        assert!(
+            out.contains("FERROTHERM_PASS"),
+            "writable shell under stress:\n{out}"
+        );
         let f = FixedFabric::new(&g, 0.25, 7);
-        let out = stress(&f.emit_axi_shell("ft_axi", "fabric", "clk"), "ft_axi", &f.emit_verilog("fabric"), false);
-        assert!(out.contains("FERROTHERM_PASS"), "fixed shell under stress:\n{out}");
+        let out = stress(
+            &f.emit_axi_shell("ft_axi", "fabric", "clk"),
+            "ft_axi",
+            &f.emit_verilog("fabric"),
+            false,
+        );
+        assert!(
+            out.contains("FERROTHERM_PASS"),
+            "fixed shell under stress:\n{out}"
+        );
     }
 
     /// THE HARDWARE GATE. The emitted RTL is driven over its AXI port as a host would drive it:
@@ -1265,7 +1452,9 @@ endmodule
     #[test]
     fn rtl_written_over_axi_matches_the_fixed_fabric_of_what_was_written() {
         if !have_iverilog() {
-            eprintln!("SKIP: iverilog not installed on this machine; the writable-fabric gate did not run, skipping");
+            eprintln!(
+                "SKIP: iverilog not installed on this machine; the writable-fabric gate did not run, skipping"
+            );
             return;
         }
         let sweeps = 20usize;
@@ -1274,7 +1463,11 @@ endmodule
         let mut w = WritableFabric::new(&first, 0.25, 0x5EED).expect("fits");
         let core = w.emit_verilog("wfab");
         let shell = w.emit_axi_shell("wf_axi", "wfab", "clk");
-        let word = |f: &FixedFabric| f.s.iter().enumerate().fold(0u32, |a, (i, &b)| a | (u32::from(b) << i));
+        let word = |f: &FixedFabric| {
+            f.s.iter()
+                .enumerate()
+                .fold(0u32, |a, (i, &b)| a | (u32::from(b) << i))
+        };
         let mut a = FixedFabric::new(&first, 0.25, 0x5EED);
         let mut b = FixedFabric::new(&second, 0.25, 0x5EED);
         for _ in 0..sweeps {
@@ -1282,11 +1475,17 @@ endmodule
             b.sweep();
         }
         let (want_a, want_b) = (word(&a), word(&b));
-        assert_ne!(want_a, want_b, "vacuous unless the second problem reaches a different state");
+        assert_ne!(
+            want_a, want_b,
+            "vacuous unless the second problem reaches a different state"
+        );
         let bus = w.program(&second).expect("same wiring");
         let mut writes = String::new();
         for wr in &bus {
-            writes.push_str(&format!("    wr(32'h{:08X}, 32'h{:08X});\n", wr.offset, wr.data));
+            writes.push_str(&format!(
+                "    wr(32'h{:08X}, 32'h{:08X});\n",
+                wr.offset, wr.data
+            ));
         }
         let n_writes = bus.len();
 
@@ -1375,10 +1574,21 @@ endmodule
             .args(["-g2012", "-o", "sim", "fabric.v", "shell.v", "tb.v"])
             .output()
             .unwrap();
-        assert!(out.status.success(), "iverilog: {}", String::from_utf8_lossy(&out.stderr));
-        let run = std::process::Command::new("vvp").current_dir(&dir).arg("sim").output().unwrap();
+        assert!(
+            out.status.success(),
+            "iverilog: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let run = std::process::Command::new("vvp")
+            .current_dir(&dir)
+            .arg("sim")
+            .output()
+            .unwrap();
         let stdout = String::from_utf8_lossy(&run.stdout);
-        assert!(stdout.contains("FERROTHERM_PASS"), "writable fabric gate:\n{stdout}");
+        assert!(
+            stdout.contains("FERROTHERM_PASS"),
+            "writable fabric gate:\n{stdout}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

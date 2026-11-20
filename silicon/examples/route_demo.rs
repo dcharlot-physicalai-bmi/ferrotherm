@@ -10,7 +10,7 @@
 // usage: route_demo <tilegrid.json> <tileconn.json> <tt_INT_L.json> <tt_INT_R.json> <segbits_int_l.db> <segbits_int_r.db>
 use ferrotherm_silicon::framebuf::FrameBuf;
 use ferrotherm_silicon::pips::PipDb;
-use ferrotherm_silicon::route::{interconnect_only, parse_tileconn, Fabric};
+use ferrotherm_silicon::route::{Fabric, interconnect_only, parse_tileconn};
 use ferrotherm_silicon::segbits::SegBits;
 use ferrotherm_silicon::tilegrid::TileGrid;
 use std::collections::HashMap;
@@ -30,8 +30,12 @@ fn main() {
     let mut seg = HashMap::new();
     seg.insert("INT_L".to_string(), SegBits::parse(&rd(4)));
     seg.insert("INT_R".to_string(), SegBits::parse(&rd(5)));
-    println!("fabric loaded in {:.2} s: {} tiles, {} connectivity rules",
-             t0.elapsed().as_secs_f64(), grid.tiles.len(), conns.len());
+    println!(
+        "fabric loaded in {:.2} s: {} tiles, {} connectivity rules",
+        t0.elapsed().as_secs_f64(),
+        grid.tiles.len(),
+        conns.len()
+    );
 
     let fab = Fabric::new(&grid, dbs, conns);
 
@@ -44,7 +48,10 @@ fn main() {
         .name
         .clone();
     let src = (start_tile.clone(), "LOGIC_OUTS_L0".to_string());
-    println!("\nsource: {} / {}  (a LUT output entering the interconnect)", src.0, src.1);
+    println!(
+        "\nsource: {} / {}  (a LUT output entering the interconnect)",
+        src.0, src.1
+    );
 
     // find IMUX sinks (LUT inputs) in OTHER tiles, reachable from here
     let t1 = Instant::now();
@@ -63,7 +70,11 @@ fn main() {
                 if seen.contains(&next) {
                     continue;
                 }
-                if !grid.tiles.get(&next.0).is_some_and(|t| interconnect_only(&next.0, &t.kind)) {
+                if !grid
+                    .tiles
+                    .get(&next.0)
+                    .is_some_and(|t| interconnect_only(&next.0, &t.kind))
+                {
                     continue;
                 }
                 if next.1.starts_with("IMUX") && next.0 != src.0 && found.len() < 3 {
@@ -74,7 +85,10 @@ fn main() {
             }
         }
     }
-    println!("reachable LUT inputs in other tiles (searched {:.2} s):", t1.elapsed().as_secs_f64());
+    println!(
+        "reachable LUT inputs in other tiles (searched {:.2} s):",
+        t1.elapsed().as_secs_f64()
+    );
     for (t, w, d) in &found {
         println!("  {t} / {w}   (~{d} hops)");
     }
@@ -97,13 +111,20 @@ fn main() {
     let mut fb = FrameBuf::new();
     let (mut ok, mut miss) = (0usize, 0usize);
     for s in &path {
-        let Some(db) = seg.get(&s.tile_type) else { miss += 1; continue };
+        let Some(db) = seg.get(&s.tile_type) else {
+            miss += 1;
+            continue;
+        };
         let Some(bits) = db.get(&s.feature()) else {
             println!("  NO BITS for {}", s.feature());
             miss += 1;
             continue;
         };
-        let Some(block) = grid.tiles.get(&s.tile).and_then(ferrotherm_silicon::tilegrid::Tile::logic_block) else {
+        let Some(block) = grid
+            .tiles
+            .get(&s.tile)
+            .and_then(ferrotherm_silicon::tilegrid::Tile::logic_block)
+        else {
             miss += 1;
             continue;
         };
@@ -115,9 +136,16 @@ fn main() {
             }
         }
     }
-    let set_bits: usize = fb.frames.values().map(|f| f.iter().map(|w| w.count_ones() as usize).sum::<usize>()).sum();
-    println!("\n{ok}/{} PIPs resolved to bits ({miss} missing); {} frames touched, {set_bits} bits set",
-             path.len(), fb.len());
+    let set_bits: usize = fb
+        .frames
+        .values()
+        .map(|f| f.iter().map(|w| w.count_ones() as usize).sum::<usize>())
+        .sum();
+    println!(
+        "\n{ok}/{} PIPs resolved to bits ({miss} missing); {} frames touched, {set_bits} bits set",
+        path.len(),
+        fb.len()
+    );
     println!(
         "verdict: {}",
         if miss == 0 && ok == path.len() && set_bits > 0 {

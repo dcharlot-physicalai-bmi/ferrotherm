@@ -60,7 +60,10 @@ pub fn load_average() -> Option<f64> {
 /// `wasm32-unknown-unknown` in CI and `std::process` has no business appearing on that path.
 #[cfg(unix)]
 fn sysctl_load() -> Option<f64> {
-    let out = std::process::Command::new("sysctl").args(["-n", "vm.loadavg"]).output().ok()?;
+    let out = std::process::Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     text.split_whitespace().find_map(|t| t.parse::<f64>().ok())
 }
@@ -255,7 +258,10 @@ mod tests {
     #[test]
     fn the_threshold_is_where_it_says_it_is() {
         assert!(Timing::new(1.0, Some(0.0)).trustworthy());
-        assert!(Timing::new(1.0, Some(QUIET_LOAD)).trustworthy(), "the threshold itself is allowed");
+        assert!(
+            Timing::new(1.0, Some(QUIET_LOAD)).trustworthy(),
+            "the threshold itself is allowed"
+        );
         assert!(!Timing::new(1.0, Some(QUIET_LOAD + 0.01)).trustworthy());
         assert!(!Timing::new(1.0, Some(189.0)).trustworthy());
     }
@@ -279,7 +285,9 @@ mod tests {
         assert!(s.contains("NOT A MEASUREMENT"), "{s}");
         assert!(s.contains("189.4"), "the reader is told how busy: {s}");
         assert!(s.len() < 60, "the inline form stays on one line: {s}");
-        let c = t.caveat().expect("a contaminated timing owes the reader an explanation");
+        let c = t
+            .caveat()
+            .expect("a contaminated timing owes the reader an explanation");
         assert!(c.contains("189.4") && c.contains("run queue"), "{c}");
         assert!(
             Timing::new(1.0, Some(0.5)).caveat().is_none(),
@@ -290,7 +298,10 @@ mod tests {
     /// Both samples are consulted, and the worse one wins.
     #[test]
     fn the_worse_of_the_two_samples_is_the_one_kept() {
-        assert_eq!(Timing::new(1.0, Some(0.1).map(|a: f64| a.max(9.0))).load1, Some(9.0));
+        assert_eq!(
+            Timing::new(1.0, Some(0.1).map(|a: f64| a.max(9.0))).load1,
+            Some(9.0)
+        );
         // And a readable sample is not erased by an unreadable one.
         let (_, t) = Timing::around(|| ());
         if let Some(l) = t.load1 {
@@ -311,8 +322,16 @@ mod tests {
     /// A result is not a rate. Quiet is the pass-through case and it carries the load onward.
     #[test]
     fn a_quiet_machine_is_waved_through_with_its_reading() {
-        assert_eq!(decide(Some(0.4), false, "x"), Ok(Quiet::Yes { load1: Some(0.4) }));
-        assert_eq!(decide(Some(QUIET_LOAD), false, "x"), Ok(Quiet::Yes { load1: Some(QUIET_LOAD) }));
+        assert_eq!(
+            decide(Some(0.4), false, "x"),
+            Ok(Quiet::Yes { load1: Some(0.4) })
+        );
+        assert_eq!(
+            decide(Some(QUIET_LOAD), false, "x"),
+            Ok(Quiet::Yes {
+                load1: Some(QUIET_LOAD)
+            })
+        );
         assert_eq!(decide(None, false, "x"), Ok(Quiet::Yes { load1: None }));
         assert!(decide(Some(0.4), false, "x").unwrap().caveat().is_none());
     }
@@ -327,7 +346,10 @@ mod tests {
         assert_eq!(q, Quiet::Overridden { load1: 157.0 });
         let c = q.caveat().expect("an overridden run must carry a caveat");
         assert!(c.contains("157"), "{c}");
-        assert!(c.contains("lower bound"), "and says which way it is wrong: {c}");
+        assert!(
+            c.contains("lower bound"),
+            "and says which way it is wrong: {c}"
+        );
     }
 
     /// Whatever this platform reports, it must be a plausible load average.

@@ -183,13 +183,22 @@ impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Error::EmptyClause { clause } => {
-                write!(f, "clause {clause} has no literals, so its residual minimises over nothing")
+                write!(
+                    f,
+                    "clause {clause} has no literals, so its residual minimises over nothing"
+                )
             }
             Error::ZeroLiteral { clause } => {
-                write!(f, "clause {clause} contains literal 0, which names no variable")
+                write!(
+                    f,
+                    "clause {clause} contains literal 0, which names no variable"
+                )
             }
             Error::UnknownVariable { lit, vars } => {
-                write!(f, "literal {lit} names a variable past the {vars} this formula declares")
+                write!(
+                    f,
+                    "literal {lit} names a variable past the {vars} this formula declares"
+                )
             }
             Error::RepeatedVariable { var, clause } => write!(
                 f,
@@ -202,7 +211,10 @@ impl core::fmt::Display for Error {
                  for a broken clause; this solves satisfiability, not MAX-SAT"
             ),
             Error::BadParam { name, got } => {
-                write!(f, "parameter {name} is {got}, outside the range its term is defined on")
+                write!(
+                    f,
+                    "parameter {name} is {got}, outside the range its term is defined on"
+                )
             }
             Error::StepFloor { h, err } => write!(
                 f,
@@ -229,7 +241,10 @@ impl Formula {
     /// An empty formula over `vars` variables.
     #[must_use]
     pub fn new(vars: usize) -> Formula {
-        Formula { vars, clauses: Vec::new() }
+        Formula {
+            vars,
+            clauses: Vec::new(),
+        }
     }
 
     /// Add a clause, as DIMACS literals (`+v` positive, `−v` negated, one-based).
@@ -249,9 +264,15 @@ impl Formula {
             }
             let v = l.unsigned_abs() as usize;
             if v > self.vars {
-                return Err(Error::UnknownVariable { lit: l, vars: self.vars });
+                return Err(Error::UnknownVariable {
+                    lit: l,
+                    vars: self.vars,
+                });
             }
-            if lits[..a].iter().any(|&p| p.unsigned_abs() == l.unsigned_abs()) {
+            if lits[..a]
+                .iter()
+                .any(|&p| p.unsigned_abs() == l.unsigned_abs())
+            {
                 return Err(Error::RepeatedVariable { var: v, clause });
             }
         }
@@ -272,7 +293,10 @@ impl Formula {
         let mut f = Formula::new(cnf.vars);
         for (i, c) in cnf.clauses.iter().enumerate() {
             if cnf.format != Format::Cnf && !c.is_hard() {
-                return Err(Error::SoftClause { clause: i, weight: c.weight });
+                return Err(Error::SoftClause {
+                    clause: i,
+                    weight: c.weight,
+                });
             }
             f.push(&c.lits)?;
         }
@@ -299,11 +323,17 @@ impl Formula {
     /// scored against it, and scoring it anyway is how a partial assignment comes to look feasible.
     #[must_use]
     pub fn unsatisfied(&self, s: &[i8]) -> usize {
-        assert!(s.len() >= self.vars, "a state of {} cannot cover {} variables", s.len(), self.vars);
+        assert!(
+            s.len() >= self.vars,
+            "a state of {} cannot cover {} variables",
+            s.len(),
+            self.vars
+        );
         self.clauses
             .iter()
             .filter(|c| {
-                c.iter().all(|&l| s[lit_var(l)] != if l > 0 { 1 } else { -1 })
+                c.iter()
+                    .all(|&l| s[lit_var(l)] != if l > 0 { 1 } else { -1 })
             })
             .count()
     }
@@ -690,13 +720,32 @@ impl<'a> Machine<'a> {
         for _ in 0..TRIES {
             deriv(self.f, &self.p, &self.y, &mut self.d);
             if !self.d.iter().all(|x| x.is_finite()) {
-                return Err(Error::StepFloor { h: self.h, err: f64::NAN });
+                return Err(Error::StepFloor {
+                    h: self.h,
+                    err: f64::NAN,
+                });
             }
             let h = self.h;
             euler(n, m, self.p.xl_max, &self.y, &self.d, h, &mut self.y1);
-            euler(n, m, self.p.xl_max, &self.y, &self.d, 0.5 * h, &mut self.ymid);
+            euler(
+                n,
+                m,
+                self.p.xl_max,
+                &self.y,
+                &self.d,
+                0.5 * h,
+                &mut self.ymid,
+            );
             deriv(self.f, &self.p, &self.ymid, &mut self.dmid);
-            euler(n, m, self.p.xl_max, &self.ymid, &self.dmid, 0.5 * h, &mut self.y2);
+            euler(
+                n,
+                m,
+                self.p.xl_max,
+                &self.ymid,
+                &self.dmid,
+                0.5 * h,
+                &mut self.y2,
+            );
             let mut err = 0.0f64;
             for i in 0..self.y.len() {
                 let sc = self.p.atol + self.p.rtol * self.y2[i].abs();
@@ -720,7 +769,10 @@ impl<'a> Machine<'a> {
             }
             self.h = (h * (0.9 / err).max(0.2)).clamp(self.p.h_min, self.p.h_max);
         }
-        Err(Error::StepFloor { h: self.h, err: f64::INFINITY })
+        Err(Error::StepFloor {
+            h: self.h,
+            err: f64::INFINITY,
+        })
     }
 
     /// Integrate until the readout satisfies the formula, or `max_steps` accepted steps pass.
@@ -733,23 +785,42 @@ impl<'a> Machine<'a> {
         let mut best = self.readout();
         let mut best_u = self.f.unsatisfied(&best);
         if best_u == 0 {
-            return Outcome::Solved { assignment: best, steps: self.steps, t: self.t };
+            return Outcome::Solved {
+                assignment: best,
+                steps: self.steps,
+                t: self.t,
+            };
         }
         for _ in 0..max_steps {
             if let Err(why) = self.step() {
-                return Outcome::Stalled { best, unsatisfied: best_u, steps: self.steps, t: self.t, why };
+                return Outcome::Stalled {
+                    best,
+                    unsatisfied: best_u,
+                    steps: self.steps,
+                    t: self.t,
+                    why,
+                };
             }
             let s = self.readout();
             let u = self.f.unsatisfied(&s);
             if u == 0 {
-                return Outcome::Solved { assignment: s, steps: self.steps, t: self.t };
+                return Outcome::Solved {
+                    assignment: s,
+                    steps: self.steps,
+                    t: self.t,
+                };
             }
             if u < best_u {
                 best_u = u;
                 best = s;
             }
         }
-        Outcome::Exhausted { best, unsatisfied: best_u, steps: self.steps, t: self.t }
+        Outcome::Exhausted {
+            best,
+            unsatisfied: best_u,
+            steps: self.steps,
+            t: self.t,
+        }
     }
 }
 
@@ -784,14 +855,23 @@ mod tests {
             }
             let lits: Vec<i32> = picked
                 .iter()
-                .map(|&v| if rng.f64() < 0.5 { -(v as i32 + 1) } else { v as i32 + 1 })
+                .map(|&v| {
+                    if rng.f64() < 0.5 {
+                        -(v as i32 + 1)
+                    } else {
+                        v as i32 + 1
+                    }
+                })
                 .collect();
             if let Some(p) = plant
-                && !lits.iter().any(|&l| p[lit_var(l)] == if l > 0 { 1 } else { -1 })
+                && !lits
+                    .iter()
+                    .any(|&l| p[lit_var(l)] == if l > 0 { 1 } else { -1 })
             {
                 continue;
             }
-            f.push(&lits).expect("generated clauses are non-empty and repeat no variable");
+            f.push(&lits)
+                .expect("generated clauses are non-empty and repeat no variable");
         }
         f
     }
@@ -801,7 +881,9 @@ mod tests {
     /// proof in the module docs covers, and it is satisfied by `s_n = q_n`.
     fn sign_consistent(vars: usize, clauses: usize, seed: u64) -> Formula {
         let mut rng = Pcg::new(seed, 77);
-        let pol: Vec<i32> = (0..vars).map(|_| if rng.f64() < 0.5 { -1 } else { 1 }).collect();
+        let pol: Vec<i32> = (0..vars)
+            .map(|_| if rng.f64() < 0.5 { -1 } else { 1 })
+            .collect();
         let mut f = Formula::new(vars);
         while f.clauses().len() < clauses {
             let mut picked: Vec<usize> = Vec::new();
@@ -812,7 +894,8 @@ mod tests {
                 }
             }
             let lits: Vec<i32> = picked.iter().map(|&v| pol[v] * (v as i32 + 1)).collect();
-            f.push(&lits).expect("three distinct variables, one literal each");
+            f.push(&lits)
+                .expect("three distinct variables, one literal each");
         }
         f
     }
@@ -823,7 +906,11 @@ mod tests {
         let n = f.vars();
         assert!(n <= 20, "enumerating {n} variables is not cheap");
         (0..(1u32 << n))
-            .map(|mask| (0..n).map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 }).collect::<Vec<i8>>())
+            .map(|mask| {
+                (0..n)
+                    .map(|i| if mask >> i & 1 == 1 { 1i8 } else { -1 })
+                    .collect::<Vec<i8>>()
+            })
             .filter(|s| f.is_satisfied_by(s))
             .collect()
     }
@@ -834,7 +921,9 @@ mod tests {
         assert!(n <= 20, "enumerating {n} variables is not cheap");
         (0..(1u32 << n))
             .map(|mask| {
-                let s: Vec<i8> = (0..n).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+                let s: Vec<i8> = (0..n)
+                    .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                    .collect();
                 f.unsatisfied(&s)
             })
             .min()
@@ -846,8 +935,9 @@ mod tests {
     fn unsat_eight() -> Formula {
         let mut f = Formula::new(3);
         for m in 0..8i32 {
-            let lits: Vec<i32> =
-                (0..3).map(|b| if m >> b & 1 == 1 { b + 1 } else { -(b + 1) }).collect();
+            let lits: Vec<i32> = (0..3)
+                .map(|b| if m >> b & 1 == 1 { b + 1 } else { -(b + 1) })
+                .collect();
             f.push(&lits).unwrap();
         }
         f
@@ -870,22 +960,34 @@ mod tests {
             let f = sign_consistent(16, 40, seed);
             let mut mc = Machine::new(&f, Params::default(), seed).unwrap();
             let start = mc.residual();
-            assert!(start > 4.0, "a flat start would make this test vacuous: {start}");
+            assert!(
+                start > 4.0,
+                "a flat start would make this test vacuous: {start}"
+            );
             let mut prev: Vec<f64> = mc.residuals().to_vec();
             let mut prev_total = start;
             for k in 0..4000 {
                 mc.step().unwrap();
                 for (m, (&now, &was)) in mc.residuals().iter().zip(&prev).enumerate() {
-                    assert!(now <= was, "seed {seed} step {k} clause {m}: {was} rose to {now}");
+                    assert!(
+                        now <= was,
+                        "seed {seed} step {k} clause {m}: {was} rose to {now}"
+                    );
                 }
                 let total = mc.residual();
-                assert!(total <= prev_total, "seed {seed} step {k}: {prev_total} rose to {total}");
+                assert!(
+                    total <= prev_total,
+                    "seed {seed} step {k}: {prev_total} rose to {total}"
+                );
                 prev.copy_from_slice(mc.residuals());
                 prev_total = total;
             }
             // And it descended to the solution rather than stalling: the monotonicity above is
             // only worth asserting on a trajectory that moved.
-            assert!(prev_total < 1e-12, "seed {seed} ended at residual {prev_total}");
+            assert!(
+                prev_total < 1e-12,
+                "seed {seed} ended at residual {prev_total}"
+            );
             assert_eq!(mc.unsatisfied(), 0, "seed {seed}");
         }
     }
@@ -922,12 +1024,19 @@ mod tests {
             }
             prev = now;
         }
-        assert_eq!(mc.unsatisfied(), 0, "the instance is planted and must be solved");
+        assert_eq!(
+            mc.unsatisfied(),
+            0,
+            "the instance is planted and must be solved"
+        );
         assert!(
             rises > 100,
             "only {rises} rises in {steps_before} steps: the memory terms are not doing anything"
         );
-        assert!(worst > 1e-3, "the rises are rounding noise, not escapes: worst {worst}");
+        assert!(
+            worst > 1e-3,
+            "the rises are rounding noise, not escapes: worst {worst}"
+        );
     }
 
     /// THE READOUT ORACLE: exhaustive enumeration over all `2^14` assignments.
@@ -951,7 +1060,10 @@ mod tests {
             let out = solve(&f, Params::default(), 20_000, seed).unwrap();
             match &out {
                 Outcome::Solved { assignment, .. } => {
-                    assert!(!sols.is_empty(), "seed {seed}: claimed a solution to an UNSAT formula");
+                    assert!(
+                        !sols.is_empty(),
+                        "seed {seed}: claimed a solution to an UNSAT formula"
+                    );
                     assert!(
                         sols.iter().any(|s| s == assignment),
                         "seed {seed}: {assignment:?} is not one of the {} enumerated solutions",
@@ -959,15 +1071,26 @@ mod tests {
                     );
                     solved += 1;
                 }
-                Outcome::Exhausted { best, unsatisfied, .. } => {
-                    assert_eq!(*unsatisfied, f.unsatisfied(best), "seed {seed}: the count and the state disagree");
+                Outcome::Exhausted {
+                    best, unsatisfied, ..
+                } => {
+                    assert_eq!(
+                        *unsatisfied,
+                        f.unsatisfied(best),
+                        "seed {seed}: the count and the state disagree"
+                    );
                     assert!(
                         *unsatisfied >= floor,
                         "seed {seed}: reported {unsatisfied} failures below the enumerated optimum {floor}"
                     );
-                    assert!(*unsatisfied > 0, "seed {seed}: an exhausted run holding a solution");
+                    assert!(
+                        *unsatisfied > 0,
+                        "seed {seed}: an exhausted run holding a solution"
+                    );
                 }
-                Outcome::Stalled { .. } => panic!("seed {seed}: unexpected stall on a well-posed run"),
+                Outcome::Stalled { .. } => {
+                    panic!("seed {seed}: unexpected stall on a well-posed run")
+                }
             }
             if sols.is_empty() {
                 unsat += 1;
@@ -975,8 +1098,14 @@ mod tests {
                 sat += 1;
             }
         }
-        assert!(sat >= 5 && unsat >= 5, "the draw must exercise both arms: {sat} SAT, {unsat} UNSAT");
-        assert_eq!(solved, sat, "every satisfiable instance in this set is solvable in budget");
+        assert!(
+            sat >= 5 && unsat >= 5,
+            "the draw must exercise both arms: {sat} SAT, {unsat} UNSAT"
+        );
+        assert_eq!(
+            solved, sat,
+            "every satisfiable instance in this set is solvable in budget"
+        );
     }
 
     /// THE ASYMMETRIC TEST: an UNSAT instance must be REFUSED, and its satisfiable sibling SOLVED,
@@ -989,26 +1118,43 @@ mod tests {
     #[test]
     fn an_unsat_instance_is_refused_while_its_satisfiable_sibling_is_solved() {
         let unsat = unsat_eight();
-        assert!(all_solutions(&unsat).is_empty(), "the fixture must actually be UNSAT");
+        assert!(
+            all_solutions(&unsat).is_empty(),
+            "the fixture must actually be UNSAT"
+        );
         let mut sibling = Formula::new(3);
         for c in unsat.clauses().iter().skip(1) {
             sibling.push(c).unwrap();
         }
         let sols = all_solutions(&sibling);
-        assert_eq!(sols, vec![vec![1i8, 1, 1]], "dropping the first clause must leave one solution");
+        assert_eq!(
+            sols,
+            vec![vec![1i8, 1, 1]],
+            "dropping the first clause must leave one solution"
+        );
 
         for seed in 0..4u64 {
             let bad = solve(&unsat, Params::default(), 20_000, seed).unwrap();
-            assert_eq!(bad.solution(), None, "seed {seed}: an assignment was returned for an UNSAT formula");
+            assert_eq!(
+                bad.solution(),
+                None,
+                "seed {seed}: an assignment was returned for an UNSAT formula"
+            );
             match bad {
-                Outcome::Exhausted { best, unsatisfied, .. } => {
+                Outcome::Exhausted {
+                    best, unsatisfied, ..
+                } => {
                     assert!(unsatisfied >= 1);
                     assert_eq!(unsatisfied, unsat.unsatisfied(&best));
                 }
                 other => panic!("seed {seed}: expected the budget to run out, got {other:?}"),
             }
             let good = solve(&sibling, Params::default(), 20_000, seed).unwrap();
-            assert_eq!(good.solution(), Some(&[1i8, 1, 1][..]), "seed {seed}: the sibling is solvable");
+            assert_eq!(
+                good.solution(),
+                Some(&[1i8, 1, 1][..]),
+                "seed {seed}: the sibling is solvable"
+            );
         }
     }
 
@@ -1031,7 +1177,10 @@ mod tests {
             let u = mc.unsatisfied();
             let b = mc.violation_bound();
             assert!(u as f64 <= b, "step {k}: {u} failures under a bound of {b}");
-            assert!(b >= 2.0 * mc.residual() - 1e-12, "the bound must not round below the sum: {b}");
+            assert!(
+                b >= 2.0 * mc.residual() - 1e-12,
+                "the bound must not round below the sum: {b}"
+            );
             if b < 1.0 {
                 assert_eq!(u, 0, "step {k}: a bound below 1 must certify the readout");
                 certified += 1;
@@ -1040,8 +1189,14 @@ mod tests {
                 failing += 1;
             }
         }
-        assert!(certified > 0, "the certifying regime was never reached, so the bound tested nothing");
-        assert!(failing > 0, "the failing regime was never reached, so the bound tested nothing");
+        assert!(
+            certified > 0,
+            "the certifying regime was never reached, so the bound tested nothing"
+        );
+        assert!(
+            failing > 0,
+            "the failing regime was never reached, so the bound tested nothing"
+        );
     }
 
     /// THE LONG-TERM MEMORY IS LOAD-BEARING, not decoration on a gradient descent.
@@ -1055,7 +1210,11 @@ mod tests {
     /// Measured over seeds 0..6 at 50 variables and 213 clauses: full 6/6, pinned 3/6.
     #[test]
     fn pinning_the_long_term_memory_loses_instances_the_full_flow_solves() {
-        let pinned = Params { xl_max: 1.0, zeta: 0.0, ..Params::default() };
+        let pinned = Params {
+            xl_max: 1.0,
+            zeta: 0.0,
+            ..Params::default()
+        };
         let mut lost = 0usize;
         for seed in 0..6u64 {
             let mut rng = Pcg::new(seed + 100, 5);
@@ -1063,16 +1222,27 @@ mod tests {
             let f = random_3sat(50, 213, Some(&plant), seed);
             let full = solve(&f, Params::default(), 30_000, seed).unwrap();
             let cut = solve(&f, pinned, 30_000, seed).unwrap();
-            let a = full.solution().expect("the full flow solves all six of these");
+            let a = full
+                .solution()
+                .expect("the full flow solves all six of these");
             assert!(f.is_satisfied_by(a));
             if cut.solution().is_none() {
                 lost += 1;
             } else {
-                assert!(f.is_satisfied_by(cut.solution().unwrap()), "a pinned run must still be honest");
+                assert!(
+                    f.is_satisfied_by(cut.solution().unwrap()),
+                    "a pinned run must still be honest"
+                );
             }
         }
-        assert!(lost >= 2, "pinning the long-term memory cost nothing ({lost} of 6 lost)");
-        assert!(lost < 6, "the pinned flow is broken rather than weakened, which tests something else");
+        assert!(
+            lost >= 2,
+            "pinning the long-term memory cost nothing ({lost} of 6 lost)"
+        );
+        assert!(
+            lost < 6,
+            "the pinned flow is broken rather than weakened, which tests something else"
+        );
     }
 
     /// A DIMACS FILE IN, AND [`crate::dimacs::Cnf`] SCORES THE ANSWER — a module with its own
@@ -1090,14 +1260,19 @@ mod tests {
         assert_eq!(f.vars(), 5);
         assert_eq!(f.clauses().len(), 8);
         let out = solve(&f, Params::default(), 20_000, 11).unwrap();
-        let a = out.solution().expect("a satisfiable five-variable instance");
+        let a = out
+            .solution()
+            .expect("a satisfiable five-variable instance");
         assert_eq!(cnf.unsatisfied_weight(a), 0.0, "dimacs disagrees: {a:?}");
         assert_eq!(cnf.cost(a), Some(0.0));
 
         let weighted = Cnf::parse("p wcnf 2 2 10\n10 1 2 0\n3 -1 -2 0\n").unwrap();
         assert_eq!(
             Formula::from_cnf(&weighted),
-            Err(Error::SoftClause { clause: 1, weight: 3.0 }),
+            Err(Error::SoftClause {
+                clause: 1,
+                weight: 3.0
+            }),
             "a soft clause must be named, not silently treated as hard"
         );
     }
@@ -1109,10 +1284,22 @@ mod tests {
         let mut f = Formula::new(3);
         assert_eq!(f.push(&[]), Err(Error::EmptyClause { clause: 0 }));
         assert_eq!(f.push(&[1, 0]), Err(Error::ZeroLiteral { clause: 0 }));
-        assert_eq!(f.push(&[1, 4]), Err(Error::UnknownVariable { lit: 4, vars: 3 }));
-        assert_eq!(f.push(&[1, -1]), Err(Error::RepeatedVariable { var: 1, clause: 0 }));
-        assert_eq!(f.push(&[2, 2]), Err(Error::RepeatedVariable { var: 2, clause: 0 }));
-        assert!(f.clauses().is_empty(), "a refused clause must not be half-added");
+        assert_eq!(
+            f.push(&[1, 4]),
+            Err(Error::UnknownVariable { lit: 4, vars: 3 })
+        );
+        assert_eq!(
+            f.push(&[1, -1]),
+            Err(Error::RepeatedVariable { var: 1, clause: 0 })
+        );
+        assert_eq!(
+            f.push(&[2, 2]),
+            Err(Error::RepeatedVariable { var: 2, clause: 0 })
+        );
+        assert!(
+            f.clauses().is_empty(),
+            "a refused clause must not be half-added"
+        );
         f.push(&[1, -2, 3]).unwrap();
         assert_eq!(f.clauses(), &[vec![1, -2, 3]]);
         // An error prints what was seen.
@@ -1129,18 +1316,90 @@ mod tests {
     fn bad_parameters_are_named_rather_than_defaulted() {
         let f = sign_consistent(6, 10, 1);
         for (p, want) in [
-            (Params { alpha: 0.0, ..Params::default() }, "alpha"),
-            (Params { beta: -1.0, ..Params::default() }, "beta"),
-            (Params { gamma: 1.0, ..Params::default() }, "gamma"),
-            (Params { delta: 0.0, ..Params::default() }, "delta"),
-            (Params { epsilon: f64::NAN, ..Params::default() }, "epsilon"),
-            (Params { zeta: -0.5, ..Params::default() }, "zeta"),
-            (Params { xl_max: 0.5, ..Params::default() }, "xl_max"),
-            (Params { h0: 0.0, ..Params::default() }, "h0"),
-            (Params { h_min: -1.0, ..Params::default() }, "h_min"),
-            (Params { h_max: 1e-12, ..Params::default() }, "h_max"),
-            (Params { atol: 0.0, ..Params::default() }, "atol"),
-            (Params { rtol: f64::INFINITY, ..Params::default() }, "rtol"),
+            (
+                Params {
+                    alpha: 0.0,
+                    ..Params::default()
+                },
+                "alpha",
+            ),
+            (
+                Params {
+                    beta: -1.0,
+                    ..Params::default()
+                },
+                "beta",
+            ),
+            (
+                Params {
+                    gamma: 1.0,
+                    ..Params::default()
+                },
+                "gamma",
+            ),
+            (
+                Params {
+                    delta: 0.0,
+                    ..Params::default()
+                },
+                "delta",
+            ),
+            (
+                Params {
+                    epsilon: f64::NAN,
+                    ..Params::default()
+                },
+                "epsilon",
+            ),
+            (
+                Params {
+                    zeta: -0.5,
+                    ..Params::default()
+                },
+                "zeta",
+            ),
+            (
+                Params {
+                    xl_max: 0.5,
+                    ..Params::default()
+                },
+                "xl_max",
+            ),
+            (
+                Params {
+                    h0: 0.0,
+                    ..Params::default()
+                },
+                "h0",
+            ),
+            (
+                Params {
+                    h_min: -1.0,
+                    ..Params::default()
+                },
+                "h_min",
+            ),
+            (
+                Params {
+                    h_max: 1e-12,
+                    ..Params::default()
+                },
+                "h_max",
+            ),
+            (
+                Params {
+                    atol: 0.0,
+                    ..Params::default()
+                },
+                "atol",
+            ),
+            (
+                Params {
+                    rtol: f64::INFINITY,
+                    ..Params::default()
+                },
+                "rtol",
+            ),
         ] {
             match solve(&f, p, 10, 1) {
                 Err(Error::BadParam { name, .. }) => assert_eq!(name, want),
@@ -1164,7 +1423,11 @@ mod tests {
             mc.step().unwrap();
         }
         assert!(mc.voltages()[0] < -0.999, "v1 = {}", mc.voltages()[0]);
-        assert!(mc.residuals()[0] < 1e-15, "the unit clause is unsatisfied: {}", mc.residuals()[0]);
+        assert!(
+            mc.residuals()[0] < 1e-15,
+            "the unit clause is unsatisfied: {}",
+            mc.residuals()[0]
+        );
         assert_eq!(mc.readout(), vec![-1, 1]);
         assert_eq!(mc.unsatisfied(), 0);
     }
@@ -1179,19 +1442,37 @@ mod tests {
         for c in unsat_eight().clauses().iter().skip(1) {
             f.push(c).unwrap();
         }
-        let stiff =
-            Params { h0: 10.0, h_min: 10.0, h_max: 10.0, atol: 1e-12, rtol: 1e-12, ..Params::default() };
+        let stiff = Params {
+            h0: 10.0,
+            h_min: 10.0,
+            h_max: 10.0,
+            atol: 1e-12,
+            rtol: 1e-12,
+            ..Params::default()
+        };
         let out = solve(&f, stiff, 100, 1).unwrap();
         assert_eq!(out.solution(), None);
         match out {
-            Outcome::Stalled { steps, why: Error::StepFloor { h, err }, .. } => {
+            Outcome::Stalled {
+                steps,
+                why: Error::StepFloor { h, err },
+                ..
+            } => {
                 assert_eq!(steps, 0, "no step should have been accepted");
                 assert_eq!(h, 10.0);
-                assert!(err > 1.0, "a stall must report an error above tolerance, got {err}");
+                assert!(
+                    err > 1.0,
+                    "a stall must report an error above tolerance, got {err}"
+                );
             }
             other => panic!("the integrator accepted a step it could not resolve: {other:?}"),
         }
-        assert!(solve(&f, Params::default(), 20_000, 1).unwrap().solution().is_some());
+        assert!(
+            solve(&f, Params::default(), 20_000, 1)
+                .unwrap()
+                .solution()
+                .is_some()
+        );
     }
 
     /// Determinism by seed, which is the crate's headline: the same seed replays the trajectory
@@ -1208,6 +1489,9 @@ mod tests {
         };
         assert_eq!(state(5), state(5));
         assert_ne!(state(5), state(6));
-        assert_eq!(solve(&f, Params::default(), 5_000, 5), solve(&f, Params::default(), 5_000, 5));
+        assert_eq!(
+            solve(&f, Params::default(), 5_000, 5),
+            solve(&f, Params::default(), 5_000, 5)
+        );
     }
 }

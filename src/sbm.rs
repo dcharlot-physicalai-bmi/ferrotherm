@@ -42,7 +42,11 @@ pub fn run(g: &Graph, variant: Variant, n_steps: usize, dt: f64, seed: u64) -> (
     // c0 = 0.5 / (J_rms * sqrt(N)), J_rms over ordered node pairs (CSR stores both directions)
     let sum_j2: f64 = g.w.iter().map(|&w| w * w).sum();
     let j_rms = (sum_j2 / (n as f64 * (n as f64 - 1.0))).sqrt();
-    let c0 = if j_rms > 0.0 { 0.5 / (j_rms * (n as f64).sqrt()) } else { 0.5 };
+    let c0 = if j_rms > 0.0 {
+        0.5 / (j_rms * (n as f64).sqrt())
+    } else {
+        0.5
+    };
 
     let mut rng = Pcg::new(seed, 0x5B);
     // small random x-init in addition to y: with x = 0 exactly, symmetric graphs drive all
@@ -61,7 +65,12 @@ pub fn run(g: &Graph, variant: Variant, n_steps: usize, dt: f64, seed: u64) -> (
             let mut s = 0.0;
             for e in g.offset[i]..g.offset[i + 1] {
                 let xj = x[g.nbr[e] as usize];
-                s += g.w[e] * if variant == Variant::Discrete { sgn(xj) } else { xj };
+                s += g.w[e]
+                    * if variant == Variant::Discrete {
+                        sgn(xj)
+                    } else {
+                        xj
+                    };
             }
             force[i] = s + g.h[i];
         }
@@ -99,7 +108,13 @@ pub fn run_restarts(
 ) -> (Vec<i8>, f64) {
     let mut best: Option<(Vec<i8>, f64)> = None;
     for r in 0..restarts {
-        let (s, e) = run(g, variant, n_steps, dt, seed ^ (r as u64).wrapping_mul(0x9E3779B97F4A7C15));
+        let (s, e) = run(
+            g,
+            variant,
+            n_steps,
+            dt,
+            seed ^ (r as u64).wrapping_mul(0x9E3779B97F4A7C15),
+        );
         if best.as_ref().is_none_or(|(_, be)| e < *be) {
             best = Some((s, e));
         }
@@ -170,7 +185,10 @@ mod tests {
 
         for (gi, g) in graphs.iter().enumerate() {
             let e0 = exact_ground(g);
-            for (vi, v) in [Variant::Ballistic, Variant::Discrete].into_iter().enumerate() {
+            for (vi, v) in [Variant::Ballistic, Variant::Discrete]
+                .into_iter()
+                .enumerate()
+            {
                 let (_, e) = run_restarts(g, v, 2000, 1.0, 0x5B00 + gi as u64, 10);
                 assert!(
                     (e - e0).abs() < 1e-9,

@@ -44,8 +44,15 @@ pub fn ifft(re: &mut [f64], im: &mut [f64]) {
 
 fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
     let n = re.len();
-    assert_eq!(n, im.len(), "real and imaginary parts must have the same length");
-    assert!(n.is_power_of_two(), "the transform length must be a power of two, not {n}");
+    assert_eq!(
+        n,
+        im.len(),
+        "real and imaginary parts must have the same length"
+    );
+    assert!(
+        n.is_power_of_two(),
+        "the transform length must be a power of two, not {n}"
+    );
     if n < 2 {
         return;
     }
@@ -59,7 +66,11 @@ fn transform(re: &mut [f64], im: &mut [f64], inverse: bool) {
     }
     let mut len = 2;
     while len <= n {
-        let ang = if inverse { TAU / len as f64 } else { -TAU / len as f64 };
+        let ang = if inverse {
+            TAU / len as f64
+        } else {
+            -TAU / len as f64
+        };
         let (wr, wi) = (ang.cos(), ang.sin());
         let half = len / 2;
         for start in (0..n).step_by(len) {
@@ -136,17 +147,28 @@ mod tests {
                 dr += xr[t] * a.cos() - xi[t] * a.sin();
                 di += xr[t] * a.sin() + xi[t] * a.cos();
             }
-            assert!((re[k] - dr).abs() < 1e-12 && (im[k] - di).abs() < 1e-12, "bin {k}: fft ({}, {}) vs dft ({dr}, {di})", re[k], im[k]);
+            assert!(
+                (re[k] - dr).abs() < 1e-12 && (im[k] - di).abs() < 1e-12,
+                "bin {k}: fft ({}, {}) vs dft ({dr}, {di})",
+                re[k],
+                im[k]
+            );
         }
         ifft(&mut re, &mut im);
         for t in 0..n {
-            assert!((re[t] - xr[t]).abs() < 1e-13 && (im[t] - xi[t]).abs() < 1e-13, "inverse at {t}");
+            assert!(
+                (re[t] - xr[t]).abs() < 1e-13 && (im[t] - xi[t]).abs() < 1e-13,
+                "inverse at {t}"
+            );
         }
         let mut dr = vec![0.0f64; 16];
         let mut di = vec![0.0f64; 16];
         dr[0] = 1.0;
         fft(&mut dr, &mut di);
-        assert!(dr.iter().all(|v| *v == 1.0) && di.iter().all(|v| *v == 0.0), "an impulse must transform to ones");
+        assert!(
+            dr.iter().all(|v| *v == 1.0) && di.iter().all(|v| *v == 0.0),
+            "an impulse must transform to ones"
+        );
     }
 
     /// Lag by lag, the transform route must reproduce the direct sum with the same `n - k`
@@ -166,8 +188,14 @@ mod tests {
         let c = autocovariance(&x, 200);
         let mean = x.iter().sum::<f64>() / n as f64;
         for (k, ck) in c.iter().enumerate() {
-            let direct: f64 = (0..n - k).map(|t| (x[t] - mean) * (x[t + k] - mean)).sum::<f64>() / (n - k) as f64;
-            assert!((ck - direct).abs() < 1e-12 * c[0], "lag {k}: fft {ck} vs direct {direct}");
+            let direct: f64 = (0..n - k)
+                .map(|t| (x[t] - mean) * (x[t + k] - mean))
+                .sum::<f64>()
+                / (n - k) as f64;
+            assert!(
+                (ck - direct).abs() < 1e-12 * c[0],
+                "lag {k}: fft {ck} vs direct {direct}"
+            );
         }
         let mut tau = 0.5;
         for (k, ck) in c.iter().enumerate().skip(1) {
@@ -177,6 +205,9 @@ mod tests {
             }
         }
         let sokal = crate::certify::tau_int_sokal(&x);
-        assert!((tau - sokal).abs() < 1e-12, "windowed sum {tau} vs certify::tau_int_sokal {sokal}");
+        assert!(
+            (tau - sokal).abs() < 1e-12,
+            "windowed sum {tau} vs certify::tau_int_sokal {sokal}"
+        );
     }
 }

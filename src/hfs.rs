@@ -335,7 +335,12 @@ pub struct Params {
 
 impl Default for Params {
     fn default() -> Self {
-        Params { steps: 400, block: 64, max_width: 12, blocks: Blocks::Tree }
+        Params {
+            steps: 400,
+            block: 64,
+            max_width: 12,
+            blocks: Blocks::Tree,
+        }
     }
 }
 
@@ -371,7 +376,9 @@ pub fn run(g: &Graph, p: &Params, seed: u64) -> Outcome {
 /// starting it from noise.
 #[must_use]
 pub fn run_from(g: &Graph, start: Vec<i8>, p: &Params, seed: u64) -> Outcome {
-    let el = Elimination { max_width: p.max_width.max(1) };
+    let el = Elimination {
+        max_width: p.max_width.max(1),
+    };
     let mut rng = Pcg::new(seed, 0x0048_4653);
     let mut s = start;
     let (mut moves, mut improving, mut refused) = (0usize, 0usize, 0usize);
@@ -403,7 +410,13 @@ pub fn run_from(g: &Graph, start: Vec<i8>, p: &Params, seed: u64) -> Outcome {
         }
     }
 
-    Outcome { energy: g.energy(&s), state: s, moves, improving, refused }
+    Outcome {
+        energy: g.energy(&s),
+        state: s,
+        moves,
+        improving,
+        refused,
+    }
 }
 
 #[cfg(test)]
@@ -436,7 +449,11 @@ mod tests {
                     }
                 }
             }
-            assert!(edges < f.len(), "{} vertices and {edges} edges is not acyclic", f.len());
+            assert!(
+                edges < f.len(),
+                "{} vertices and {edges} edges is not acyclic",
+                f.len()
+            );
 
             let mut map = vec![usize::MAX; g.n];
             for (a, &i) in f.iter().enumerate() {
@@ -460,7 +477,11 @@ mod tests {
         let mut r2 = Pcg::new(4, 1);
         let tree = tree_block(&g, 0, g.n, &mut r1).len();
         let forest = forest_block(&g, 0, g.n, &mut r2).len();
-        assert!(tree >= g.n / 4 && forest >= g.n / 4, "tree {tree}, forest {forest} of {}", g.n);
+        assert!(
+            tree >= g.n / 4 && forest >= g.n / 4,
+            "tree {tree}, forest {forest} of {}",
+            g.n
+        );
         assert!(
             (tree as i64 - forest as i64).abs() < g.n as i64 / 4,
             "neither should dwarf the other: tree {tree}, forest {forest}"
@@ -471,9 +492,27 @@ mod tests {
     #[test]
     fn the_block_strategies_differ() {
         let g = crate::ising::chimera_glass(4, 4, 4, 7);
-        let base = Params { steps: 60, block: 96, ..Params::default() };
-        let tree = run(&g, &Params { blocks: Blocks::Tree, ..base }, 3);
-        let forest = run(&g, &Params { blocks: Blocks::Forest, ..base }, 3);
+        let base = Params {
+            steps: 60,
+            block: 96,
+            ..Params::default()
+        };
+        let tree = run(
+            &g,
+            &Params {
+                blocks: Blocks::Tree,
+                ..base
+            },
+            3,
+        );
+        let forest = run(
+            &g,
+            &Params {
+                blocks: Blocks::Forest,
+                ..base
+            },
+            3,
+        );
         assert!(
             tree.energy != forest.energy || tree.state != forest.state,
             "tree and forest blocks must be different searches"
@@ -492,8 +531,16 @@ mod tests {
         for y in 0..l {
             for x in 0..l {
                 let i = y * l + x;
-                b.couple(i, y * l + (x + 1) % l, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
-                b.couple(i, ((y + 1) % l) * l + x, if rng.f64() < 0.5 { 1.0 } else { -1.0 });
+                b.couple(
+                    i,
+                    y * l + (x + 1) % l,
+                    if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+                );
+                b.couple(
+                    i,
+                    ((y + 1) % l) * l + x,
+                    if rng.f64() < 0.5 { 1.0 } else { -1.0 },
+                );
             }
         }
         b.build()
@@ -682,7 +729,10 @@ mod tests {
         }
         let g = b.build();
         let mut rng = Pcg::new(1, 1);
-        assert!(grown_block(&g, 0, 16, 3, &mut rng).is_none(), "16 dense nodes are not width 3");
+        assert!(
+            grown_block(&g, 0, 16, 3, &mut rng).is_none(),
+            "16 dense nodes are not width 3"
+        );
         // And a block of two is width 1 whatever the graph, so the ceiling is about the BLOCK.
         assert!(grown_block(&g, 0, 2, 3, &mut rng).is_some());
     }
@@ -690,7 +740,11 @@ mod tests {
     #[test]
     fn a_run_reports_what_it_did_and_reproduces_itself() {
         let g = glass(8, 5);
-        let p = Params { steps: 30, block: 20, ..Params::default() };
+        let p = Params {
+            steps: 30,
+            block: 20,
+            ..Params::default()
+        };
         let a = run(&g, &p, 7);
         let b = run(&g, &p, 7);
         assert_eq!(a.state, b.state, "same seed, same run");

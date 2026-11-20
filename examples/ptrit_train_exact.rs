@@ -12,8 +12,8 @@
 //! all `3^5 = 243` states. No sampling anywhere, so a difference is the arithmetic's.
 
 use ferrotherm::autocorr::total_variation;
-use ferrotherm::pdit::{stationary_of, FixedPdit};
-use ferrotherm::potts::{enumerate, Interaction, Potts, PottsBuilder};
+use ferrotherm::pdit::{FixedPdit, stationary_of};
+use ferrotherm::potts::{Interaction, Potts, PottsBuilder, enumerate};
 
 const Q: usize = 3;
 const N: usize = 5;

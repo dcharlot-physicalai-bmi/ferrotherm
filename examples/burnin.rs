@@ -35,7 +35,14 @@ fn magnetization(s: &[i8]) -> f64 {
 }
 
 /// One chain from a fixed start, returning its magnetization trace after `burn_in` sweeps.
-fn trace(g: &ferrotherm::graph::Graph, beta: f64, seed: u64, start: i8, burn_in: usize, draws: usize) -> Vec<f64> {
+fn trace(
+    g: &ferrotherm::graph::Graph,
+    beta: f64,
+    seed: u64,
+    start: i8,
+    burn_in: usize,
+    draws: usize,
+) -> Vec<f64> {
     let mut s = gibbs::Sampler::new(g, beta, seed);
     s.s = vec![start; g.n];
     s.sweeps(burn_in, None);
@@ -80,7 +87,10 @@ fn main() {
     println!("  effective samples   {ess:.0}");
     println!("  truth               {:+.6}", 0.0);
     if stderr > 0.0 {
-        println!("  the truth sits      {:.0} standard errors outside the interval", (mean - 0.0).abs() / stderr);
+        println!(
+            "  the truth sits      {:.0} standard errors outside the interval",
+            (mean - 0.0).abs() / stderr
+        );
     }
     println!();
     println!("Nothing in that block is wrong about the trace. It is a correct summary of a chain");
@@ -127,8 +137,13 @@ fn main() {
     }
     println!();
     println!("WHAT IT COSTS US.");
-    println!("  tau_int here is {tau:.2} -- not merely unalarming: independent draws read 0.5, so this");
-    println!("  says each draw is worth about {:.2} of an independent one. The diagnostic returns a", 0.5 / tau);
+    println!(
+        "  tau_int here is {tau:.2} -- not merely unalarming: independent draws read 0.5, so this"
+    );
+    println!(
+        "  says each draw is worth about {:.2} of an independent one. The diagnostic returns a",
+        0.5 / tau
+    );
     println!("  GOOD score on a chain that sampled the wrong distribution.");
     println!();
     println!("  `floors::cost_per_effective_sample` used to consume that and nothing else, so it");

@@ -229,7 +229,11 @@ impl Index {
         );
         let mut off = 0;
         for (d, (&i, &n)) in sub.iter().zip(&self.dims).enumerate() {
-            assert!(i < n, "{}: index {i} is outside dimension {d}, which is {n}", self.name);
+            assert!(
+                i < n,
+                "{}: index {i} is outside dimension {d}, which is {n}",
+                self.name
+            );
             off = off * n + i;
         }
         off
@@ -322,11 +326,17 @@ impl Expr {
     /// Every coefficient and the constant are finite, or say which is not.
     pub(crate) fn check_finite(&self, what: &'static str) -> Result<(), CompileError> {
         if !self.constant.is_finite() {
-            return Err(CompileError::NotFinite { what: "objective constant", value: self.constant });
+            return Err(CompileError::NotFinite {
+                what: "objective constant",
+                value: self.constant,
+            });
         }
         for term in &self.terms {
             if !term.coeff.is_finite() {
-                return Err(CompileError::NotFinite { what, value: term.coeff });
+                return Err(CompileError::NotFinite {
+                    what,
+                    value: term.coeff,
+                });
             }
         }
         Ok(())
@@ -334,17 +344,32 @@ impl Expr {
     /// `c`, a constant.
     #[must_use]
     pub fn constant(c: f64) -> Expr {
-        Expr { terms: Vec::new(), constant: c }
+        Expr {
+            terms: Vec::new(),
+            constant: c,
+        }
     }
     /// `c · l`.
     #[must_use]
     pub fn lit(c: f64, l: Lit) -> Expr {
-        Expr { terms: vec![Term { coeff: c, lits: vec![l] }], constant: 0.0 }
+        Expr {
+            terms: vec![Term {
+                coeff: c,
+                lits: vec![l],
+            }],
+            constant: 0.0,
+        }
     }
     /// `c · l₁ · l₂`.
     #[must_use]
     pub fn pair(c: f64, a: Lit, b: Lit) -> Expr {
-        Expr { terms: vec![Term { coeff: c, lits: vec![a, b] }], constant: 0.0 }
+        Expr {
+            terms: vec![Term {
+                coeff: c,
+                lits: vec![a, b],
+            }],
+            constant: 0.0,
+        }
     }
     /// `c · l₁ · l₂ · … · lₖ`, for any number of literals.
     ///
@@ -353,7 +378,13 @@ impl Expr {
     /// finite temperature.
     #[must_use]
     pub fn product(c: f64, lits: &[Lit]) -> Expr {
-        Expr { terms: vec![Term { coeff: c, lits: lits.to_vec() }], constant: 0.0 }
+        Expr {
+            terms: vec![Term {
+                coeff: c,
+                lits: lits.to_vec(),
+            }],
+            constant: 0.0,
+        }
     }
     /// Add another expression.
     #[must_use]
@@ -954,9 +985,18 @@ impl core::fmt::Display for CompileError {
                  separate pass and is not applied silently"
             ),
             CompileError::BadValue { var, value, domain } => {
-                write!(f, "'{var}' takes {}; {value} is not one of them", domain.describe())
+                write!(
+                    f,
+                    "'{var}' takes {}; {value} is not one of them",
+                    domain.describe()
+                )
             }
-            CompileError::LinearHugeCoefficient { row, what, value, limit } => write!(
+            CompileError::LinearHugeCoefficient {
+                row,
+                what,
+                value,
+                limit,
+            } => write!(
                 f,
                 "the weighted row {row} has a {what} of {value}, which is a whole number but larger \
                  than {limit} (2^53), past which an f64 no longer holds every integer. The slack \
@@ -1021,7 +1061,11 @@ impl Model {
     // ---- declaring ------------------------------------------------------------------------------
 
     fn declare(&mut self, name: &str, domain: Domain, encoding: Encoding) -> Var {
-        self.decls.push(Decl { name: name.to_string(), domain, encoding });
+        self.decls.push(Decl {
+            name: name.to_string(),
+            domain,
+            encoding,
+        });
         Var(self.decls.len() - 1)
     }
 
@@ -1047,14 +1091,20 @@ impl Model {
         mut declare: impl FnMut(&mut Model, &str) -> Var,
     ) -> Index {
         assert!(!dims.is_empty(), "a grid needs at least one dimension");
-        assert!(dims.iter().all(|d| *d > 0), "a grid dimension of zero has no variables");
+        assert!(
+            dims.iter().all(|d| *d > 0),
+            "a grid dimension of zero has no variables"
+        );
         let total: usize = dims.iter().product();
         let mut vars = Vec::with_capacity(total);
         let mut sub = vec![0usize; dims.len()];
         for _ in 0..total {
             let label = format!(
                 "{name}[{}]",
-                sub.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(",")
+                sub.iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
             );
             vars.push(declare(self, &label));
             // odometer, last index fastest, so the layout matches the subscript order
@@ -1066,7 +1116,11 @@ impl Model {
                 sub[d] = 0;
             }
         }
-        Index { name: name.to_string(), dims: dims.to_vec(), vars }
+        Index {
+            name: name.to_string(),
+            dims: dims.to_vec(),
+            vars,
+        }
     }
 
     /// A ±1 variable.
@@ -1085,7 +1139,10 @@ impl Model {
     ///
     /// If `k` is below 2 -- a variable with fewer than two values is a constant.
     pub fn categorical(&mut self, name: &str, k: usize) -> Var {
-        assert!(k >= 2, "a variable with fewer than two values is a constant");
+        assert!(
+            k >= 2,
+            "a variable with fewer than two values is a constant"
+        );
         self.declare(name, Domain::Categorical(k), Encoding::OneHot)
     }
 
@@ -1181,11 +1238,12 @@ impl Model {
     /// [`Conflict`] when two constraints demand different values of one variable, carrying a subset
     /// of the constraints that is already unsatisfiable — see [`Conflict::constraints`].
     pub fn presolve(&self) -> Result<Presolve, Conflict> {
-        self.propagate(&(0..self.constraints.len()).collect::<Vec<_>>()).map(|(fixed, rounds)| {
-            let mut out: Vec<(Var, i64)> = fixed.iter().map(|(v, (x, _))| (*v, *x)).collect();
-            out.sort_by_key(|(v, _)| v.0);
-            Presolve { fixed: out, rounds }
-        })
+        self.propagate(&(0..self.constraints.len()).collect::<Vec<_>>())
+            .map(|(fixed, rounds)| {
+                let mut out: Vec<(Var, i64)> = fixed.iter().map(|(v, (x, _))| (*v, *x)).collect();
+                out.sort_by_key(|(v, _)| v.0);
+                Presolve { fixed: out, rounds }
+            })
     }
 
     /// One fixpoint over the given constraint indices. `Err` carries the conflict.
@@ -1268,8 +1326,7 @@ impl Model {
                         for (from, to) in [(a, b), (b, a)] {
                             if let Some((x, w)) = fixed.get(from) {
                                 let vs = values(self.decls[to.0].domain);
-                                if let (2, Some(&other)) =
-                                    (vs.len(), vs.iter().find(|&&y| y != *x))
+                                if let (2, Some(&other)) = (vs.len(), vs.iter().find(|&&y| y != *x))
                                 {
                                     push(*to, other, w.clone());
                                 }
@@ -1421,7 +1478,11 @@ impl Model {
                 _ => None,
             };
         }
-        let signed = if sense == Sense::Maximize { e.scaled(-1.0) } else { e };
+        let signed = if sense == Sense::Maximize {
+            e.scaled(-1.0)
+        } else {
+            e
+        };
         let acc = core::mem::take(&mut self.objective);
         self.objective = acc.plus(signed);
         self
@@ -1587,7 +1648,10 @@ impl Model {
     ///
     /// If the weight is not finite and positive. A soft constraint needs a price.
     pub fn soft(&mut self, c: Constraint, weight: f64) -> &mut Self {
-        assert!(weight.is_finite() && weight > 0.0, "a soft constraint needs a positive price");
+        assert!(
+            weight.is_finite() && weight > 0.0,
+            "a soft constraint needs a positive price"
+        );
         self.constraints.push((c, weight, false));
         self
     }
@@ -1742,7 +1806,10 @@ impl Model {
         for d in &self.decls {
             let size = d.domain.size_u128();
             if size > u32::MAX as u128 {
-                return Err(CompileError::DomainTooLarge { var: d.name.clone(), size });
+                return Err(CompileError::DomainTooLarge {
+                    var: d.name.clone(),
+                    size,
+                });
             }
         }
         self.objective.check_finite("objective coefficient")?;
@@ -1752,7 +1819,10 @@ impl Model {
         // The sentinel is deliberate; the check has to know that.
         for (_, weight, hard) in &self.constraints {
             if !*hard && !weight.is_finite() {
-                return Err(CompileError::NotFinite { what: "soft constraint weight", value: *weight });
+                return Err(CompileError::NotFinite {
+                    what: "soft constraint weight",
+                    value: *weight,
+                });
             }
         }
 
@@ -1793,7 +1863,10 @@ impl Model {
         let mut plans: BTreeMap<usize, LinearPlan> = BTreeMap::new();
         for (ci, (c, _, hard)) in self.constraints.iter().enumerate() {
             if let Constraint::Linear { terms, rel, rhs } = c {
-                plans.insert(ci, self.plan_linear(terms, *rel, *rhs, *hard, &mut caveats)?);
+                plans.insert(
+                    ci,
+                    self.plan_linear(terms, *rel, *rhs, *hard, &mut caveats)?,
+                );
             }
         }
 
@@ -1810,10 +1883,11 @@ impl Model {
                 _ => None,
             };
             if let Some(size) = range
-                && size >= 2 {
-                    slack_for.insert(ci, user_count + extra.len());
-                    extra.push(Domain::Categorical(size));
-                }
+                && size >= 2
+            {
+                slack_for.insert(ci, user_count + extra.len());
+                extra.push(Domain::Categorical(size));
+            }
         }
 
         // Lay every variable out, in declaration order, so the layout is stable and inspectable.
@@ -1839,7 +1913,10 @@ impl Model {
         let mut linear_slack = 0usize;
         for plan in plans.values_mut() {
             let width = plan.spins();
-            if let LinearPlan::Integer { base: slack_base, .. } = plan {
+            if let LinearPlan::Integer {
+                base: slack_base, ..
+            } = plan
+            {
                 *slack_base = base + linear_slack;
             }
             linear_slack += width;
@@ -1901,7 +1978,10 @@ impl Model {
             // The twin receives the same factors; its exactness answer is the same answer.
             let exact_twin = s.add_penalty(&mut b_code, penalty);
             let exact = s.add_penalty(&mut b, penalty);
-            debug_assert_eq!(exact_twin, exact, "the codeword twin must agree on exactness");
+            debug_assert_eq!(
+                exact_twin, exact,
+                "the codeword twin must agree on exactness"
+            );
             if !exact {
                 let k = s.k;
                 let spins = s.width();
@@ -1916,7 +1996,9 @@ impl Model {
                     // panic waiting for the first slack whose encoding could not be made exact.
                     // The trap was armed and unreached; naming the slot is both the fix and the
                     // more useful message.
-                    self.decls.get(i).map_or("a compiler slack variable", |d| d.name.as_str()),
+                    self.decls
+                        .get(i)
+                        .map_or("a compiler slack variable", |d| d.name.as_str()),
                     s.encoding,
                     1usize << spins,
                 ));
@@ -1983,8 +2065,9 @@ impl Model {
                         .map_err(|_| CompileError::DegreeTooHigh { degree: vars.len() })?,
                 );
             }
-            let r = crate::reduce::to_pairwise(&p)
-                .map_err(|_| CompileError::DegreeTooHigh { degree: self.objective.max_degree() })?;
+            let r = crate::reduce::to_pairwise(&p).map_err(|_| CompileError::DegreeTooHigh {
+                degree: self.objective.max_degree(),
+            })?;
             let g = r
                 .program
                 .to_graph()
@@ -1995,7 +2078,11 @@ impl Model {
         let mut program = Program::from_graph(&graph, &sched);
         program.encodings = slots
             .iter()
-            .map(|s| EncodedVar { base: s.base, k: s.k, encoding: s.encoding })
+            .map(|s| EncodedVar {
+                base: s.base,
+                k: s.k,
+                encoding: s.encoding,
+            })
             .collect();
 
         Ok(Compiled {
@@ -2107,7 +2194,10 @@ impl Model {
         }
         if d.encoding == Encoding::DomainWall {
             let Lit::Is(v, value) = l else {
-                return Err(CompileError::NeedsOneHot { var: d.name.clone(), encoding: d.encoding });
+                return Err(CompileError::NeedsOneHot {
+                    var: d.name.clone(),
+                    encoding: d.encoding,
+                });
             };
             let Some(slot) = d.domain.index_of(value) else {
                 return Err(CompileError::BadValue {
@@ -2119,12 +2209,18 @@ impl Model {
             let s = slots[v.0];
             let w = s.width();
             // below[i] = (1 + s_i)/2 is "the wall is above i"; above[i] = (1 - s_i)/2 its negation.
-            let up = |i: usize| LinSpin { offset: 0.5, terms: vec![(s.base + i, 0.5)] };
-            let down = |i: usize| LinSpin { offset: 0.5, terms: vec![(s.base + i, -0.5)] };
+            let up = |i: usize| LinSpin {
+                offset: 0.5,
+                terms: vec![(s.base + i, 0.5)],
+            };
+            let down = |i: usize| LinSpin {
+                offset: 0.5,
+                terms: vec![(s.base + i, -0.5)],
+            };
             return Ok(match (slot, w) {
-                (0, _) => vec![down(0)],                    // the wall is at the very bottom
-                (v, w) if v == w => vec![up(w - 1)],        // and at the very top
-                (v, _) => vec![up(v - 1), down(v)],         // otherwise it sits between two spins
+                (0, _) => vec![down(0)],             // the wall is at the very bottom
+                (v, w) if v == w => vec![up(w - 1)], // and at the very top
+                (v, _) => vec![up(v - 1), down(v)],  // otherwise it sits between two spins
             });
         }
         self.linearise(slots, l).map(|p| vec![p])
@@ -2135,7 +2231,10 @@ impl Model {
             Lit::Spin(v) => {
                 // A Spin/Binary variable is one-hot over two values; +1 means value 1.
                 let s = slots[v.0];
-                Ok(LinSpin { offset: 0.0, terms: vec![(s.base + 1, 1.0)] })
+                Ok(LinSpin {
+                    offset: 0.0,
+                    terms: vec![(s.base + 1, 1.0)],
+                })
             }
             Lit::Is(v, value) => {
                 let d = &self.decls[v.0];
@@ -2156,7 +2255,10 @@ impl Model {
                 }
                 // one-hot: indicator = (1 + s)/2
                 let s = slots[v.0];
-                Ok(LinSpin { offset: 0.5, terms: vec![(s.base + slot, 0.5)] })
+                Ok(LinSpin {
+                    offset: 0.5,
+                    terms: vec![(s.base + slot, 0.5)],
+                })
             }
         }
     }
@@ -2173,12 +2275,18 @@ impl Model {
             // A domain-wall indicator is a PRODUCT of two spins, so a weighted sum of them inside
             // a square reaches degree four and buys ancillas; a binary indicator is a product of
             // every bit. Refused by name, exactly as the counting constraints refuse them.
-            return Err(CompileError::NeedsOneHot { var: d.name.clone(), encoding: d.encoding });
+            return Err(CompileError::NeedsOneHot {
+                var: d.name.clone(),
+                encoding: d.encoding,
+            });
         }
         match l {
             Lit::Spin(v) => {
                 let s = slots[v.0];
-                Ok(LinSpin { offset: 0.5, terms: vec![(s.base + 1, 0.5)] })
+                Ok(LinSpin {
+                    offset: 0.5,
+                    terms: vec![(s.base + 1, 0.5)],
+                })
             }
             Lit::Is(..) => self.linearise(slots, l),
         }
@@ -2212,22 +2320,29 @@ impl Model {
         let row = self.row_label(terms, rel, rhs);
         for (l, c) in terms {
             if !c.is_finite() {
-                return Err(CompileError::NotFinite { what: "linear coefficient", value: *c });
+                return Err(CompileError::NotFinite {
+                    what: "linear coefficient",
+                    value: *c,
+                });
             }
             // Reached here rather than at `apply_constraint` so a bad value is refused even when
             // the row turns out to be vacuous and emits nothing at all.
             let d = &self.decls[lit_var(*l).0];
             if let Lit::Is(_, value) = l
-                && d.domain.index_of(*value).is_none() {
-                    return Err(CompileError::BadValue {
-                        var: d.name.clone(),
-                        value: *value,
-                        domain: d.domain,
-                    });
-                }
+                && d.domain.index_of(*value).is_none()
+            {
+                return Err(CompileError::BadValue {
+                    var: d.name.clone(),
+                    value: *value,
+                    domain: d.domain,
+                });
+            }
         }
         if !rhs.is_finite() {
-            return Err(CompileError::NotFinite { what: "linear right-hand side", value: rhs });
+            return Err(CompileError::NotFinite {
+                what: "linear right-hand side",
+                value: rhs,
+            });
         }
 
         // MERGE repeated literals and drop zero weights. The algebra survives duplicates unmerged
@@ -2260,7 +2375,10 @@ impl Model {
                 let (what, value) = match ws.iter().position(|c| !exact(*c)) {
                     Some(i) => {
                         let d = &self.decls[lit_var(lits[i]).0];
-                        (format!("coefficient on {}", lit_label(&d.name, d.domain, lits[i])), ws[i])
+                        (
+                            format!("coefficient on {}", lit_label(&d.name, d.domain, lits[i])),
+                            ws[i],
+                        )
                     }
                     None => ("right-hand side".to_string(), rhs),
                 };
@@ -2284,7 +2402,11 @@ impl Model {
                  exponential, and this crate therefore cannot certify that the penalty is large \
                  enough to stop the row being traded against the objective."
             ));
-            return Ok(LinearPlan::Real { lits, w: ws, t: rhs });
+            return Ok(LinearPlan::Real {
+                lits,
+                w: ws,
+                t: rhs,
+            });
         }
 
         // Normalise to `Σ a·x ≤ t`, or to `Σ a·x = t`.
@@ -2336,7 +2458,11 @@ impl Model {
                 mx = mx.max(v);
                 mn = mn.min(v);
             }
-            if mn == i64::MAX || mn == 0 { 1.0 } else { mx as f64 / mn as f64 }
+            if mn == i64::MAX || mn == 0 {
+                1.0
+            } else {
+                mx as f64 / mn as f64
+            }
         };
 
         if rel == Rel::Eq {
@@ -2345,7 +2471,11 @@ impl Model {
             // that passes this can still have none, and claiming otherwise would be an absence
             // claim this crate cannot support.
             if (t != 0 && gw != 0 && t % gw != 0) || (tr as i128) < lo || (tr as i128) > hi {
-                let best = if (tr as i128) > hi { (hi * g as i128) as f64 } else { (lo * g as i128) as f64 };
+                let best = if (tr as i128) > hi {
+                    (hi * g as i128) as f64
+                } else {
+                    (lo * g as i128) as f64
+                };
                 return Err(CompileError::LinearUnsatisfiable { row, best });
             }
             let sp = spread(&[]);
@@ -2359,7 +2489,14 @@ impl Model {
                     sp * sp,
                 ));
             }
-            return Ok(LinearPlan::Integer { lits, w: ar, t: tr, g, coeffs: Vec::new(), base: 0 });
+            return Ok(LinearPlan::Integer {
+                lits,
+                w: ar,
+                t: tr,
+                g,
+                coeffs: Vec::new(),
+                base: 0,
+            });
         }
 
         // `≤` from here. The smallest the left side can be is `lo`; if that already exceeds the
@@ -2383,9 +2520,17 @@ impl Model {
         }
 
         let span: i128 = tr as i128 - lo; // S, the number of residual values minus one
-        let m = if span == 0 { 0 } else { 128 - (span as u128).leading_zeros() as usize };
+        let m = if span == 0 {
+            0
+        } else {
+            128 - (span as u128).leading_zeros() as usize
+        };
         if m > 62 {
-            return Err(CompileError::LinearTooLarge { row, span: span + 1, spins: m });
+            return Err(CompileError::LinearTooLarge {
+                row,
+                span: span + 1,
+                spins: m,
+            });
         }
         // Truncated binary: the top digit carries the REMAINDER of the span, not another power of
         // two. Verified by enumeration for every span up to 600: this covers {0…S} exactly, so
@@ -2406,7 +2551,14 @@ impl Model {
                 sp * sp,
             ));
         }
-        Ok(LinearPlan::Integer { lits, w: ar, t: tr, g, coeffs, base: 0 })
+        Ok(LinearPlan::Integer {
+            lits,
+            w: ar,
+            t: tr,
+            g,
+            coeffs,
+            base: 0,
+        })
     }
 
     fn apply_constraint(
@@ -2445,7 +2597,11 @@ impl Model {
             }
             Constraint::AtMost { lits, k } | Constraint::AtLeast { lits, k } => {
                 // Σ lits ± slack = k, squared. `sum` collects every weighted indicator on the left.
-                let sign = if matches!(c, Constraint::AtMost { .. }) { 1.0 } else { -1.0 };
+                let sign = if matches!(c, Constraint::AtMost { .. }) {
+                    1.0
+                } else {
+                    -1.0
+                };
                 let mut sum: Vec<(LinSpin, f64)> = Vec::new();
                 for l in lits {
                     sum.push((self.linearise(slots, *l)?, 1.0));
@@ -2460,7 +2616,10 @@ impl Model {
                     for v in 0..s.k {
                         // the slack's value v enters with weight v, via its one-hot indicator
                         sum.push((
-                            LinSpin { offset: 0.5, terms: vec![(s.base + v, 0.5)] },
+                            LinSpin {
+                                offset: 0.5,
+                                terms: vec![(s.base + v, 0.5)],
+                            },
                             sign * v as f64,
                         ));
                     }
@@ -2525,7 +2684,14 @@ impl Model {
                         }
                         add_squared(b, &parts, *t, p);
                     }
-                    LinearPlan::Integer { lits, w, t, g, coeffs, base } => {
+                    LinearPlan::Integer {
+                        lits,
+                        w,
+                        t,
+                        g,
+                        coeffs,
+                        base,
+                    } => {
                         // HARD rows are priced at `p` on the reduced row: a unit of violation then
                         // costs exactly `p`, the same gap `Cardinality` has, so `effective_penalty`
                         // needs no change -- and the coefficients stay as small as the row allows.
@@ -2533,7 +2699,11 @@ impl Model {
                         // contributes equal the `weight × amount²` that `Violation::cost` reports
                         // in the modeller's own units. A hard violation has no price to match, so
                         // each arm takes the scale that is right for it.
-                        let scale = if hard { p } else { p * (*g as f64) * (*g as f64) };
+                        let scale = if hard {
+                            p
+                        } else {
+                            p * (*g as f64) * (*g as f64)
+                        };
                         let mut parts: Vec<(LinSpin, f64)> =
                             Vec::with_capacity(lits.len() + coeffs.len());
                         for (l, c) in lits.iter().zip(w.iter()) {
@@ -2542,7 +2712,10 @@ impl Model {
                         for (j, c) in coeffs.iter().enumerate() {
                             // The slack bit's own 0/1 indicator, (1 + s)/2, carrying its weight.
                             parts.push((
-                                LinSpin { offset: 0.5, terms: vec![(base + j, 0.5)] },
+                                LinSpin {
+                                    offset: 0.5,
+                                    terms: vec![(base + j, 0.5)],
+                                },
                                 *c as f64,
                             ));
                         }
@@ -2862,17 +3035,25 @@ impl Compiled {
             match s.decode(state) {
                 Some(v) => {
                     values.insert(self.names[i].clone(), self.reify(i, v));
-                    }
+                }
                 None => invalid.push(self.names[i].clone()),
             }
         }
         // Then check what was asked for. A decoded answer is a readable one, not a correct one.
-        let violated = if invalid.is_empty() { self.check(&values) } else { Vec::new() };
+        let violated = if invalid.is_empty() {
+            self.check(&values)
+        } else {
+            Vec::new()
+        };
         // The objective is scored on the DECODED values, not on the spins: it is the answer to
         // "what is this worth", and a variable that did not decode has no value to score. So an
         // answer with anything invalid reports no objective rather than a number computed from
         // half a solution.
-        let objective = if invalid.is_empty() { self.score(&values) } else { None };
+        let objective = if invalid.is_empty() {
+            self.score(&values)
+        } else {
+            None
+        };
         Solution {
             values,
             invalid,
@@ -2937,7 +3118,9 @@ impl Compiled {
                     cost: 0.0,
                     detail: format!(
                         "{} and {} must differ, and both are {}",
-                        name(a), name(b), get(a).unwrap_or_default()
+                        name(a),
+                        name(b),
+                        get(a).unwrap_or_default()
                     ),
                     amount: 1.0,
                 }),
@@ -2946,7 +3129,10 @@ impl Compiled {
                     cost: 0.0,
                     detail: format!(
                         "{} and {} must agree, and they are {} and {}",
-                        name(a), name(b), get(a).unwrap_or_default(), get(b).unwrap_or_default()
+                        name(a),
+                        name(b),
+                        get(a).unwrap_or_default(),
+                        get(b).unwrap_or_default()
                     ),
                     // How far apart they are, which for an ordered domain is a real distance and
                     // for a categorical is just "not the same".
@@ -2955,7 +3141,11 @@ impl Compiled {
                 Constraint::Fix(v, want) => (get(v) != Some(*want)).then(|| Violation {
                     hard: true,
                     cost: 0.0,
-                    detail: format!("{} must be {want}, and it is {}", name(v), get(v).unwrap_or_default()),
+                    detail: format!(
+                        "{} must be {want}, and it is {}",
+                        name(v),
+                        get(v).unwrap_or_default()
+                    ),
                     amount: (get(v).unwrap_or_default() - want).abs() as f64,
                 }),
                 Constraint::Cardinality { lits, k } => {
@@ -3041,7 +3231,9 @@ impl Compiled {
                     // a fact they already suspected.
                     let mut by_value: Vec<(i64, Vec<&str>)> = Vec::new();
                     for &v in vars {
-                        let Some(&got) = values.get(&self.names[v.0]) else { continue };
+                        let Some(&got) = values.get(&self.names[v.0]) else {
+                            continue;
+                        };
                         match by_value.iter_mut().find(|(val, _)| *val == got) {
                             Some((_, who)) => who.push(&self.names[v.0]),
                             None => by_value.push((got, vec![&self.names[v.0]])),
@@ -3067,7 +3259,11 @@ impl Compiled {
             };
             if let Some(mut b) = broken {
                 b.hard = hard;
-                b.cost = if hard { 0.0 } else { weight * b.amount * b.amount };
+                b.cost = if hard {
+                    0.0
+                } else {
+                    weight * b.amount * b.amount
+                };
                 out.push(b);
             }
         }
@@ -3232,7 +3428,10 @@ impl Compiled {
     #[must_use]
     pub fn solve_with(&self, sched: &Schedule, seed: u64) -> Solution {
         let mut cost = crate::ledger::Ledger::default();
-        let ramped = sched.stages().iter().any(|st| (st.penalties.domain_wall - 1.0).abs() > 1e-12);
+        let ramped = sched
+            .stages()
+            .iter()
+            .any(|st| (st.penalties.domain_wall - 1.0).abs() > 1e-12);
         let best = if ramped {
             self.anneal_ramped(sched, seed, &mut cost)
         } else {
@@ -3257,7 +3456,9 @@ impl Compiled {
             if i >= code.n {
                 return 0.0;
             }
-            (code.offset[i]..code.offset[i + 1]).find(|&k| code.nbr[k] as usize == j).map_or(0.0, |k| code.w[k])
+            (code.offset[i]..code.offset[i + 1])
+                .find(|&k| code.nbr[k] as usize == j)
+                .map_or(0.0, |k| code.w[k])
         };
         let full_has = |i: usize, j: usize| -> bool {
             (full.offset[i]..full.offset[i + 1]).any(|k| full.nbr[k] as usize == j)
@@ -3297,7 +3498,12 @@ impl Compiled {
     /// contract; the model, which knows which factors are penalties, is where the ramp belongs.
     /// The `copy` channel is not applied here because a compiled model has no copies; it belongs
     /// to sparsified programs and no solver in this crate consumes it yet.
-    fn anneal_ramped(&self, sched: &Schedule, seed: u64, cost: &mut crate::ledger::Ledger) -> Vec<i8> {
+    fn anneal_ramped(
+        &self,
+        sched: &Schedule,
+        seed: u64,
+        cost: &mut crate::ledger::Ledger,
+    ) -> Vec<i8> {
         let stages = sched.stages();
         let graphs: Vec<crate::graph::Graph> = stages
             .iter()
@@ -3306,7 +3512,9 @@ impl Compiled {
                 self.graph_scaled(scale)
             })
             .collect();
-        let (Some(first), Some(judge)) = (graphs.first(), graphs.last()) else { return vec![1; self.graph.n] };
+        let (Some(first), Some(judge)) = (graphs.first(), graphs.last()) else {
+            return vec![1; self.graph.n];
+        };
         let mut smp = crate::gibbs::Sampler::new(first, stages[0].beta, seed);
         let mut best = smp.s.clone();
         let mut best_e = judge.energy(&best);
@@ -3349,7 +3557,9 @@ impl Compiled {
     /// is the answer that call returns.
     #[must_use]
     pub fn solve_all_with(&self, sched: &Schedule, tries: u64) -> Vec<Solution> {
-        (0..tries.max(1)).map(|s| self.solve_with(sched, s)).collect()
+        (0..tries.max(1))
+            .map(|s| self.solve_with(sched, s))
+            .collect()
     }
 
     fn best_of(&self, tries: u64, run: impl Fn(u64) -> Solution) -> Solution {
@@ -3394,7 +3604,10 @@ mod gap_tests {
         for p in [2.0f64, 20.0, 200.0] {
             let c = model(Some(p)).compile().expect("compiles");
             let s = c.solve_by(Method::Branch { max_nodes: 5_000 }, 3);
-            assert!(s.feasible(), "penalty {p}: the answer must be feasible to compare");
+            assert!(
+                s.feasible(),
+                "penalty {p}: the answer must be feasible to compare"
+            );
             gaps.push(s.gap.expect("branch bounds"));
             energies.push(s.energy);
         }
@@ -3415,8 +3628,16 @@ mod gap_tests {
     #[test]
     fn a_closed_gap_and_a_proof_are_the_same_thing() {
         let c = model(None).compile().expect("compiles");
-        let s = c.solve_by(Method::Branch { max_nodes: 5_000_000 }, 3);
-        assert!(s.proved_optimal, "an unbounded budget on a 6-spin model exhausts the tree");
+        let s = c.solve_by(
+            Method::Branch {
+                max_nodes: 5_000_000,
+            },
+            3,
+        );
+        assert!(
+            s.proved_optimal,
+            "an unbounded budget on a 6-spin model exhausts the tree"
+        );
         assert!(s.feasible());
         assert_eq!(
             s.gap,
@@ -3429,19 +3650,27 @@ mod gap_tests {
     #[test]
     fn a_truncated_search_reports_how_far_off_it_might_be() {
         let mut m = Model::new();
-        let vars: Vec<_> = (0..14).map(|i| m.categorical(&format!("v{i}"), 2)).collect();
+        let vars: Vec<_> = (0..14)
+            .map(|i| m.categorical(&format!("v{i}"), 2))
+            .collect();
         for w in vars.windows(2) {
             m.not_equal(w[0], w[1]);
         }
         for (i, &v) in vars.iter().enumerate() {
-            m.objective(Sense::Minimize, Expr::product(1.0 + i as f64, &[Lit::Is(v, 1)]));
+            m.objective(
+                Sense::Minimize,
+                Expr::product(1.0 + i as f64, &[Lit::Is(v, 1)]),
+            );
         }
         let c = m.compile().expect("compiles");
         let cut = c.solve_by(Method::Branch { max_nodes: 40 }, 1);
         let gap = cut.gap.expect("branch bounds even when truncated");
         assert!(gap >= 0.0, "a gap is a distance: {gap}");
         assert!(!cut.proved_optimal, "40 nodes cannot exhaust this tree");
-        assert!(gap > 0.0, "a truncated search with a zero gap is claiming a proof it did not make");
+        assert!(
+            gap > 0.0,
+            "a truncated search with a zero gap is claiming a proof it did not make"
+        );
     }
 
     /// Every other method leaves it `None` rather than reporting a gap it did not compute.
@@ -3450,7 +3679,10 @@ mod gap_tests {
         let c = model(None).compile().expect("compiles");
         assert_eq!(c.solve_annealed(1).gap, None);
         assert_eq!(c.solve_by(Method::Tabu { iterations: 500 }, 1).gap, None);
-        assert_eq!(c.solve_by(Method::Breakout { iterations: 500 }, 1).gap, None);
+        assert_eq!(
+            c.solve_by(Method::Breakout { iterations: 500 }, 1).gap,
+            None
+        );
     }
 }
 
@@ -3468,7 +3700,10 @@ mod certified_penalty_tests {
         m.fix(a, 0);
         m.objective(Sense::Maximize, Expr::product(1.0, &[Lit::Is(a, 1)]));
         for &b in &bs {
-            m.objective(Sense::Maximize, Expr::product(1.0, &[Lit::Is(a, 1), Lit::Is(b, 1)]));
+            m.objective(
+                Sense::Maximize,
+                Expr::product(1.0, &[Lit::Is(a, 1), Lit::Is(b, 1)]),
+            );
         }
         m
     }
@@ -3485,7 +3720,9 @@ mod certified_penalty_tests {
         for n in 2..7usize {
             let m = outbid(n);
             let auto = m.effective_penalty();
-            let cert = m.certified_penalty().expect("one-hot, hard rows, finite objective");
+            let cert = m
+                .certified_penalty()
+                .expect("one-hot, hard rows, finite objective");
 
             // The span is 1 + n: one term for `a.is(1)` and one per pair. d = 1 for one-hot.
             assert!(
@@ -3493,7 +3730,10 @@ mod certified_penalty_tests {
                 "n={n}: certified {cert} must exceed the objective's span {}",
                 1 + n
             );
-            assert!(cert > auto, "n={n}: certified {cert} must exceed automatic {auto}");
+            assert!(
+                cert > auto,
+                "n={n}: certified {cert} must exceed automatic {auto}"
+            );
 
             // Under the automatic penalty the model is broken.
             let broken = m.compile().expect("compiles").solve_best_of(24);
@@ -3525,7 +3765,10 @@ mod certified_penalty_tests {
         m.objective(Sense::Maximize, Expr::product(5.0, &[Lit::Is(a, 1)]));
         // One-hot still carries an encoding penalty, so this certifies against the span.
         let cert = m.certified_penalty().expect("one-hot is certifiable");
-        assert!(cert > 5.0, "the span is 5, so the penalty must exceed it: {cert}");
+        assert!(
+            cert > 5.0,
+            "the span is 5, so the penalty must exceed it: {cert}"
+        );
     }
 
     /// An encoding no penalty can separate is refused, and the refusal names the variable.
@@ -3555,7 +3798,10 @@ mod certified_penalty_tests {
         let a = m.categorical("a", 2);
         m.fix(a, 0);
         m.objective(Sense::Maximize, Expr::product(1.0, &[Lit::Is(a, 1)]));
-        assert!(m.soften_last(3.0), "the row must actually have been softened, or this tests nothing");
+        assert!(
+            m.soften_last(3.0),
+            "the row must actually have been softened, or this tests nothing"
+        );
         match m.certified_penalty() {
             Err(Uncertifiable::SoftConstraints { rows }) => assert!(rows >= 1),
             other => panic!("a soft row must be refused in v1, got {other:?}"),
@@ -3590,13 +3836,20 @@ mod receipt_tests {
         // The schedule's own arithmetic says how many node updates a run performs, and the receipt
         // has to agree with it exactly -- a count that merely looks plausible is not a count.
         let want = Compiled::default_schedule().node_updates(c.graph.n);
-        assert_eq!(sol.cost.samples, want, "the receipt must match what the schedule prescribes");
+        assert_eq!(
+            sol.cost.samples, want,
+            "the receipt must match what the schedule prescribes"
+        );
 
         // AND the readback. This line used to assert `reads == 0` with the comment "an anneal that
         // reads nothing back is charged for no reads" -- a claim about `anneal_scheduled` that was
         // false, and a test that locked a 244x under-report in place. It scores the whole state
         // after every sweep to keep a running best, which is one full read per sweep.
-        let sweeps: u64 = Compiled::default_schedule().stages().iter().map(|s| s.sweeps as u64).sum();
+        let sweeps: u64 = Compiled::default_schedule()
+            .stages()
+            .iter()
+            .map(|s| s.sweeps as u64)
+            .sum();
         assert_eq!(
             sol.cost.reads,
             sweeps * c.graph.n as u64,
@@ -3604,7 +3857,9 @@ mod receipt_tests {
         );
 
         // And it can be priced, in one line, against a projection that states every price.
-        let projected = sol.joules(&Z1_SPICE).expect("Z1_SPICE states all three prices");
+        let projected = sol
+            .joules(&Z1_SPICE)
+            .expect("Z1_SPICE states all three prices");
         assert!(projected > 0.0);
 
         // The measured board is the interesting case, and the answer is NONE. `KV260_MEASURED`
@@ -3652,7 +3907,9 @@ mod receipt_tests {
             );
             // And the joules follow. `Some(0.0)` is the shape of the defect: a real number,
             // indistinguishable from a correct one, for work that happened.
-            let j = s.joules(&Z1_SPICE).expect("Z1_SPICE prices every operation");
+            let j = s
+                .joules(&Z1_SPICE)
+                .expect("Z1_SPICE prices every operation");
             assert!(j > 0.0, "{method:?} priced a search that ran at {j} J");
         }
     }
@@ -3684,8 +3941,14 @@ mod receipt_tests {
 
         let s = c.solve_best_of(12);
         let (agreed, tries) = s.agreement;
-        assert_eq!(tries, 12, "every try must be counted, not only the ones that won");
-        assert!((1..=tries).contains(&agreed), "{agreed} of {tries} is not a count of 12 tries");
+        assert_eq!(
+            tries, 12,
+            "every try must be counted, not only the ones that won"
+        );
+        assert!(
+            (1..=tries).contains(&agreed),
+            "{agreed} of {tries} is not a count of 12 tries"
+        );
     }
 
     /// Agreement counts an ENERGY, and a model with tied optima proves it must say so.
@@ -3746,7 +4009,12 @@ mod receipt_tests {
             s.violated = if feasible {
                 Vec::new()
             } else {
-                vec![Violation { detail: "a hard row broke".into(), hard: true, amount: 1.0, cost: 0.0 }]
+                vec![Violation {
+                    detail: "a hard row broke".into(),
+                    hard: true,
+                    amount: 1.0,
+                    cost: 0.0,
+                }]
             };
             s
         };
@@ -3754,7 +4022,13 @@ mod receipt_tests {
         // Tries arrive worst-first, so the winner is the LAST one -- the case a running counter
         // gets wrong. Three feasible tries sit at -10.0; one INFEASIBLE try also sits at -10.0 and
         // must not be counted; one sits elsewhere.
-        let plan = [(-1.0, true), (-10.0, true), (-10.0, false), (-10.0, true), (-10.0, true)];
+        let plan = [
+            (-1.0, true),
+            (-10.0, true),
+            (-10.0, false),
+            (-10.0, true),
+            (-10.0, true),
+        ];
         let out = c.best_of(plan.len() as u64, |i| {
             let (e, f) = plan[i as usize];
             make(e, f)
@@ -3782,13 +4056,20 @@ mod receipt_tests {
             four.cost.samples,
             one.cost.samples
         );
-        assert_eq!(four.cost.reads, 4 * one.cost.reads, "and the readback, four times over");
+        assert_eq!(
+            four.cost.reads,
+            4 * one.cost.reads,
+            "and the readback, four times over"
+        );
         // Z1_SPICE, not KV260_MEASURED: an anneal reads the state back every sweep, and the
         // measured board states no price for a read, so it correctly refuses to price this at all.
         // That refusal is asserted in `an_answer_arrives_with_its_own_receipt`.
         assert!(
-            four.joules(&Z1_SPICE).expect("Z1_SPICE prices every operation")
-                > one.joules(&Z1_SPICE).expect("Z1_SPICE prices every operation"),
+            four.joules(&Z1_SPICE)
+                .expect("Z1_SPICE prices every operation")
+                > one
+                    .joules(&Z1_SPICE)
+                    .expect("Z1_SPICE prices every operation"),
             "and the joules follow the count"
         );
     }
@@ -3834,12 +4115,16 @@ mod receipt_tests {
 #[must_use]
 pub fn distinct_optima(answers: &[Solution], tol: f64) -> Vec<Solution> {
     let feasible: Vec<&Solution> = answers.iter().filter(|s| s.feasible()).collect();
-    let Some(best) = feasible.iter().map(|s| s.energy).fold(None, |acc: Option<f64>, e| {
-        Some(match acc {
-            None => e,
-            Some(b) => b.min(e),
+    let Some(best) = feasible
+        .iter()
+        .map(|s| s.energy)
+        .fold(None, |acc: Option<f64>, e| {
+            Some(match acc {
+                None => e,
+                Some(b) => b.min(e),
+            })
         })
-    }) else {
+    else {
         return Vec::new();
     };
     let mut seen: BTreeMap<&BTreeMap<String, i64>, &Solution> = BTreeMap::new();
@@ -3891,7 +4176,11 @@ impl core::fmt::Display for Violation {
         if self.hard {
             write!(f, "{} (by {})", self.detail, self.amount)
         } else {
-            write!(f, "{} (by {}, cost {})", self.detail, self.amount, self.cost)
+            write!(
+                f,
+                "{} (by {}, cost {})",
+                self.detail, self.amount, self.cost
+            )
         }
     }
 }
@@ -4119,7 +4408,6 @@ impl Solution {
         self.cost.joules(prices)
     }
 
-
     /// The value of a named variable.
     ///
     /// Panics if the variable did not decode, and says which of the two things went wrong —
@@ -4177,7 +4465,12 @@ impl Solution {
         // identity but prints as "-0" through every binding that formats a float. A price with a
         // minus sign in front of it reads as a credit. Adding zero normalises the sign and
         // changes nothing else.
-        self.violated.iter().filter(|v| !v.hard).map(|v| v.cost).sum::<f64>() + 0.0
+        self.violated
+            .iter()
+            .filter(|v| !v.hard)
+            .map(|v| v.cost)
+            .sum::<f64>()
+            + 0.0
     }
 
     /// Every `(name, value)` pair in the solution.
@@ -4204,7 +4497,11 @@ impl core::fmt::Display for Solution {
             if v.hard {
                 write!(f, "\n  broken: {} (by {})", v.detail, v.amount)?;
             } else {
-                write!(f, "\n  traded: {} (by {}, cost {})", v.detail, v.amount, v.cost)?;
+                write!(
+                    f,
+                    "\n  traded: {} (by {}, cost {})",
+                    v.detail, v.amount, v.cost
+                )?;
             }
         }
         Ok(())
@@ -4230,7 +4527,9 @@ mod tests {
             rhs: 5.0,
         });
         match m.compile() {
-            Err(CompileError::LinearHugeCoefficient { value, limit, what, .. }) => {
+            Err(CompileError::LinearHugeCoefficient {
+                value, limit, what, ..
+            }) => {
                 assert_eq!(value, 1e16);
                 assert_eq!(limit, EXACT_INT);
                 assert!(what.contains('a'), "names which coefficient: {what}");
@@ -4241,7 +4540,10 @@ mod tests {
                     limit,
                 }
                 .to_string();
-                assert!(msg.contains("whole number"), "must not call it a fraction: {msg}");
+                assert!(
+                    msg.contains("whole number"),
+                    "must not call it a fraction: {msg}"
+                );
                 assert!(msg.contains("2^53"), "and must name the boundary: {msg}");
                 assert!(
                     !msg.contains("common denominator"),
@@ -4260,7 +4562,10 @@ mod tests {
             rel: Rel::Le,
             rhs: 5.0,
         });
-        assert!(matches!(m2.compile(), Err(CompileError::LinearNotInteger { .. })));
+        assert!(matches!(
+            m2.compile(),
+            Err(CompileError::LinearNotInteger { .. })
+        ));
     }
     use super::*;
 
@@ -4300,8 +4605,11 @@ mod tests {
         fn build(&self) -> Model {
             let mut m = Model::new();
             let vars: Vec<Var> = (0..self.n).map(|i| m.binary(&format!("x{i}"))).collect();
-            let terms: Vec<(Lit, f64)> =
-                self.terms.iter().map(|(v, w)| (Lit::Is(vars[*v], 1), *w as f64)).collect();
+            let terms: Vec<(Lit, f64)> = self
+                .terms
+                .iter()
+                .map(|(v, w)| (Lit::Is(vars[*v], 1), *w as f64))
+                .collect();
             m.linear(terms, self.rel, self.rhs as f64);
             m
         }
@@ -4404,7 +4712,10 @@ mod tests {
                 // no floor to compare against.
                 continue;
             }
-            let floor = feasible_states.iter().map(|a| energies[*a as usize]).fold(f64::INFINITY, f64::min);
+            let floor = feasible_states
+                .iter()
+                .map(|a| energies[*a as usize])
+                .fold(f64::INFINITY, f64::min);
             for a in 0..(1u32 << n) {
                 let e = energies[a as usize];
                 if row.holds(a) {
@@ -4429,8 +4740,14 @@ mod tests {
         // Not a formality: a sweep that drew only vacuous rows, or only refusals, would pass every
         // assertion above and check nothing at all.
         assert!(compiled > 6_000, "only {compiled} rows compiled");
-        assert!(with_slack > 800, "only {with_slack} rows actually needed a slack");
-        assert!(refused > 100, "only {refused} rows were refused as unsatisfiable");
+        assert!(
+            with_slack > 800,
+            "only {with_slack} rows actually needed a slack"
+        );
+        assert!(
+            refused > 100,
+            "only {refused} rows were refused as unsatisfiable"
+        );
         assert!(vacuous > 100, "only {vacuous} rows compiled without slack");
         // The minimum unit of violation costs exactly the penalty -- the same gap `Cardinality`
         // has, which is why `effective_penalty` needs no change for this constraint.
@@ -4452,7 +4769,12 @@ mod tests {
             let n = 1 + (rng.next_u32() % 4) as usize;
             let nt = 1 + (rng.next_u32() % 5) as usize;
             let terms: Vec<(usize, i64)> = (0..nt)
-                .map(|_| ((rng.next_u32() as usize) % n, (rng.next_u32() % 11) as i64 - 5))
+                .map(|_| {
+                    (
+                        (rng.next_u32() as usize) % n,
+                        (rng.next_u32() % 11) as i64 - 5,
+                    )
+                })
                 .collect();
             let mag: i64 = terms.iter().map(|(_, w)| w.abs()).sum::<i64>() + 2;
             let rhs = (rng.next_u32() % (2 * mag as u32 + 1)) as i64 - mag;
@@ -4462,7 +4784,9 @@ mod tests {
                 _ => Rel::Eq,
             };
             let row = Row { terms, rel, rhs, n };
-            let Ok(c) = row.build().compile() else { continue };
+            let Ok(c) = row.build().compile() else {
+                continue;
+            };
 
             for a in 0..(1u32 << n) {
                 let mut state = vec![-1i8; c.graph.n];
@@ -4500,7 +4824,10 @@ mod tests {
                 }
             }
         }
-        assert!(violations > 2_000, "only {violations} violations were exercised");
+        assert!(
+            violations > 2_000,
+            "only {violations} violations were exercised"
+        );
     }
 
     /// A soft weighted row is priced in the modeller's own units.
@@ -4514,17 +4841,29 @@ mod tests {
         for _ in 0..1_500 {
             let n = 1 + (rng.next_u32() % 3) as usize;
             let terms: Vec<(usize, i64)> = (0..2 + (rng.next_u32() % 3) as usize)
-                .map(|_| ((rng.next_u32() as usize) % n, (rng.next_u32() % 9) as i64 - 4))
+                .map(|_| {
+                    (
+                        (rng.next_u32() as usize) % n,
+                        (rng.next_u32() % 9) as i64 - 4,
+                    )
+                })
                 .collect();
             let mag: i64 = terms.iter().map(|(_, w)| w.abs()).sum::<i64>() + 1;
             let rhs = (rng.next_u32() % (2 * mag as u32 + 1)) as i64 - mag;
-            let rel = if rng.next_u32().is_multiple_of(2) { Rel::Le } else { Rel::Ge };
+            let rel = if rng.next_u32().is_multiple_of(2) {
+                Rel::Le
+            } else {
+                Rel::Ge
+            };
             let row = Row { terms, rel, rhs, n };
 
             let mut m = Model::new();
             let vars: Vec<Var> = (0..n).map(|i| m.binary(&format!("x{i}"))).collect();
-            let ts: Vec<(Lit, f64)> =
-                row.terms.iter().map(|(v, w)| (Lit::Is(vars[*v], 1), *w as f64)).collect();
+            let ts: Vec<(Lit, f64)> = row
+                .terms
+                .iter()
+                .map(|(v, w)| (Lit::Is(vars[*v], 1), *w as f64))
+                .collect();
             m.linear_soft(ts, rel, rhs as f64, 3.0);
             let Ok(c) = m.compile() else { continue };
             if c.linear_slack == 0 {
@@ -4546,7 +4885,10 @@ mod tests {
                 let mut state = vec![-1i8; c.graph.n];
                 write_logical(&mut state, n, a);
                 let sol = c.decode(&state);
-                assert!(sol.feasible(), "a soft row must not make an answer infeasible");
+                assert!(
+                    sol.feasible(),
+                    "a soft row must not make an answer infeasible"
+                );
                 assert!(
                     (over - sol.soft_cost()).abs() < 1e-7,
                     "the row cost {over} in the graph and reported {}",
@@ -4568,14 +4910,30 @@ mod tests {
         for span in 0i128..=600 {
             let coeffs = truncated_binary(span);
             let m = coeffs.len();
-            assert_eq!(m, if span == 0 { 0 } else { (128 - (span as u128).leading_zeros()) as usize });
+            assert_eq!(
+                m,
+                if span == 0 {
+                    0
+                } else {
+                    (128 - (span as u128).leading_zeros()) as usize
+                }
+            );
             let mut hits = vec![0u32; (span + 1) as usize];
             for pattern in 0u64..(1u64 << m) {
-                let v: i64 = (0..m).filter(|j| (pattern >> j) & 1 == 1).map(|j| coeffs[j]).sum();
-                assert!(v >= 0 && v <= span as i64, "span {span}: {v} is outside {{0..={span}}}");
+                let v: i64 = (0..m)
+                    .filter(|j| (pattern >> j) & 1 == 1)
+                    .map(|j| coeffs[j])
+                    .sum();
+                assert!(
+                    v >= 0 && v <= span as i64,
+                    "span {span}: {v} is outside {{0..={span}}}"
+                );
                 hits[v as usize] += 1;
             }
-            assert!(hits.iter().all(|h| *h >= 1), "span {span}: a residual is unreachable");
+            assert!(
+                hits.iter().all(|h| *h >= 1),
+                "span {span}: a residual is unreachable"
+            );
             // The only cost of the exact cover: a 2-to-1 window of a size the doc states exactly.
             let doubled = hits.iter().filter(|h| **h == 2).count();
             assert!(hits.iter().all(|h| *h <= 2));
@@ -4597,7 +4955,7 @@ mod tests {
         let cases: &[(&[i64], i64, usize, usize)] = &[
             // weights, rhs, expected slack spins, expected distinct couplings the row adds
             (&[3, 4, 5], 7, 3, 15),
-            (&[1000, 1000], 1500, 1, 3),  // gcd 1000: `a + b ≤ 1`, span 1
+            (&[1000, 1000], 1500, 1, 3), // gcd 1000: `a + b ≤ 1`, span 1
             (&[1000, 1001], 1500, 11, 78),
             (&[1, 1, 1, 1, 1], 3, 2, 21),
             (&[2, 3, 5, 7, 11], 13, 4, 36),
@@ -4606,8 +4964,11 @@ mod tests {
         for (w, rhs, spins, edges) in cases {
             let mut m = Model::new();
             let vars: Vec<Var> = (0..w.len()).map(|i| m.binary(&format!("x{i}"))).collect();
-            let terms: Vec<(Lit, f64)> =
-                w.iter().enumerate().map(|(i, c)| (Lit::Is(vars[i], 1), *c as f64)).collect();
+            let terms: Vec<(Lit, f64)> = w
+                .iter()
+                .enumerate()
+                .map(|(i, c)| (Lit::Is(vars[i], 1), *c as f64))
+                .collect();
             m.linear(terms, Rel::Le, *rhs as f64);
             let c = m.compile().unwrap();
             assert_eq!(c.linear_slack, *spins, "slack spins for {w:?} ≤ {rhs}");
@@ -4642,7 +5003,11 @@ mod tests {
         // range over, so it is refused rather than rounded.
         let mut m = Model::new();
         let (a, b) = (m.binary("a"), m.binary("b"));
-        m.linear(vec![(Lit::Is(a, 1), 2.5), (Lit::Is(b, 1), 1.0)], Rel::Le, 4.0);
+        m.linear(
+            vec![(Lit::Is(a, 1), 2.5), (Lit::Is(b, 1), 1.0)],
+            Rel::Le,
+            4.0,
+        );
         match m.compile() {
             Err(CompileError::LinearNotInteger { what, value, .. }) => {
                 assert_eq!(value, 2.5);
@@ -4654,7 +5019,10 @@ mod tests {
                 }
                 .to_string();
                 assert!(text.contains("common denominator"), "{text}");
-                assert!(text.contains("EQUALITY"), "the message must say what IS allowed: {text}");
+                assert!(
+                    text.contains("EQUALITY"),
+                    "the message must say what IS allowed: {text}"
+                );
             }
             other => panic!("expected a refusal, got {other:?}", other = other.err()),
         }
@@ -4663,10 +5031,18 @@ mod tests {
         // integer path gets and this one does not.
         let mut m = Model::new();
         let (a, b) = (m.binary("a"), m.binary("b"));
-        m.linear(vec![(Lit::Is(a, 1), 2.5), (Lit::Is(b, 1), 1.5)], Rel::Eq, 4.0);
+        m.linear(
+            vec![(Lit::Is(a, 1), 2.5), (Lit::Is(b, 1), 1.5)],
+            Rel::Eq,
+            4.0,
+        );
         let c = m.compile().unwrap();
         assert_eq!(c.linear_slack, 0, "an equality needs no slack at all");
-        assert!(c.caveats.iter().any(|w| w.contains("non-integer")), "{:?}", c.caveats);
+        assert!(
+            c.caveats.iter().any(|w| w.contains("non-integer")),
+            "{:?}",
+            c.caveats
+        );
         // And it still works: only a = b = 1 sums to 4.
         let s = c.solve_annealed(7);
         assert!(s.feasible(), "{:?}", s.violated);
@@ -4675,8 +5051,15 @@ mod tests {
         // A row nothing can satisfy is refused by arithmetic, not annealed.
         let mut m = Model::new();
         let (a, b) = (m.binary("a"), m.binary("b"));
-        m.linear(vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), 4.0)], Rel::Ge, 9.0);
-        assert!(matches!(m.compile(), Err(CompileError::LinearUnsatisfiable { .. })));
+        m.linear(
+            vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), 4.0)],
+            Rel::Ge,
+            9.0,
+        );
+        assert!(matches!(
+            m.compile(),
+            Err(CompileError::LinearUnsatisfiable { .. })
+        ));
 
         // A domain-wall variable is refused for the reason it has always been refused: its
         // indicator is a PRODUCT, so a weighted sum of them inside a square is quartic.
@@ -4688,10 +5071,18 @@ mod tests {
         // A row that constrains nothing compiles to nothing and says so.
         let mut m = Model::new();
         let (a, b) = (m.binary("a"), m.binary("b"));
-        m.linear(vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), 4.0)], Rel::Le, 12.0);
+        m.linear(
+            vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), 4.0)],
+            Rel::Le,
+            12.0,
+        );
         let c = m.compile().unwrap();
         assert_eq!(c.linear_slack, 0);
-        assert!(c.caveats.iter().any(|w| w.contains("constrains nothing")), "{:?}", c.caveats);
+        assert!(
+            c.caveats.iter().any(|w| w.contains("constrains nothing")),
+            "{:?}",
+            c.caveats
+        );
     }
 
     /// The row the brief opens with, solved, and read back in the modeller's own words.
@@ -4706,13 +5097,22 @@ mod tests {
                 + Expr::lit(1.0, Lit::Is(c, 1)),
         );
         m.linear(
-            vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), 4.0), (Lit::Is(c, 1), 5.0)],
+            vec![
+                (Lit::Is(a, 1), 3.0),
+                (Lit::Is(b, 1), 4.0),
+                (Lit::Is(c, 1), 5.0),
+            ],
             Rel::Le,
             7.0,
         );
         let compiled = m.compile().unwrap();
         assert_eq!(compiled.linear_slack, 3);
-        let s = compiled.solve_by(Method::Branch { max_nodes: 2_000_000 }, 4);
+        let s = compiled.solve_by(
+            Method::Branch {
+                max_nodes: 2_000_000,
+            },
+            4,
+        );
         assert!(s.feasible(), "{:?}", s.violated);
         assert!(s.proved_optimal);
         // 3+4 = 7 fits; every other pair does not, and all three certainly do not.
@@ -4748,12 +5148,29 @@ mod tests {
         }
         // gcd 5 divides this through to `a + b ≤ 1`, so it is one slack spin -- and the penalty is
         // applied to the REDUCED row, which is the arm where dominance has to still hold.
-        m.linear(vec![(Lit::Is(a, 1), 5.0), (Lit::Is(b, 1), 5.0)], Rel::Le, 5.0);
+        m.linear(
+            vec![(Lit::Is(a, 1), 5.0), (Lit::Is(b, 1), 5.0)],
+            Rel::Le,
+            5.0,
+        );
         let c = m.compile().unwrap();
         assert_eq!(c.linear_slack, 1, "gcd 5 turns 5a + 5b ≤ 5 into a + b ≤ 1");
-        let s = c.solve_by(Method::Branch { max_nodes: 1_000_000 }, 9);
-        assert!(s.feasible(), "the row lost to an accumulated objective: {:?}", s.violated);
-        assert_eq!(s.value("a") + s.value("b"), 1, "one of them, and the objective picks which");
+        let s = c.solve_by(
+            Method::Branch {
+                max_nodes: 1_000_000,
+            },
+            9,
+        );
+        assert!(
+            s.feasible(),
+            "the row lost to an accumulated objective: {:?}",
+            s.violated
+        );
+        assert_eq!(
+            s.value("a") + s.value("b"),
+            1,
+            "one of them, and the objective picks which"
+        );
     }
 
     /// Duplicated literals and negative weights, which a real row has and a docstring does not.
@@ -4763,7 +5180,11 @@ mod tests {
         let mut m = Model::new();
         let (a, b) = (m.binary("a"), m.binary("b"));
         m.linear(
-            vec![(Lit::Is(a, 1), 3.0), (Lit::Is(b, 1), -2.0), (Lit::Is(a, 1), 4.0)],
+            vec![
+                (Lit::Is(a, 1), 3.0),
+                (Lit::Is(b, 1), -2.0),
+                (Lit::Is(a, 1), 4.0),
+            ],
             Rel::Le,
             5.0,
         );
@@ -4780,7 +5201,6 @@ mod tests {
         write_logical(&mut state, 2, 0b01);
         assert_eq!(c.decode(&state).violated[0].amount, 2.0);
     }
-
 
     /// A HARD CONSTRAINT MUST SURVIVE AN OBJECTIVE BUILT IN A LOOP, and it did not.
     ///
@@ -4809,12 +5229,21 @@ mod tests {
                 "{repeats} terms of 1.0 pull with strength {repeats}, and the penalty was {p}"
             );
             let c = m.compile().expect("a binary and a fix compile");
-            let s = c.solve_by(Method::Branch { max_nodes: 2_000_000 }, 1);
+            let s = c.solve_by(
+                Method::Branch {
+                    max_nodes: 2_000_000,
+                },
+                1,
+            );
             assert!(
                 s.feasible(),
                 "{repeats} identical objective terms traded away a HARD constraint"
             );
-            assert_eq!(s.value("a"), 0, "the fix says 0, whatever the objective wants");
+            assert_eq!(
+                s.value("a"),
+                0,
+                "the fix says 0, whatever the objective wants"
+            );
         }
     }
 
@@ -4866,8 +5295,16 @@ mod tests {
         m.objective(Sense::Maximize, Expr::product(3.0, &[Lit::Is(c, 0)]));
         let compiled = m.compile().unwrap();
 
-        let sol = compiled.solve_by(Method::Branch { max_nodes: 5_000_000 }, 1);
-        assert!(sol.proved_optimal, "the tree is tiny; the budget is not the limit here");
+        let sol = compiled.solve_by(
+            Method::Branch {
+                max_nodes: 5_000_000,
+            },
+            1,
+        );
+        assert!(
+            sol.proved_optimal,
+            "the tree is tiny; the budget is not the limit here"
+        );
         assert!(sol.feasible(), "{:?}", sol.violated);
 
         // Brute force over the modeller's OWN values: every (a, b, c) in 0..3, keeping the
@@ -4879,7 +5316,8 @@ mod tests {
                     if x == y || y == z || x == z {
                         continue;
                     }
-                    let v = 5.0 * f64::from(x == 1) + 4.0 * f64::from(y == 2) + 3.0 * f64::from(z == 0);
+                    let v =
+                        5.0 * f64::from(x == 1) + 4.0 * f64::from(y == 2) + 3.0 * f64::from(z == 0);
                     best = best.max(v);
                 }
             }
@@ -4902,11 +5340,21 @@ mod tests {
             m.objective(Sense::Maximize, Expr::product(9.0, &[Lit::Is(a, 1)]));
             m.objective(Sense::Maximize, Expr::product(9.0, &[Lit::Is(b, 1)]));
             m.fixed_penalty(penalty);
-            let sol = m.compile().unwrap().solve_by(Method::Branch { max_nodes: 5_000_000 }, 3);
+            let sol = m.compile().unwrap().solve_by(
+                Method::Branch {
+                    max_nodes: 5_000_000,
+                },
+                3,
+            );
             assert!(sol.proved_optimal, "penalty {penalty}: the tree is small");
             if sol.feasible() {
                 // Both want value 1 and not_equal forbids it, so the best feasible pair scores 9.
-                assert_eq!(sol.objective, Some(9.0), "penalty {penalty}: {:?}", sol.values);
+                assert_eq!(
+                    sol.objective,
+                    Some(9.0),
+                    "penalty {penalty}: {:?}",
+                    sol.values
+                );
             } else {
                 // A proof on an infeasible optimum is the penalty being too small, which is exactly
                 // what a small one should produce -- and it is information, not a wrong answer.
@@ -4939,7 +5387,12 @@ mod tests {
             // The energy belongs to the state that was returned.
             assert!(s.energy.is_finite());
         }
-        let proved = c.solve_by(Method::Branch { max_nodes: 5_000_000 }, 5);
+        let proved = c.solve_by(
+            Method::Branch {
+                max_nodes: 5_000_000,
+            },
+            5,
+        );
         assert!(proved.proved_optimal && proved.feasible());
         assert_eq!(proved.objective, Some(2.0));
     }
@@ -4962,7 +5415,6 @@ mod tests {
         let _ = s.proved_optimal;
     }
 
-
     /// The number a modeller can actually use.
     ///
     /// `energy` is the compiled Ising energy with every penalty and the constant folded in, and it
@@ -4980,12 +5432,17 @@ mod tests {
         let c = m.compile().unwrap();
         let s = c.solve_best_of(64);
 
-        let obj = s.objective.expect("a single-sense objective has a direction to report");
+        let obj = s
+            .objective
+            .expect("a single-sense objective has a direction to report");
         // The optimum is 9: mon = 1 and tue = 2, which not_equal permits.
         assert_eq!(obj, 9.0, "values {:?} energy {}", s.values, s.energy);
         assert!(s.feasible());
         // And it is NOT the compiled energy, which is what the modeller was being handed before.
-        assert_ne!(obj, s.energy, "if these agree the test is measuring nothing");
+        assert_ne!(
+            obj, s.energy,
+            "if these agree the test is measuring nothing"
+        );
     }
 
     #[test]
@@ -5045,8 +5502,6 @@ mod tests {
         let _ = x;
     }
 
-
-
     #[test]
     fn a_variable_comes_back_by_name_in_its_own_units() {
         let mut m = Model::new();
@@ -5055,7 +5510,11 @@ mod tests {
         let c = m.compile().unwrap();
         let s = c.solve_best_of(6);
         assert!(s.feasible(), "{s}");
-        assert_eq!(s.value("temperature"), 13, "integers decode in their own range: {s}");
+        assert_eq!(
+            s.value("temperature"),
+            13,
+            "integers decode in their own range: {s}"
+        );
     }
 
     #[test]
@@ -5090,7 +5549,9 @@ mod tests {
             m.objective(Sense::Maximize, Expr::product(3.0, &[Lit::Is(a, 1)]));
             m.objective(Sense::Maximize, Expr::product(bad, &[Lit::Is(b, 1)]));
             match m.compile() {
-                Err(CompileError::NotFinite { what, .. }) => assert_eq!(what, "objective coefficient"),
+                Err(CompileError::NotFinite { what, .. }) => {
+                    assert_eq!(what, "objective coefficient");
+                }
                 Err(e) => panic!("{bad} refused for the wrong reason: {e}"),
                 Ok(_) => panic!("{bad} compiled, and would have disabled the 3*a preference"),
             }
@@ -5108,7 +5569,10 @@ mod tests {
         let mut m = Model::new();
         let x = m.categorical("x", 3);
         m.fix(x, 1);
-        assert!(m.compile().is_ok(), "a hard constraint's NaN sentinel is not a bad coefficient");
+        assert!(
+            m.compile().is_ok(),
+            "a hard constraint's NaN sentinel is not a bad coefficient"
+        );
     }
 
     #[test]
@@ -5119,12 +5583,18 @@ mod tests {
         let mut m = Model::new();
         let x = m.integer("temperature", 10, 20);
         m.objective(Sense::Maximize, 5.0 * x.is(13));
-        assert_eq!(m.compile().unwrap().solve_best_of(8).value("temperature"), 13);
+        assert_eq!(
+            m.compile().unwrap().solve_best_of(8).value("temperature"),
+            13
+        );
 
         let mut m = Model::new();
         let x = m.integer("temperature", 10, 20);
         m.fix(x, 3);
-        let e = match m.compile() { Err(e) => e.to_string(), Ok(_) => panic!("3 is not a temperature in 10..=20") };
+        let e = match m.compile() {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("3 is not a temperature in 10..=20"),
+        };
         assert!(e.contains("10..=20") && e.contains("3 is not"), "{e}");
     }
 
@@ -5139,8 +5609,14 @@ mod tests {
         let b = m.binary("v");
         m.fix(a, 1);
         m.fix(b, 0);
-        let e = match m.compile() { Err(e) => e.to_string(), Ok(_) => panic!("two 'v's") };
-        assert!(e.contains("both called 'v'") && e.contains("disappears"), "{e}");
+        let e = match m.compile() {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("two 'v's"),
+        };
+        assert!(
+            e.contains("both called 'v'") && e.contains("disappears"),
+            "{e}"
+        );
 
         // distinct names compile, and both survive to the answer
         let mut m = Model::new();
@@ -5164,12 +5640,25 @@ mod tests {
         m.fixed_penalty(1.0);
         m.objective(Sense::Maximize, 40.0 * a.is(1) + 40.0 * b.is(1)); // both want the same value
         let s = m.compile().unwrap().solve_best_of(16);
-        assert_eq!((s.value("a"), s.value("b")), (1, 1), "the objective outbids a penalty of 1");
-        assert!(s.invalid.is_empty(), "and every variable decoded perfectly: {s}");
-        assert!(!s.feasible(), "so this is the whole point: it is NOT feasible: {s}");
+        assert_eq!(
+            (s.value("a"), s.value("b")),
+            (1, 1),
+            "the objective outbids a penalty of 1"
+        );
+        assert!(
+            s.invalid.is_empty(),
+            "and every variable decoded perfectly: {s}"
+        );
+        assert!(
+            !s.feasible(),
+            "so this is the whole point: it is NOT feasible: {s}"
+        );
         assert_eq!(s.violated.len(), 1, "{s}");
-        assert!(s.violated[0].detail.contains("must differ") && s.violated[0].detail.contains('a'),
-                "and it names the constraint in the caller's words: {}", s.violated[0]);
+        assert!(
+            s.violated[0].detail.contains("must differ") && s.violated[0].detail.contains('a'),
+            "and it names the constraint in the caller's words: {}",
+            s.violated[0]
+        );
 
         // raised, the same model is feasible
         let mut m = Model::new();
@@ -5214,8 +5703,15 @@ mod tests {
         m.objective(Sense::Maximize, 40.0 * x.is(17));
         let s = m.compile().unwrap().solve_best_of(16);
         assert_eq!(s.value("t"), 17, "the objective wins");
-        assert_eq!(s.violated[0].amount, 14.0, "17 is 14 away from the 3 it was fixed to");
-        assert!(s.violated[0].to_string().contains("(by 14)"), "{}", s.violated[0]);
+        assert_eq!(
+            s.violated[0].amount, 14.0,
+            "17 is 14 away from the 3 it was fixed to"
+        );
+        assert!(
+            s.violated[0].to_string().contains("(by 14)"),
+            "{}",
+            s.violated[0]
+        );
     }
 
     #[test]
@@ -5228,9 +5724,15 @@ mod tests {
             m.objective(Sense::Maximize, 20.0 * v.is(1));
         }
         let s = m.compile().unwrap().solve_best_of(16);
-        assert!(!s.feasible(), "a penalty of 0.5 against a weight of 20 loses: {s}");
-        assert!(s.violated[0].detail.contains("at most 1") && s.violated[0].detail.contains("4 do"),
-                "{}", s.violated[0].detail);
+        assert!(
+            !s.feasible(),
+            "a penalty of 0.5 against a weight of 20 loses: {s}"
+        );
+        assert!(
+            s.violated[0].detail.contains("at most 1") && s.violated[0].detail.contains("4 do"),
+            "{}",
+            s.violated[0].detail
+        );
     }
 
     #[test]
@@ -5255,7 +5757,10 @@ mod tests {
         let mut m = Model::new();
         let x = m.spin("x");
         m.fix(x, 0);
-        let e = match m.compile() { Err(e) => e.to_string(), Ok(_) => panic!("0 is not a spin") };
+        let e = match m.compile() {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("0 is not a spin"),
+        };
         assert!(e.contains("-1 and +1"), "{e}");
     }
 
@@ -5270,7 +5775,11 @@ mod tests {
         m.not_equal(a, b);
         let s = m.compile().unwrap().solve_best_of(16);
         assert!(s.feasible(), "{s}");
-        assert_ne!(s.value("a"), s.value("b"), "a spin and an integer must really differ: {s}");
+        assert_ne!(
+            s.value("a"),
+            s.value("b"),
+            "a spin and an integer must really differ: {s}"
+        );
 
         // and forced together they land on a value both domains contain
         let mut m = Model::new();
@@ -5293,7 +5802,11 @@ mod tests {
         m.equal(a, b);
         let s = m.compile().unwrap().solve_best_of(12);
         assert!(s.feasible(), "{s}");
-        assert_eq!((s.value("a"), s.value("b")), (5, 5), "5 is the only value both can take: {s}");
+        assert_eq!(
+            (s.value("a"), s.value("b")),
+            (5, 5),
+            "5 is the only value both can take: {s}"
+        );
 
         // and the same pair forced apart still lands inside both ranges
         let mut m = Model::new();
@@ -5303,7 +5816,10 @@ mod tests {
         let s = m.compile().unwrap().solve_best_of(12);
         assert!(s.feasible(), "{s}");
         assert_ne!(s.value("a"), s.value("b"), "{s}");
-        assert!((5..=10).contains(&s.value("a")) && (0..=5).contains(&s.value("b")), "{s}");
+        assert!(
+            (5..=10).contains(&s.value("a")) && (0..=5).contains(&s.value("b")),
+            "{s}"
+        );
     }
 
     #[test]
@@ -5332,13 +5848,26 @@ mod tests {
         let cc = m.categorical("c", 2);
         m.not_equal(a, b).not_equal(b, cc).not_equal(a, cc);
         let s = m.compile().unwrap().solve_best_of(12);
-        assert!(!s.feasible(), "a triangle has no 2-colouring, so no answer is feasible: {s}");
-        assert!(!s.violated.is_empty() || !s.invalid.is_empty(),
-                "and it must say which part it could not deliver: {s}");
+        assert!(
+            !s.feasible(),
+            "a triangle has no 2-colouring, so no answer is feasible: {s}"
+        );
+        assert!(
+            !s.violated.is_empty() || !s.invalid.is_empty(),
+            "and it must say which part it could not deliver: {s}"
+        );
         // whichever way it gives, it gives exactly one: two of the three pairs still differ
         if s.invalid.is_empty() {
-            assert_eq!(s.violated.len(), 1, "exactly one pair agrees in a 2-coloured triangle: {s}");
-            assert!(s.violated[0].detail.contains("must differ"), "{}", s.violated[0].detail);
+            assert_eq!(
+                s.violated.len(),
+                1,
+                "exactly one pair agrees in a 2-coloured triangle: {s}"
+            );
+            assert!(
+                s.violated[0].detail.contains("must differ"),
+                "{}",
+                s.violated[0].detail
+            );
         }
     }
 
@@ -5367,8 +5896,16 @@ mod tests {
             m.objective(sense, e);
             m.compile().unwrap().solve_best_of(10)
         };
-        assert_eq!(build(Sense::Maximize).value("x"), 4, "maximising should pick the top value");
-        assert_eq!(build(Sense::Minimize).value("x"), 0, "minimising should pick the bottom");
+        assert_eq!(
+            build(Sense::Maximize).value("x"),
+            4,
+            "maximising should pick the top value"
+        );
+        assert_eq!(
+            build(Sense::Minimize).value("x"),
+            0,
+            "minimising should pick the bottom"
+        );
     }
 
     #[test]
@@ -5377,7 +5914,10 @@ mod tests {
         let mut m = Model::new();
         let a = m.categorical("a", 3);
         let b = m.categorical("b", 3);
-        m.objective(Sense::Maximize, Expr::pair(5.0, Lit::Is(a, 2), Lit::Is(b, 2)));
+        m.objective(
+            Sense::Maximize,
+            Expr::pair(5.0, Lit::Is(a, 2), Lit::Is(b, 2)),
+        );
         let c = m.compile().unwrap();
         let s = c.solve_best_of(10);
         assert!(s.feasible(), "{s}");
@@ -5394,14 +5934,22 @@ mod tests {
         let a = m.binary("a");
         let b = m.binary("b");
         let c = m.binary("c");
-        m.constrain(Constraint::ExactlyOne(vec![Lit::Is(a, 1), Lit::Is(b, 1), Lit::Is(c, 1)]));
+        m.constrain(Constraint::ExactlyOne(vec![
+            Lit::Is(a, 1),
+            Lit::Is(b, 1),
+            Lit::Is(c, 1),
+        ]));
         let comp = m.compile().unwrap();
         let sched = Schedule::geometric(0.05, 8.0, 120, 40);
         let answers = comp.solve_all_with(&sched, 40);
         assert_eq!(answers.len(), 40, "one answer per seed, kept");
 
         let opt = distinct_optima(&answers, 1e-9);
-        assert_eq!(opt.len(), 3, "exactly-one over three has three ways to be satisfied");
+        assert_eq!(
+            opt.len(),
+            3,
+            "exactly-one over three has three ways to be satisfied"
+        );
         for s in &opt {
             assert!(s.feasible());
             let on = ["a", "b", "c"].iter().filter(|n| s.value(n) == 1).count();
@@ -5417,7 +5965,10 @@ mod tests {
             opt.iter().any(|s| s.values == best.values),
             "solve's answer is not among the optima"
         );
-        assert!(opt.iter().all(|s| (s.energy - best.energy).abs() < 1e-9), "all tie on energy");
+        assert!(
+            opt.iter().all(|s| (s.energy - best.energy).abs() < 1e-9),
+            "all tie on energy"
+        );
         // Deterministic: same tries, same list, in the same order.
         let again = distinct_optima(&comp.solve_all_with(&sched, 40), 1e-9);
         assert_eq!(
@@ -5455,7 +6006,10 @@ mod tests {
         });
         let comp = m.compile().unwrap();
         let n = comp.spins();
-        assert!(n > 4, "the compiled model must carry bits beyond the four variables, got {n}");
+        assert!(
+            n > 4,
+            "the compiled model must carry bits beyond the four variables, got {n}"
+        );
         assert!(n <= 20, "this test enumerates 2^n and n is {n}");
 
         let mut s = vec![-1i8; n];
@@ -5581,13 +6135,24 @@ mod tests {
             }
             m
         };
-        assert_eq!(build(None).effective_penalty(), 8.0, "twice the largest coefficient");
-        assert_eq!(build(Some(2.0)).effective_penalty(), 2.0, "fixed means fixed");
+        assert_eq!(
+            build(None).effective_penalty(),
+            8.0,
+            "twice the largest coefficient"
+        );
+        assert_eq!(
+            build(Some(2.0)).effective_penalty(),
+            2.0,
+            "fixed means fixed"
+        );
 
         // and the scaled one decodes where the fixed-low one does not
         assert!(build(None).compile().unwrap().solve_best_of(10).feasible());
         let weak = build(Some(0.2)).compile().unwrap().solve_best_of(10);
-        assert!(!weak.feasible(), "a penalty far below the objective must lose: {weak}");
+        assert!(
+            !weak.feasible(),
+            "a penalty far below the objective must lose: {weak}"
+        );
     }
 
     #[test]
@@ -5599,12 +6164,12 @@ mod tests {
         let s = m.compile().unwrap().solve_annealed(1);
         if !s.feasible() {
             let msg = std::panic::catch_unwind(|| s.value("x")).unwrap_err();
-            let msg = msg
-                .downcast_ref::<String>()
-                .cloned()
-                .unwrap_or_default();
+            let msg = msg.downcast_ref::<String>().cloned().unwrap_or_default();
             assert!(msg.contains("did not decode"), "{msg}");
-            assert!(msg.contains("penalty"), "and it should say what to do: {msg}");
+            assert!(
+                msg.contains("penalty"),
+                "and it should say what to do: {msg}"
+            );
         }
         // an unknown name is a different message
         let ok = Model::new();
@@ -5635,7 +6200,7 @@ mod tests {
         m.cardinality(lits, 2);
         let mut e = Expr::zero();
         for (i, &v) in bits.iter().enumerate() {
-            e = e.plus(Expr::lit(i as f64, Lit::Is(v, 1)));   // b4 worth most
+            e = e.plus(Expr::lit(i as f64, Lit::Is(v, 1))); // b4 worth most
         }
         m.objective(Sense::Maximize, e);
         let s = m.compile().unwrap().solve_best_of(24);
@@ -5657,10 +6222,18 @@ mod tests {
                 m.objective(Sense::Maximize, 1.0 * v.is(1)); // push every one of them ON
             }
             let s = m.compile().unwrap().solve_best_of(16);
-            (s.feasible(), vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count(), s)
+            (
+                s.feasible(),
+                vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count(),
+                s,
+            )
         };
         assert!(none.0, "{}", none.2);
-        assert_eq!(none.1, 0, "at most 0 means none, against a reward on every one: {}", none.2);
+        assert_eq!(
+            none.1, 0,
+            "at most 0 means none, against a reward on every one: {}",
+            none.2
+        );
 
         let all = {
             let mut m = Model::new();
@@ -5670,10 +6243,18 @@ mod tests {
                 m.objective(Sense::Minimize, 1.0 * v.is(1)); // push every one of them OFF
             }
             let s = m.compile().unwrap().solve_best_of(16);
-            (s.feasible(), vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count(), s)
+            (
+                s.feasible(),
+                vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count(),
+                s,
+            )
         };
         assert!(all.0, "{}", all.2);
-        assert_eq!(all.1, 4, "at least 4 of 4 means all, against a penalty on every one: {}", all.2);
+        assert_eq!(
+            all.1, 4,
+            "at least 4 of 4 means all, against a penalty on every one: {}",
+            all.2
+        );
     }
 
     #[test]
@@ -5686,8 +6267,11 @@ mod tests {
             m.objective(Sense::Maximize, 1.0 * v.is(1));
         }
         let s = m.compile().unwrap().solve_best_of(16);
-        assert_eq!(vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count(), 4,
-                   "every term counts, not just the last: {s}");
+        assert_eq!(
+            vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count(),
+            4,
+            "every term counts, not just the last: {s}"
+        );
 
         // And a term in the other direction changes only that term. The old form re-read the whole
         // accumulated objective under the new sense, flipping everything already asked for.
@@ -5699,7 +6283,11 @@ mod tests {
         m.objective(Sense::Minimize, 1.0 * vs[3].is(1));
         let s = m.compile().unwrap().solve_best_of(16);
         let on: Vec<usize> = (0..4).filter(|&i| s.value(m.name_of(vs[i])) == 1).collect();
-        assert_eq!(on, vec![0, 1, 2], "the first three rewarded, the last penalised: {s}");
+        assert_eq!(
+            on,
+            vec![0, 1, 2],
+            "the first three rewarded, the last penalised: {s}"
+        );
     }
 
     #[test]
@@ -5716,8 +6304,11 @@ mod tests {
         let e = vs.iter().fold(Expr::zero(), |a, &v| a.plus(1.0 * v.is(1)));
         m.set_objective(Sense::Maximize, e);
         let s = m.compile().unwrap().solve_best_of(16);
-        assert_eq!((0..3).filter(|&i| s.value(m.name_of(vs[i])) == 1).count(), 3,
-                   "the minimising terms are gone, so all three come on: {s}");
+        assert_eq!(
+            (0..3).filter(|&i| s.value(m.name_of(vs[i])) == 1).count(),
+            3,
+            "the minimising terms are gone, so all three come on: {s}"
+        );
     }
 
     #[test]
@@ -5727,14 +6318,21 @@ mod tests {
             let mut m = Model::new();
             let vs: Vec<Var> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
             let lits: Vec<Lit> = vs.iter().map(|&v| Lit::Is(v, 1)).collect();
-            if kind == "at_most" { m.at_most(lits, k); } else { m.at_least(lits, k); }
+            if kind == "at_most" {
+                m.at_most(lits, k);
+            } else {
+                m.at_least(lits, k);
+            }
             for &v in &vs {
                 m.objective(Sense::Maximize, 1.0 * v.is(1));
             }
             let s = m.compile().unwrap().solve_best_of(16);
             assert!(s.feasible(), "{kind} {k}: {s}");
             let on = vs.iter().filter(|&&v| s.value(m.name_of(v)) == 1).count();
-            assert_eq!(on, 4, "{kind} {k} forbids nothing, so every reward is taken: {s}");
+            assert_eq!(
+                on, 4,
+                "{kind} {k} forbids nothing, so every reward is taken: {s}"
+            );
         }
     }
 
@@ -5798,7 +6396,11 @@ mod tests {
         let c = m.compile().unwrap();
         assert_eq!(c.all_slots.len(), 5, "four variables plus one slack");
         let s = c.solve_best_of(10);
-        assert_eq!(s.iter().count(), 4, "only the user's four are reported: {s}");
+        assert_eq!(
+            s.iter().count(),
+            4,
+            "only the user's four are reported: {s}"
+        );
         assert!(c.spins() > 8, "and the slack really is laid out");
     }
 
@@ -5822,8 +6424,16 @@ mod tests {
             let s = m.compile().unwrap().solve_best_of(20);
             (s.value("x"), s.value("y"))
         };
-        assert_eq!(solve(true), (3, 1), "operators should pick the rewarded values");
-        assert_eq!(solve(true), solve(false), "sugar and builder must agree exactly");
+        assert_eq!(
+            solve(true),
+            (3, 1),
+            "operators should pick the rewarded values"
+        );
+        assert_eq!(
+            solve(true),
+            solve(false),
+            "sugar and builder must agree exactly"
+        );
     }
 
     #[test]
@@ -5845,15 +6455,22 @@ mod tests {
         // priced low, the clash is worth having
         let cheap = build(1.0);
         assert_eq!((cheap.value("a"), cheap.value("b")), (0, 0), "{cheap}");
-        assert!(cheap.feasible(), "a soft violation is not an infeasible answer: {cheap}");
+        assert!(
+            cheap.feasible(),
+            "a soft violation is not an infeasible answer: {cheap}"
+        );
         assert_eq!(cheap.violated.len(), 1, "and it is still REPORTED: {cheap}");
         assert!(!cheap.violated[0].hard, "marked soft");
-        assert_eq!(cheap.soft_cost(), 1.0, "and priced: {cheap}");   // 1 × 1², missed by one
+        assert_eq!(cheap.soft_cost(), 1.0, "and priced: {cheap}"); // 1 × 1², missed by one
         assert!(cheap.to_string().contains("traded:"), "{cheap}");
 
         // priced high, it is not
         let dear = build(50.0);
-        assert_ne!(dear.value("a"), dear.value("b"), "the price now outweighs the reward: {dear}");
+        assert_ne!(
+            dear.value("a"),
+            dear.value("b"),
+            "the price now outweighs the reward: {dear}"
+        );
         assert_eq!(dear.soft_cost(), 0.0, "nothing was traded away: {dear}");
         assert!(
             !dear.soft_cost().is_sign_negative(),
@@ -5871,7 +6488,10 @@ mod tests {
             let mut m = Model::new();
             let vs: Vec<Var> = (0..4).map(|i| m.binary(&format!("v{i}"))).collect();
             m.soft(
-                Constraint::AtMost { lits: vs.iter().map(|&v| Lit::Is(v, 1)).collect(), k: 1 },
+                Constraint::AtMost {
+                    lits: vs.iter().map(|&v| Lit::Is(v, 1)).collect(),
+                    k: 1,
+                },
                 1.0,
             );
             for &v in &vs {
@@ -5893,19 +6513,21 @@ mod tests {
         assert_eq!(cost, 9.0, "1 × 3², which is why the curve matters");
     }
 
-
     #[test]
     fn a_hard_constraint_still_makes_an_answer_inadmissible() {
         // The distinction has to cut both ways, or `feasible` means nothing.
         let mut m = Model::new();
         let a = m.categorical("a", 2);
         let b = m.categorical("b", 2);
-        m.not_equal(a, b);                       // hard
-        m.fixed_penalty(1.0);                    // and deliberately outbid
+        m.not_equal(a, b); // hard
+        m.fixed_penalty(1.0); // and deliberately outbid
         m.objective(Sense::Maximize, 40.0 * a.is(0) + 40.0 * b.is(0));
         let s = m.compile().unwrap().solve_best_of(16);
         assert_eq!((s.value("a"), s.value("b")), (0, 0));
-        assert!(!s.feasible(), "a broken HARD constraint is still infeasible: {s}");
+        assert!(
+            !s.feasible(),
+            "a broken HARD constraint is still infeasible: {s}"
+        );
         assert!(s.violated[0].hard);
         assert_eq!(s.soft_cost(), 0.0, "a hard constraint has no price");
     }
@@ -5916,19 +6538,22 @@ mod tests {
         let a = m.categorical("a", 3);
         let b = m.categorical("b", 3);
         let c = m.categorical("c", 3);
-        m.not_equal(a, b);                                    // hard: must hold
-        m.soft(Constraint::NotEqual(b, c), 2.0);              // soft: worth 2 to keep
+        m.not_equal(a, b); // hard: must hold
+        m.soft(Constraint::NotEqual(b, c), 2.0); // soft: worth 2 to keep
         m.objective(Sense::Maximize, 9.0 * b.is(1) + 9.0 * c.is(1));
         let s = m.compile().unwrap().solve_best_of(32);
 
         assert!(s.feasible(), "the hard one holds: {s}");
         assert_ne!(s.value("a"), s.value("b"), "{s}");
-        assert_eq!((s.value("b"), s.value("c")), (1, 1), "the soft one is worth trading: {s}");
+        assert_eq!(
+            (s.value("b"), s.value("c")),
+            (1, 1),
+            "the soft one is worth trading: {s}"
+        );
         assert_eq!(s.soft_cost(), 2.0, "{s}");
         assert_eq!(s.violated.iter().filter(|v| v.hard).count(), 0);
         assert_eq!(s.violated.iter().filter(|v| !v.hard).count(), 1);
     }
-
 
     #[test]
     fn a_domain_wall_variable_can_actually_be_used() {
@@ -5981,11 +6606,13 @@ mod tests {
         let mut m = Model::new();
         let v = m.categorical_as("x", 8, Encoding::Binary);
         m.fix(v, 3);
-        let e = match m.compile() { Err(e) => e.to_string(), Ok(_) => panic!("binary in a literal") };
+        let e = match m.compile() {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("binary in a literal"),
+        };
         assert!(e.contains("'x'"), "{e}");
         assert!(e.contains("OneHot") || e.contains("one-hot"), "{e}");
     }
-
 
     #[test]
     fn a_grid_of_variables_reads_like_the_problem_it_models() {
@@ -6003,16 +6630,28 @@ mod tests {
             m.at_most_one(a.column(&[s]).iter().map(|&v| Lit::Is(v, 1)).collect());
         }
         // worker 0 is best at shift 2, worker 1 at shift 0
-        m.objective(Sense::Maximize, 3.0 * a[[0, 2]].is(1) + 3.0 * a[[1, 0]].is(1));
+        m.objective(
+            Sense::Maximize,
+            3.0 * a[[0, 2]].is(1) + 3.0 * a[[1, 0]].is(1),
+        );
 
         let s = m.compile().unwrap().solve_best_of(32);
         assert!(s.feasible(), "{s}");
         for w in 0..workers {
-            let taken: Vec<usize> =
-                (0..shifts).filter(|&sh| s.value(&format!("assign[{w},{sh}]")) == 1).collect();
-            assert_eq!(taken.len(), 1, "worker {w} takes exactly one shift: {taken:?}");
+            let taken: Vec<usize> = (0..shifts)
+                .filter(|&sh| s.value(&format!("assign[{w},{sh}]")) == 1)
+                .collect();
+            assert_eq!(
+                taken.len(),
+                1,
+                "worker {w} takes exactly one shift: {taken:?}"
+            );
         }
-        assert_eq!(s.value("assign[0,2]"), 1, "and the preferences are honoured: {s}");
+        assert_eq!(
+            s.value("assign[0,2]"),
+            1,
+            "and the preferences are honoured: {s}"
+        );
         assert_eq!(s.value("assign[1,0]"), 1, "{s}");
     }
 
@@ -6035,9 +6674,15 @@ mod tests {
         let a = m.grid("x", &[2, 3], super::Model::binary);
         assert_eq!(a.all().len(), 6, "row-major, last index fastest");
         let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| a[[0, 3]]));
-        assert!(caught.is_err(), "index 3 of a dimension of 3 must not silently wrap");
+        assert!(
+            caught.is_err(),
+            "index 3 of a dimension of 3 must not silently wrap"
+        );
         let wrong_rank = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| a[[1]]));
-        assert!(wrong_rank.is_err(), "one index into a two-dimensional grid is a mistake");
+        assert!(
+            wrong_rank.is_err(),
+            "one index into a two-dimensional grid is a mistake"
+        );
     }
 
     #[test]
@@ -6071,7 +6716,10 @@ mod tests {
         let a = m.categorical("a", 3);
         let b = m.categorical("b", 3);
         let c = m.categorical("c", 3);
-        m.objective(Sense::Maximize, Expr::product(9.0, &[a.is(2), b.is(2), c.is(2)]));
+        m.objective(
+            Sense::Maximize,
+            Expr::product(9.0, &[a.is(2), b.is(2), c.is(2)]),
+        );
         let compiled = m.compile().unwrap();
         assert!(compiled.ancillas > 0, "a three-body term costs ancillas");
 
@@ -6099,7 +6747,11 @@ mod tests {
             let s = comp.solve_best_of(32);
             s.value("a") * s.value("b") * s.value("c")
         };
-        assert_eq!(run(Sense::Maximize), 1, "maximising the product puts it at +1");
+        assert_eq!(
+            run(Sense::Maximize),
+            1,
+            "maximising the product puts it at +1"
+        );
         assert_eq!(run(Sense::Minimize), -1, "and minimising it at -1");
     }
 
@@ -6114,19 +6766,32 @@ mod tests {
         let mut m = Model::new();
         let a = m.spin("a");
         let b = m.spin("b");
-        m.objective(Sense::Maximize, Expr::product(50.0, &[a.spin(), a.spin(), b.spin()]));
+        m.objective(
+            Sense::Maximize,
+            Expr::product(50.0, &[a.spin(), a.spin(), b.spin()]),
+        );
         m.objective(Sense::Minimize, 1.0 * b.spin());
         let c = m.compile().unwrap();
         // s_a·s_a·s_b collapses to s_b: linear, so no ancilla, and nothing said about a at all
-        assert_eq!(c.ancillas, 0, "s² = 1 leaves a one-body term, not a three-body one");
-        assert_eq!(c.solve_best_of(24).value("b"), 1, "50·s_b against 1·s_b: b goes to +1");
+        assert_eq!(
+            c.ancillas, 0,
+            "s² = 1 leaves a one-body term, not a three-body one"
+        );
+        assert_eq!(
+            c.solve_best_of(24).value("b"),
+            1,
+            "50·s_b against 1·s_b: b goes to +1"
+        );
     }
 
     #[test]
     fn an_ancilla_never_appears_in_the_answer() {
         let mut m = Model::new();
         let vs: Vec<Var> = (0..3).map(|i| m.binary(&format!("v{i}"))).collect();
-        m.objective(Sense::Maximize, Expr::product(5.0, &[vs[0].is(1), vs[1].is(1), vs[2].is(1)]));
+        m.objective(
+            Sense::Maximize,
+            Expr::product(5.0, &[vs[0].is(1), vs[1].is(1), vs[2].is(1)]),
+        );
         let c = m.compile().unwrap();
         assert!(c.ancillas > 0);
         let s = c.solve_best_of(16);
@@ -6140,7 +6805,10 @@ mod tests {
         // WRITTEN, and require the compiled model's answer to be one of the maximisers.
         let mut m = Model::new();
         let vs: Vec<Var> = (0..4).map(|i| m.spin(&format!("v{i}"))).collect();
-        m.objective(Sense::Maximize, Expr::product(6.0, &[vs[0].spin(), vs[1].spin(), vs[2].spin()]));
+        m.objective(
+            Sense::Maximize,
+            Expr::product(6.0, &[vs[0].spin(), vs[1].spin(), vs[2].spin()]),
+        );
         m.objective(Sense::Minimize, 2.0 * vs[3].spin());
         m.objective(Sense::Minimize, 1.0 * vs[0].spin());
         let c = m.compile().unwrap();
@@ -6149,12 +6817,17 @@ mod tests {
         let score = |x: &[i64]| 6.0 * (x[0] * x[1] * x[2]) as f64 - 2.0 * x[3] as f64 - x[0] as f64;
         let mut best = f64::NEG_INFINITY;
         for mask in 0..16u32 {
-            let x: Vec<i64> =
-                (0..4).map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 }).collect();
+            let x: Vec<i64> = (0..4)
+                .map(|i| if (mask >> i) & 1 == 1 { 1 } else { -1 })
+                .collect();
             best = best.max(score(&x));
         }
         let got: Vec<i64> = (0..4).map(|i| s.value(&format!("v{i}"))).collect();
-        assert_eq!(score(&got), best, "compiled answer {got:?} against exhaustive best {best}");
+        assert_eq!(
+            score(&got),
+            best,
+            "compiled answer {got:?} against exhaustive best {best}"
+        );
     }
 
     #[test]
@@ -6206,7 +6879,11 @@ mod tests {
         let text = c.program.to_ftp();
         let back = Program::from_ftp(&text).unwrap();
         assert_eq!(back.spins, c.spins());
-        assert_eq!(back.encodings.len(), 2, "the layout travels with the program");
+        assert_eq!(
+            back.encodings.len(),
+            2,
+            "the layout travels with the program"
+        );
         assert_eq!(back.to_ftp(), text, "and it round-trips");
     }
 
@@ -6219,7 +6896,10 @@ mod tests {
         m.all_different(v.clone());
         let c = m.compile().unwrap();
         let s = c.solve_best_of(60);
-        assert!(s.feasible(), "a permutation exists and should be found: {s}");
+        assert!(
+            s.feasible(),
+            "a permutation exists and should be found: {s}"
+        );
         let mut got: Vec<i64> = (0..4).map(|i| s.values[&format!("c{i}")]).collect();
         got.sort();
         assert_eq!(got, vec![0, 1, 2, 3], "every value used exactly once: {s}");
@@ -6239,10 +6919,21 @@ mod tests {
         m.fixed_penalty(1.0);
         let c = m.compile().unwrap();
         let s = c.solve_best_of(40);
-        assert!(!s.feasible(), "the objective should have outbid a penalty of 1: {s}");
+        assert!(
+            !s.feasible(),
+            "the objective should have outbid a penalty of 1: {s}"
+        );
         let v = &s.violated[0];
-        assert!(v.detail.contains("both take 2"), "must name the value: {}", v.detail);
-        assert!(v.detail.contains('a') && v.detail.contains('b'), "and who: {}", v.detail);
+        assert!(
+            v.detail.contains("both take 2"),
+            "must name the value: {}",
+            v.detail
+        );
+        assert!(
+            v.detail.contains('a') && v.detail.contains('b'),
+            "and who: {}",
+            v.detail
+        );
         assert_eq!(v.amount, 1.0, "over by one");
     }
 
@@ -6257,10 +6948,16 @@ mod tests {
             Err(CompileError::Pigeonhole { vars, values }) => {
                 assert_eq!((vars, values), (5, 3));
                 let msg = CompileError::Pigeonhole { vars, values }.to_string();
-                assert!(msg.contains("no answer"), "must say why annealing will not help: {msg}");
+                assert!(
+                    msg.contains("no answer"),
+                    "must say why annealing will not help: {msg}"
+                );
             }
             Err(e) => panic!("expected a pigeonhole refusal, got {e}"),
-            Ok(c) => panic!("expected a pigeonhole refusal, compiled to {} spins", c.spins()),
+            Ok(c) => panic!(
+                "expected a pigeonhole refusal, compiled to {} spins",
+                c.spins()
+            ),
         }
     }
 
@@ -6300,8 +6997,14 @@ mod tests {
         assert_eq!(c.caveats.len(), 1, "only 'x' is inexact: {:?}", c.caveats);
         let w = &c.caveats[0];
         assert!(w.contains("'x'"), "must name the variable: {w}");
-        assert!(w.contains('8') && w.contains('2'), "and the codeword arithmetic: {w}");
-        assert!(w.contains("one-hot") || w.contains("power of two"), "and the way out: {w}");
+        assert!(
+            w.contains('8') && w.contains('2'),
+            "and the codeword arithmetic: {w}"
+        );
+        assert!(
+            w.contains("one-hot") || w.contains("power of two"),
+            "and the way out: {w}"
+        );
     }
 
     #[test]
@@ -6313,13 +7016,22 @@ mod tests {
         let slot = Slot::new(0, 6, Encoding::Binary);
         let w = slot.width();
         let mut b = GraphBuilder::new(w);
-        assert!(!slot.add_penalty(&mut b, 10.0), "k=6 binary cannot be exact");
+        assert!(
+            !slot.add_penalty(&mut b, 10.0),
+            "k=6 binary cannot be exact"
+        );
         let g = b.build();
         let (mut best_ok, mut best_bad) = (f64::MAX, f64::MAX);
         for mask in 0..(1u32 << w) {
-            let s: Vec<i8> = (0..w).map(|i| if mask >> i & 1 == 1 { 1 } else { -1 }).collect();
+            let s: Vec<i8> = (0..w)
+                .map(|i| if mask >> i & 1 == 1 { 1 } else { -1 })
+                .collect();
             let e = g.energy(&s);
-            if slot.decode(&s).is_some() { best_ok = best_ok.min(e) } else { best_bad = best_bad.min(e) }
+            if slot.decode(&s).is_some() {
+                best_ok = best_ok.min(e);
+            } else {
+                best_bad = best_bad.min(e);
+            }
         }
         assert_eq!(
             best_bad, best_ok,
@@ -6345,14 +7057,22 @@ mod tests {
         m.at_most(lits.clone(), 1);
         let c = m.compile().unwrap();
         assert_eq!(c.caveats.len(), 1, "{:?}", c.caveats);
-        assert!(c.caveats[0].contains("at_most_one"), "must name the cheaper form: {}", c.caveats[0]);
+        assert!(
+            c.caveats[0].contains("at_most_one"),
+            "must name the cheaper form: {}",
+            c.caveats[0]
+        );
 
         // And the model is UNCHANGED: the expensive lowering is still what was asked for.
         let mut n = Model::new();
         let w: Vec<_> = (0..5).map(|i| n.binary(&format!("v{i}"))).collect();
         n.at_most_one(w.iter().map(|&x| Lit::Is(x, 1)).collect::<Vec<_>>());
         let cheap = n.compile().unwrap();
-        assert!(cheap.caveats.is_empty(), "the cheap form must not be flagged: {:?}", cheap.caveats);
+        assert!(
+            cheap.caveats.is_empty(),
+            "the cheap form must not be flagged: {:?}",
+            cheap.caveats
+        );
         assert!(
             c.spins() > cheap.spins(),
             "the caveat claims a saving; if the two compile the same the message is wrong"
@@ -6370,7 +7090,11 @@ mod tests {
         m.at_least(lits, 0);
         let c = m.compile().unwrap();
         assert_eq!(c.caveats.len(), 2, "{:?}", c.caveats);
-        assert!(c.caveats.iter().all(|w| w.contains("constrains nothing")), "{:?}", c.caveats);
+        assert!(
+            c.caveats.iter().all(|w| w.contains("constrains nothing")),
+            "{:?}",
+            c.caveats
+        );
     }
     /// Every value propagation reports is one that every satisfying assignment agrees on.
     ///
@@ -6390,7 +7114,10 @@ mod tests {
         m.not_equal(b, c);
         m.exactly_one(vec![c.is(1), d.is(1)]);
         let pre = m.presolve().expect("this model is satisfiable");
-        assert!(!pre.fixed.is_empty(), "nothing propagated from a fixed chain");
+        assert!(
+            !pre.fixed.is_empty(),
+            "nothing propagated from a fixed chain"
+        );
 
         // Enumerate every assignment, keep the satisfying ones, and check the agreement.
         let doms = [2usize, 2, 2, 2];
@@ -6424,9 +7151,9 @@ mod tests {
         let mut m = Model::new();
         let a = m.binary("a");
         let b = m.binary("b");
-        m.fix(a, 1);       // 0
-        m.equal(a, b);     // 1
-        m.fix(b, 0);       // 2
+        m.fix(a, 1); // 0
+        m.equal(a, b); // 1
+        m.fix(b, 0); // 2
         let c = m.presolve().expect_err("a=1, a=b, b=0 cannot all hold");
         assert!(!c.constraints.is_empty());
         assert_eq!(c.demanded.0.min(c.demanded.1), 0);
@@ -6445,11 +7172,11 @@ mod tests {
         let b = m.binary("b");
         let c = m.binary("c");
         let d = m.binary("d");
-        m.fix(a, 1);          // 0  \
-        m.equal(a, b);        // 1   > the conflict
-        m.fix(b, 0);          // 2  /
-        m.not_equal(c, d);    // 3  irrelevant
-        m.equal(c, c);        // 4  irrelevant
+        m.fix(a, 1); // 0  \
+        m.equal(a, b); // 1   > the conflict
+        m.fix(b, 0); // 2  /
+        m.not_equal(c, d); // 3  irrelevant
+        m.equal(c, c); // 4  irrelevant
         let conf = m.presolve().expect_err("still contradictory");
 
         assert!(
@@ -6458,8 +7185,12 @@ mod tests {
             conf.constraints
         );
         for &drop in &conf.constraints {
-            let kept: Vec<usize> =
-                conf.constraints.iter().copied().filter(|&x| x != drop).collect();
+            let kept: Vec<usize> = conf
+                .constraints
+                .iter()
+                .copied()
+                .filter(|&x| x != drop)
+                .collect();
             assert!(
                 m.propagate(&kept).is_ok(),
                 "constraint {drop} is not load-bearing: {kept:?} still contradicts"
@@ -6483,10 +7214,10 @@ mod tests {
         let a = m.binary("a");
         let b = m.binary("b");
         let c = m.binary("c");
-        m.fix(a, 0);                              // 0
-        m.exactly_one(vec![a.is(1), b.is(1)]);    // 1: with a=0, b must be 1
-        m.equal(b, c);                            // 2: so c = 1
-        m.fix(c, 0);                              // 3: contradiction
+        m.fix(a, 0); // 0
+        m.exactly_one(vec![a.is(1), b.is(1)]); // 1: with a=0, b must be 1
+        m.equal(b, c); // 2: so c = 1
+        m.fix(c, 0); // 3: contradiction
         let conf = m.presolve().expect_err("this chain contradicts");
         assert!(
             m.propagate(&conf.constraints).is_err(),
@@ -6499,10 +7230,10 @@ mod tests {
         let p = m2.binary("p");
         let q = m2.binary("q");
         let r = m2.binary("r");
-        m2.fix(p, 1);                             // 0
-        m2.exactly_one(vec![p.is(1), q.is(1)]);   // 1: p true, so q must be 0
-        m2.equal(q, r);                           // 2: so r = 0
-        m2.fix(r, 1);                             // 3: contradiction
+        m2.fix(p, 1); // 0
+        m2.exactly_one(vec![p.is(1), q.is(1)]); // 1: p true, so q must be 0
+        m2.equal(q, r); // 2: so r = 0
+        m2.fix(r, 1); // 3: contradiction
         let conf2 = m2.presolve().expect_err("this chain contradicts too");
         assert!(
             m2.propagate(&conf2.constraints).is_err(),
@@ -6548,7 +7279,10 @@ mod tests {
             "b was fixed from a SOFT equality, which a solution may break: {:?}",
             pre.fixed
         );
-        assert!(pre.fixed.iter().any(|(v, _)| *v == a), "the hard fix should still propagate");
+        assert!(
+            pre.fixed.iter().any(|(v, _)| *v == a),
+            "the hard fix should still propagate"
+        );
     }
 
     /// A model with nothing to propagate says so rather than inventing something.
@@ -6559,7 +7293,11 @@ mod tests {
         let b = m.binary("b");
         m.not_equal(a, b);
         let pre = m.presolve().unwrap();
-        assert!(pre.fixed.is_empty(), "not-equal alone forces neither: {:?}", pre.fixed);
+        assert!(
+            pre.fixed.is_empty(),
+            "not-equal alone forces neither: {:?}",
+            pre.fixed
+        );
     }
 
     /// Exclusion does not propagate on a wide categorical, which the docs say and this pins.
@@ -6579,7 +7317,6 @@ mod tests {
         );
     }
 
-
     /// THE RAMP WAS A NO-OP. A schedule's per-stage codeword penalty is now applied: on a one-hot
     /// model that rewards an invalid codeword, the penalty scaled to a hundredth returns invalid
     /// codewords, the compiled strength returns valid ones, and a ramp from a hundredth to full
@@ -6597,15 +7334,28 @@ mod tests {
         m.fixed_penalty(20.0);
         let c = m.compile().unwrap();
         let base = Schedule::geometric(0.5, 4.0, 20, 10);
-        let valid = |sched: &Schedule| (0..20u64).filter(|&s| c.solve_with(sched, s).invalid.is_empty()).count();
+        let valid = |sched: &Schedule| {
+            (0..20u64)
+                .filter(|&s| c.solve_with(sched, s).invalid.is_empty())
+                .count()
+        };
         let full = valid(&base);
         let off = valid(&base.clone().ramp_domain_wall(0.01, 0.01));
         let ramp = valid(&base.clone().ramp_domain_wall(0.01, 1.0));
         assert!(full >= 18, "at the compiled penalty {full} of 20 valid");
-        assert!(off <= 4, "at a hundredth of it {off} of 20 valid -- the scale is not applied");
-        assert!(ramp >= 16, "a ramp to full must end valid, got {ramp} of 20");
+        assert!(
+            off <= 4,
+            "at a hundredth of it {off} of 20 valid -- the scale is not applied"
+        );
+        assert!(
+            ramp >= 16,
+            "a ramp to full must end valid, got {ramp} of 20"
+        );
         let mut rng = crate::rng::Pcg::new(3, 9);
-        for enc in [crate::encode::Encoding::OneHot, crate::encode::Encoding::DomainWall] {
+        for enc in [
+            crate::encode::Encoding::OneHot,
+            crate::encode::Encoding::DomainWall,
+        ] {
             let mut m = Model::new();
             let x = m.categorical_as("x", 4, enc);
             let y = m.categorical_as("y", 4, enc);
@@ -6614,9 +7364,16 @@ mod tests {
             for scale in [0.0, 0.3, 1.0, 2.5] {
                 let g = c.graph_scaled(scale);
                 for _ in 0..8 {
-                    let s: Vec<i8> = (0..c.graph.n).map(|_| if rng.f64() < 0.5 { 1 } else { -1 }).collect();
-                    let want = c.graph.energy(&s) + (scale - 1.0) * c.codeword.energy(&s[..c.codeword.n]);
-                    assert!((g.energy(&s) - want).abs() < 1e-9, "{enc:?} scale {scale}: {} vs {want}", g.energy(&s));
+                    let s: Vec<i8> = (0..c.graph.n)
+                        .map(|_| if rng.f64() < 0.5 { 1 } else { -1 })
+                        .collect();
+                    let want =
+                        c.graph.energy(&s) + (scale - 1.0) * c.codeword.energy(&s[..c.codeword.n]);
+                    assert!(
+                        (g.energy(&s) - want).abs() < 1e-9,
+                        "{enc:?} scale {scale}: {} vs {want}",
+                        g.energy(&s)
+                    );
                 }
             }
         }

@@ -117,9 +117,18 @@ impl Lit {
     /// If `sat` is neither `+1` nor `-1`, or `var` does not fit a `u32`.
     #[must_use]
     pub fn new(var: usize, sat: i8) -> Lit {
-        assert!(sat == 1 || sat == -1, "a literal is satisfied by +1 or -1, not {sat}");
-        assert!(u32::try_from(var).is_ok(), "variable {var} does not fit a u32");
-        Lit { var: var as u32, sat }
+        assert!(
+            sat == 1 || sat == -1,
+            "a literal is satisfied by +1 or -1, not {sat}"
+        );
+        assert!(
+            u32::try_from(var).is_ok(),
+            "variable {var} does not fit a u32"
+        );
+        Lit {
+            var: var as u32,
+            sat,
+        }
     }
 
     /// The DIMACS form: `var + 1` for a positive literal, `-(var + 1)` for a negated one.
@@ -219,7 +228,11 @@ impl FactorGraph {
                 return Err(SurveyError::EmptyClause { clause: a });
             }
             for (t, l) in c.iter().enumerate() {
-                assert!((l.var as usize) < n, "clause {a} names variable {} of {n}", l.var);
+                assert!(
+                    (l.var as usize) < n,
+                    "clause {a} names variable {} of {n}",
+                    l.var
+                );
                 assert!(
                     !c[..t].iter().any(|o| o.var == l.var),
                     "clause {a} names variable {} twice",
@@ -244,7 +257,14 @@ impl FactorGraph {
             occ[cursor[l.var as usize]] = k;
             cursor[l.var as usize] += 1;
         }
-        Ok(FactorGraph { n, lits, cstart, owner, occ, vstart })
+        Ok(FactorGraph {
+            n,
+            lits,
+            cstart,
+            owner,
+            occ,
+            vstart,
+        })
     }
 
     /// Build from a parsed DIMACS instance. Weights and hardness are ignored — see the module
@@ -323,8 +343,15 @@ impl FactorGraph {
     /// If `s` is shorter than the variable count.
     #[must_use]
     pub fn unsatisfied(&self, s: &[i8]) -> usize {
-        assert!(s.len() >= self.n, "a state of {} cannot cover {} variables", s.len(), self.n);
-        (0..self.clauses()).filter(|&a| !self.clause(a).iter().any(|l| l.satisfied(s))).count()
+        assert!(
+            s.len() >= self.n,
+            "a state of {} cannot cover {} variables",
+            s.len(),
+            self.n
+        );
+        (0..self.clauses())
+            .filter(|&a| !self.clause(a).iter().any(|l| l.satisfied(s)))
+            .count()
     }
 
     /// Whether `s` satisfies every clause.
@@ -349,7 +376,11 @@ impl FactorGraph {
     ///
     /// If `eta` is not one survey per occurrence.
     pub fn forcing_probability(&self, eta: &[f64], k: usize) -> Result<f64, SurveyError> {
-        assert_eq!(eta.len(), self.lits.len(), "one survey per literal occurrence");
+        assert_eq!(
+            eta.len(),
+            self.lits.len(),
+            "one survey per literal occurrence"
+        );
         let lit = self.lits[k];
         // The probability that NOTHING in each set warns this variable: `agree` over the other
         // clauses satisfied by the same value of it, `disagree` over those satisfied by the other.
@@ -369,7 +400,9 @@ impl FactorGraph {
         // `!(total > 0.0)` rather than `total <= 0.0`: the difference is NaN, which this refuses
         // and the other would divide by.
         if !(total > 0.0) {
-            return Err(SurveyError::Contradiction { var: lit.var as usize });
+            return Err(SurveyError::Contradiction {
+                var: lit.var as usize,
+            });
         }
         let forced_away = (1.0 - disagree) * agree;
         Ok(forced_away / total)
@@ -414,7 +447,11 @@ impl FactorGraph {
     ///
     /// If `eta` is not one survey per occurrence.
     pub fn bias(&self, eta: &[f64], i: usize) -> Result<Bias, SurveyError> {
-        assert_eq!(eta.len(), self.lits.len(), "one survey per literal occurrence");
+        assert_eq!(
+            eta.len(),
+            self.lits.len(),
+            "one survey per literal occurrence"
+        );
         let (mut pos, mut neg) = (1.0f64, 1.0f64);
         for &k in self.occurrences(i) {
             if self.lits[k].sat > 0 {
@@ -487,7 +524,9 @@ impl Warnings {
     /// against by enumerating all `2^n` states.
     #[must_use]
     pub fn forced(&self, fg: &FactorGraph) -> Vec<i8> {
-        (0..fg.n()).map(|i| self.field(fg, i).signum() as i8).collect()
+        (0..fg.n())
+            .map(|i| self.field(fg, i).signum() as i8)
+            .collect()
     }
 }
 
@@ -539,7 +578,11 @@ pub fn warning_propagation(fg: &FactorGraph, iters: usize) -> Result<Warnings, S
             break;
         }
     }
-    let w = Warnings { u, iterations: it, converged };
+    let w = Warnings {
+        u,
+        iterations: it,
+        converged,
+    };
     for i in 0..fg.n() {
         let occ = fg.occurrences(i);
         let up = occ.iter().any(|&k| w.u[k] && fg.lit(k).sat > 0);
@@ -664,7 +707,11 @@ pub fn survey_propagation(fg: &FactorGraph, p: &Params, seed: u64) -> Result<Sur
         }
         it += 1;
     }
-    Ok(Surveys { eta, iterations: it, residual })
+    Ok(Surveys {
+        eta,
+        iterations: it,
+        residual,
+    })
 }
 
 /// How a decimation run ended.
@@ -847,7 +894,13 @@ pub fn decimate(fg: &FactorGraph, p: &Params, seed: u64) -> Decimation {
     let (ws, flips) = walksat(fg, p.flips, p.noise, master.next_u64());
     out.flips += flips;
     match ws {
-        Some(ws) => finish(fg, &vec![None; fg.n()], Some(&ws), Outcome::Restart, &mut out),
+        Some(ws) => finish(
+            fg,
+            &vec![None; fg.n()],
+            Some(&ws),
+            Outcome::Restart,
+            &mut out,
+        ),
         None => out.outcome = failure,
     }
     out
@@ -863,8 +916,9 @@ fn finish(
 ) {
     // A variable still unfixed once the residual is empty appears in no surviving clause, so its
     // value cannot matter; `+1` is chosen so the answer is a function of the input alone.
-    let s: Vec<i8> =
-        (0..fg.n()).map(|i| fixed[i].unwrap_or_else(|| rest.map_or(1, |r| r[i]))).collect();
+    let s: Vec<i8> = (0..fg.n())
+        .map(|i| fixed[i].unwrap_or_else(|| rest.map_or(1, |r| r[i])))
+        .collect();
     assert!(
         fg.satisfies(&s),
         "decimation returned an assignment failing {} clauses of the ORIGINAL formula: the \
@@ -888,8 +942,11 @@ fn simplify(clauses: &mut Vec<Vec<Lit>>, fixed: &mut [Option<i8>]) -> Option<usi
                 progress = true;
                 continue;
             }
-            let rest: Vec<Lit> =
-                c.iter().copied().filter(|l| fixed[l.var as usize].is_none()).collect();
+            let rest: Vec<Lit> = c
+                .iter()
+                .copied()
+                .filter(|l| fixed[l.var as usize].is_none())
+                .collect();
             if rest.len() != c.len() {
                 progress = true;
             }
@@ -984,7 +1041,11 @@ pub fn walksat(fg: &FactorGraph, flips: usize, noise: f64, seed: u64) -> (Option
             }
         }
     }
-    if unsat.is_empty() { (Some(s), flips) } else { (None, flips) }
+    if unsat.is_empty() {
+        (Some(s), flips)
+    } else {
+        (None, flips)
+    }
 }
 
 #[cfg(test)]
@@ -1058,7 +1119,9 @@ mod tests {
     fn enumerate_backbone(n: usize, clauses: &[Vec<Lit>]) -> Option<Vec<i8>> {
         let mut backbone: Option<Vec<i8>> = None;
         for m in 0u32..(1u32 << n) {
-            let s: Vec<i8> = (0..n).map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 }).collect();
+            let s: Vec<i8> = (0..n)
+                .map(|i| if m >> i & 1 == 1 { 1i8 } else { -1 })
+                .collect();
             if !clauses.iter().all(|c| c.iter().any(|l| l.satisfied(&s))) {
                 continue;
             }
@@ -1212,7 +1275,10 @@ mod tests {
         let (mut sat, mut unsat, mut forcing) = (0, 0, 0);
         for seed in 0..300u64 {
             let (n, clauses) = random_tree_formula(12, seed);
-            assert!(is_tree(n, &clauses), "seed {seed} is not a tree factor graph");
+            assert!(
+                is_tree(n, &clauses),
+                "seed {seed} is not a tree factor graph"
+            );
             match enumerate_backbone(n, &clauses) {
                 None => unsat += 1,
                 Some(b) => {
@@ -1224,7 +1290,10 @@ mod tests {
             }
         }
         assert!(sat >= 100 && unsat >= 30, "sat {sat}, unsat {unsat} of 300");
-        assert!(forcing >= 100, "only {forcing} of the fixtures force anything");
+        assert!(
+            forcing >= 100,
+            "only {forcing} of the fixtures force anything"
+        );
     }
 
     /// ORACLE: exhaustive enumeration of all `2^n` assignments.
@@ -1243,18 +1312,32 @@ mod tests {
             match (truth, warning_propagation(&fg, 500)) {
                 (Some(b), Ok(w)) => {
                     sat += 1;
-                    assert!(w.converged, "seed {seed}: {} sweeps and no fixed point", w.iterations);
-                    assert_eq!(w.forced(&fg), b, "seed {seed}: the forced set is not the backbone");
+                    assert!(
+                        w.converged,
+                        "seed {seed}: {} sweeps and no fixed point",
+                        w.iterations
+                    );
+                    assert_eq!(
+                        w.forced(&fg),
+                        b,
+                        "seed {seed}: the forced set is not the backbone"
+                    );
                 }
                 (None, Err(SurveyError::Contradiction { .. })) => unsat += 1,
                 (None, Err(e)) => panic!("seed {seed}: unsatisfiable, but WP said {e}"),
                 (Some(_), Err(e)) => panic!("seed {seed}: satisfiable, but WP contradicted: {e}"),
                 (None, Ok(w)) => {
-                    panic!("seed {seed}: unsatisfiable, but WP was content: {:?}", w.forced(&fg))
+                    panic!(
+                        "seed {seed}: unsatisfiable, but WP was content: {:?}",
+                        w.forced(&fg)
+                    )
                 }
             }
         }
-        assert!(sat > 0 && unsat > 0, "both verdicts must occur: sat {sat}, unsat {unsat}");
+        assert!(
+            sat > 0 && unsat > 0,
+            "both verdicts must occur: sat {sat}, unsat {unsat}"
+        );
     }
 
     /// ORACLE: exhaustive enumeration of all `2^n` assignments.
@@ -1271,7 +1354,10 @@ mod tests {
     #[test]
     fn survey_propagation_is_the_backbone_by_exhaustive_enumeration_on_trees() {
         let p = Params::default();
-        assert_eq!(p.damping, 0.0, "damping would make the tree fixed point only approximate");
+        assert_eq!(
+            p.damping, 0.0,
+            "damping would make the tree fixed point only approximate"
+        );
         let (mut sat, mut unsat) = (0, 0);
         for seed in 0..300u64 {
             let (n, clauses) = random_tree_formula(12, seed);
@@ -1290,7 +1376,10 @@ mod tests {
                     let s = sp.expect("a satisfiable tree has a fixed point");
                     assert_eq!(s.residual, 0.0, "seed {seed}: a tree fixed point is exact");
                     for (k, &e) in s.eta.iter().enumerate() {
-                        assert!(e == 0.0 || e == 1.0, "seed {seed}: survey {k} is {e}, not a bit");
+                        assert!(
+                            e == 0.0 || e == 1.0,
+                            "seed {seed}: survey {k} is {e}, not a bit"
+                        );
                     }
                     for i in 0..n {
                         let got = bias[i];
@@ -1313,7 +1402,10 @@ mod tests {
                 (None, Ok(_)) => panic!("seed {seed}: unsatisfiable, but the surveys were content"),
             }
         }
-        assert!(sat > 0 && unsat > 0, "both verdicts must occur: sat {sat}, unsat {unsat}");
+        assert!(
+            sat > 0 && unsat > 0,
+            "both verdicts must occur: sat {sat}, unsat {unsat}"
+        );
     }
 
     /// ORACLE: the closed form, derived on paper from the update in the module note.
@@ -1336,20 +1428,33 @@ mod tests {
         let p = Params::default();
 
         let unit = FactorGraph::from_clauses(1, &[vec![Lit::new(0, 1)]]).unwrap();
-        assert_eq!(unit.survey_update(&[0.0], 0).unwrap(), 1.0, "a unit clause always warns");
+        assert_eq!(
+            unit.survey_update(&[0.0], 0).unwrap(),
+            1.0,
+            "a unit clause always warns"
+        );
         let sp = survey_propagation(&unit, &p, 1).unwrap();
         assert_eq!(sp.eta, vec![1.0]);
         let b = unit.bias(&sp.eta, 0).unwrap();
         assert_eq!((b.positive, b.negative, b.free), (1.0, 0.0, 0.0));
 
         for k in 2..=5usize {
-            let c: Vec<Lit> =
-                (0..k).map(|i| Lit::new(i, if i % 2 == 0 { 1 } else { -1 })).collect();
+            let c: Vec<Lit> = (0..k)
+                .map(|i| Lit::new(i, if i % 2 == 0 { 1 } else { -1 }))
+                .collect();
             let fg = FactorGraph::from_clauses(k, &[c]).unwrap();
             let sp = survey_propagation(&fg, &p, k as u64).unwrap();
-            assert!(sp.eta.iter().all(|&e| e == 0.0), "k={k}: an isolated clause warns {:?}", sp.eta);
+            assert!(
+                sp.eta.iter().all(|&e| e == 0.0),
+                "k={k}: an isolated clause warns {:?}",
+                sp.eta
+            );
             for i in 0..k {
-                assert_eq!(fg.bias(&sp.eta, i).unwrap().free, 1.0, "k={k}, variable {i}");
+                assert_eq!(
+                    fg.bias(&sp.eta, i).unwrap().free,
+                    1.0,
+                    "k={k}, variable {i}"
+                );
             }
         }
 
@@ -1405,12 +1510,18 @@ mod tests {
             match d {
                 Some(s) => {
                     sat += 1;
-                    assert!(fg.satisfies(&s), "seed {seed}: DPLL returned a non-solution");
+                    assert!(
+                        fg.satisfies(&s),
+                        "seed {seed}: DPLL returned a non-solution"
+                    );
                 }
                 None => unsat += 1,
             }
         }
-        assert!(sat > 0 && unsat > 0, "both verdicts must occur: sat {sat}, unsat {unsat}");
+        assert!(
+            sat > 0 && unsat > 0,
+            "both verdicts must occur: sat {sat}, unsat {unsat}"
+        );
     }
 
     /// ORACLE: a complete DPLL, on random 3-SAT at four clauses per variable and 60 variables —
@@ -1434,7 +1545,8 @@ mod tests {
         for seed in 0..12u64 {
             let cnf = Cnf::parse(&random_3sat(n, 4 * n, seed)).unwrap();
             let fg = FactorGraph::from_cnf(&cnf).unwrap();
-            let truth = dpll(n, &clauses_of(&fg), 1 << 22).expect("the node budget must not run out");
+            let truth =
+                dpll(n, &clauses_of(&fg), 1 << 22).expect("the node budget must not run out");
             let d = decimate(&fg, &p, seed);
             fixes += d.survey_fixes;
             strongest = strongest.max(d.max_survey);
@@ -1443,15 +1555,31 @@ mod tests {
                 let s = d.assignment.unwrap_or_else(|| {
                     panic!("seed {seed}: satisfiable, decimation said {:?}", d.outcome)
                 });
-                assert_eq!(cnf.cost(&s), Some(0.0), "seed {seed}: the formula says otherwise");
+                assert_eq!(
+                    cnf.cost(&s),
+                    Some(0.0),
+                    "seed {seed}: the formula says otherwise"
+                );
             } else {
                 unsat += 1;
-                assert!(d.assignment.is_none(), "seed {seed}: solved an unsatisfiable formula");
+                assert!(
+                    d.assignment.is_none(),
+                    "seed {seed}: solved an unsatisfiable formula"
+                );
             }
         }
-        assert!(sat > 0 && unsat > 0, "both verdicts must occur: sat {sat}, unsat {unsat}");
-        assert!(fixes > 0, "the surveys froze nothing on any of these instances");
-        assert!(strongest > 0.5, "the surveys stayed trivial throughout: {strongest}");
+        assert!(
+            sat > 0 && unsat > 0,
+            "both verdicts must occur: sat {sat}, unsat {unsat}"
+        );
+        assert!(
+            fixes > 0,
+            "the surveys froze nothing on any of these instances"
+        );
+        assert!(
+            strongest > 0.5,
+            "the surveys stayed trivial throughout: {strongest}"
+        );
     }
 
     /// ORACLE: exhaustive enumeration, on formulas small enough for it.
@@ -1476,10 +1604,16 @@ mod tests {
                 assert_eq!(cnf.cost(&s), Some(0.0), "seed {seed}");
             } else {
                 unsat += 1;
-                assert!(d.assignment.is_none(), "seed {seed}: solved an unsatisfiable formula");
+                assert!(
+                    d.assignment.is_none(),
+                    "seed {seed}: solved an unsatisfiable formula"
+                );
             }
         }
-        assert!(sat > 0 && unsat > 0, "both verdicts must occur: sat {sat}, unsat {unsat}");
+        assert!(
+            sat > 0 && unsat > 0,
+            "both verdicts must occur: sat {sat}, unsat {unsat}"
+        );
     }
 
     /// THE NEGATIVE CONTROL, on cores whose unsatisfiability is not a matter of opinion: all eight
@@ -1491,11 +1625,16 @@ mod tests {
     fn an_unsatisfiable_core_is_refuted_and_never_solved() {
         let mut all_eight = Vec::new();
         for m in 0..8u32 {
-            all_eight
-                .push((0..3).map(|i| Lit::new(i, if m >> i & 1 == 1 { 1 } else { -1 })).collect());
+            all_eight.push(
+                (0..3)
+                    .map(|i| Lit::new(i, if m >> i & 1 == 1 { 1 } else { -1 }))
+                    .collect(),
+            );
         }
         // Three pigeons, two holes: variable `2p + h` is pigeon p in hole h.
-        let mut php: Vec<Vec<Lit>> = (0..3).map(|p| vec![Lit::new(2 * p, 1), Lit::new(2 * p + 1, 1)]).collect();
+        let mut php: Vec<Vec<Lit>> = (0..3)
+            .map(|p| vec![Lit::new(2 * p, 1), Lit::new(2 * p + 1, 1)])
+            .collect();
         for h in 0..2 {
             for a in 0..3 {
                 for b in (a + 1)..3 {
@@ -1505,17 +1644,27 @@ mod tests {
         }
         let cases: Vec<(&str, usize, Vec<Vec<Lit>>)> = vec![
             ("every clause over three variables", 3, all_eight),
-            ("a variable and its negation", 1, vec![vec![Lit::new(0, 1)], vec![Lit::new(0, -1)]]),
+            (
+                "a variable and its negation",
+                1,
+                vec![vec![Lit::new(0, 1)], vec![Lit::new(0, -1)]],
+            ),
             ("three pigeons in two holes", 6, php),
         ];
 
         let p = Params::default();
         for (name, n, clauses) in cases {
-            assert!(enumerate_backbone(n, &clauses).is_none(), "{name} is satisfiable after all");
+            assert!(
+                enumerate_backbone(n, &clauses).is_none(),
+                "{name} is satisfiable after all"
+            );
             let fg = FactorGraph::from_clauses(n, &clauses).unwrap();
             for seed in 0..4u64 {
                 let d = decimate(&fg, &p, seed);
-                assert!(d.assignment.is_none(), "{name}, seed {seed}: decimation solved it");
+                assert!(
+                    d.assignment.is_none(),
+                    "{name}, seed {seed}: decimation solved it"
+                );
                 assert!(
                     matches!(
                         d.outcome,
@@ -1528,8 +1677,8 @@ mod tests {
         }
         // Unit resolution alone closes the second core, and that verdict is a REFUTATION rather
         // than a shrug: nothing was guessed before the empty clause appeared.
-        let unit = FactorGraph::from_clauses(1, &[vec![Lit::new(0, 1)], vec![Lit::new(0, -1)]])
-            .unwrap();
+        let unit =
+            FactorGraph::from_clauses(1, &[vec![Lit::new(0, 1)], vec![Lit::new(0, -1)]]).unwrap();
         assert_eq!(decimate(&unit, &p, 3).outcome, Outcome::Refuted);
     }
 
@@ -1550,7 +1699,10 @@ mod tests {
                 let cnf = Cnf::parse(&random_3sat(n, m, seed)).unwrap();
                 let fg = FactorGraph::from_cnf(&cnf).unwrap();
                 let sp = survey_propagation(&fg, &p, seed).unwrap();
-                assert!(sp.converged(p.tol), "seed {seed}, {m} clauses: no fixed point");
+                assert!(
+                    sp.converged(p.tol),
+                    "seed {seed}, {m} clauses: no fixed point"
+                );
                 assert!(
                     sp.max_survey() < 1e-9,
                     "seed {seed}, {m} clauses: below the transition, yet warns {:e}",
@@ -1575,7 +1727,11 @@ mod tests {
         // A weighted clause that terminates immediately: the DIMACS dialects can express an empty
         // clause, and a bare `0` line cannot -- the parser reads that as a competition trailer.
         let cnf = Cnf::parse("p wcnf 2 2\n3 1 -2 0\n5 0\n").unwrap();
-        assert_eq!(cnf.clauses.len(), 2, "the fixture must carry the empty clause into the model");
+        assert_eq!(
+            cnf.clauses.len(),
+            2,
+            "the fixture must carry the empty clause into the model"
+        );
         assert_eq!(cnf.clauses[1].lits.len(), 0);
         let e = FactorGraph::from_cnf(&cnf).unwrap_err();
         assert_eq!(e, SurveyError::EmptyClause { clause: 1 });
@@ -1585,7 +1741,10 @@ mod tests {
         );
         assert!(e.to_string().contains("no literals"), "{e}");
         let c = SurveyError::Contradiction { var: 4 };
-        assert!(c.to_string().contains("variable 5"), "the message is one-based: {c}");
+        assert!(
+            c.to_string().contains("variable 5"),
+            "the message is one-based: {c}"
+        );
     }
 
     /// Local search reports success only for an assignment that really satisfies the formula, and
@@ -1594,7 +1753,10 @@ mod tests {
     fn walksat_reports_only_verified_solutions() {
         let empty = FactorGraph::from_clauses(3, &[]).unwrap();
         let (a, flips) = walksat(&empty, 100, 0.5, 7);
-        assert!(a.is_some() && flips == 0, "no clauses is solved before the first flip");
+        assert!(
+            a.is_some() && flips == 0,
+            "no clauses is solved before the first flip"
+        );
 
         let mut solved = 0;
         for seed in 0..20u64 {
@@ -1603,10 +1765,17 @@ mod tests {
             let fg = FactorGraph::from_cnf(&cnf).unwrap();
             let (a, _) = walksat(&fg, 20_000, 0.5, seed);
             if let Some(s) = a {
-                assert_eq!(cnf.cost(&s), Some(0.0), "seed {seed}: reported a non-solution");
+                assert_eq!(
+                    cnf.cost(&s),
+                    Some(0.0),
+                    "seed {seed}: reported a non-solution"
+                );
                 solved += 1;
             }
         }
-        assert!(solved > 10, "the fallback solved only {solved} of 20 easy instances");
+        assert!(
+            solved > 10,
+            "the fallback solved only {solved} of 20 easy instances"
+        );
     }
 }

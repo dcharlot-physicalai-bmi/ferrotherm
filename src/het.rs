@@ -72,7 +72,10 @@ impl HetBuilder {
     #[must_use]
     /// An empty builder.
     pub fn new() -> Self {
-        HetBuilder { kinds: Vec::new(), factors: Vec::new() }
+        HetBuilder {
+            kinds: Vec::new(),
+            factors: Vec::new(),
+        }
     }
     /// Add a node of this kind and return its index.
     pub fn node(&mut self, kind: Kind) -> u32 {
@@ -85,8 +88,17 @@ impl HetBuilder {
     ///
     /// If the table length is not the product of the nodes' state counts.
     pub fn factor(&mut self, nodes: Vec<u32>, table: Vec<f64>) {
-        let want: usize = nodes.iter().map(|&n| self.kinds[n as usize].states()).product();
-        assert_eq!(table.len(), want, "table length {} != product of state spaces {}", table.len(), want);
+        let want: usize = nodes
+            .iter()
+            .map(|&n| self.kinds[n as usize].states())
+            .product();
+        assert_eq!(
+            table.len(),
+            want,
+            "table length {} != product of state spaces {}",
+            table.len(),
+            want
+        );
         self.factors.push(Factor { nodes, table });
     }
     /// Convenience: pairwise spin coupling J (energy -J `s_i` `s_j`).
@@ -129,7 +141,13 @@ impl HetBuilder {
         for i in 0..n {
             classes[colors[i] as usize].push(i as u32);
         }
-        HetGraph { kinds: self.kinds, factors: self.factors, touching, colors, classes }
+        HetGraph {
+            kinds: self.kinds,
+            factors: self.factors,
+            touching,
+            colors,
+            classes,
+        }
     }
 }
 
@@ -158,7 +176,10 @@ impl HetGraph {
     /// Total energy of a full state (each entry the node's state index).
     #[must_use]
     pub fn energy(&self, state: &[u8]) -> f64 {
-        self.factors.iter().map(|f| f.table[self.f_index(f, state)]).sum()
+        self.factors
+            .iter()
+            .map(|f| f.table[self.f_index(f, state)])
+            .sum()
     }
 
     /// Sum of touching-factor energies with node i set to state k, others fixed.
@@ -197,7 +218,13 @@ impl<'g> HetSampler<'g> {
         let state = (0..g.n())
             .map(|i| (rng.f64() * g.kinds[i].states() as f64) as u8)
             .collect();
-        HetSampler { g, beta, state, clamped: vec![false; g.n()], rng }
+        HetSampler {
+            g,
+            beta,
+            state,
+            clamped: vec![false; g.n()],
+            rng,
+        }
     }
 
     /// Hold node `i` at state index `k` until it is unclamped; sweeps skip it.
@@ -353,7 +380,10 @@ mod tests {
             }
             counts[m] += 1;
         }
-        let emp: Vec<f64> = counts.iter().map(|&c| c as f64 / n_samples as f64).collect();
+        let emp: Vec<f64> = counts
+            .iter()
+            .map(|&c| c as f64 / n_samples as f64)
+            .collect();
         let d = tv(&emp, &exact);
         assert!(d < 0.02, "TV(sampled, exact) = {d}");
     }
@@ -430,8 +460,9 @@ mod tests {
             assert_eq!(smp.state[0], 2);
             counts[smp.state[1] as usize] += 1;
         }
-        let ws: Vec<f64> =
-            (0..3).map(|k| (-beta * (if k == 2 { -0.6 } else { 0.5 })).exp()).collect();
+        let ws: Vec<f64> = (0..3)
+            .map(|k| (-beta * (if k == 2 { -0.6 } else { 0.5 })).exp())
+            .collect();
         let z: f64 = ws.iter().sum();
         for k in 0..3 {
             let got = counts[k] as f64 / n as f64;

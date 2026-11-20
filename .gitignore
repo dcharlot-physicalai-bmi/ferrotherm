@@ -1,5 +1,7 @@
 /target
-Cargo.lock
+# Cargo.lock is tracked. The core library has no dependencies; the workspace
+# binaries do, and a receipt records this file's sha256. An ignored lock would
+# make that hash a property of whoever last resolved, which is not a receipt.
 *.wasm.map
 .DS_Store
 

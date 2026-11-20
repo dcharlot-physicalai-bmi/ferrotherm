@@ -22,12 +22,11 @@ keywords = ["fpga", "bitstream", "thermodynamic", "sampling", "ising"]
 categories = ["embedded", "hardware-support", "science"]
 
 [features]
-flash = ["dep:nusb", "dep:pollster"]
+flash = ["dep:nusb"]
 
 [dependencies]
 ferrotherm = { version = "0.44", path = ".." }
-nusb = { version = "0.1", optional = true }
-pollster = { version = "0.4", optional = true }
+nusb = { version = "0.2", optional = true }
 
 [[example]]
 name = "idcode"

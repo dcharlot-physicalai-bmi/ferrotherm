@@ -57,7 +57,9 @@ impl Json {
     #[must_use]
     pub fn as_i64(&self) -> Option<i64> {
         match self {
-            Json::Num(n) if n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 => Some(*n as i64),
+            Json::Num(n) if n.fract() == 0.0 && n.abs() < 9.007_199_254_740_992e15 => {
+                Some(*n as i64)
+            }
             _ => None,
         }
     }
@@ -113,12 +115,12 @@ impl Json {
     }
     #[must_use]
     /// A JSON string, for building responses without ceremony.
-pub fn s(v: &str) -> Json {
+    pub fn s(v: &str) -> Json {
         Json::Str(v.to_string())
     }
     #[must_use]
     /// A JSON number. Non-finite values become `null`, since JSON cannot express them.
-pub fn n(v: f64) -> Json {
+    pub fn n(v: f64) -> Json {
         Json::Num(v)
     }
 }
@@ -276,7 +278,9 @@ fn p_num(b: &[char], i: &mut usize) -> Result<Json, String> {
         *i += 1;
     }
     let s: String = b[start..*i].iter().collect();
-    s.parse::<f64>().map(Json::Num).map_err(|_| format!("bad number {s:?}"))
+    s.parse::<f64>()
+        .map(Json::Num)
+        .map_err(|_| format!("bad number {s:?}"))
 }
 
 fn p_str(b: &[char], i: &mut usize) -> Result<String, String> {
@@ -303,14 +307,18 @@ fn p_str(b: &[char], i: &mut usize) -> Result<String, String> {
                     '"' => out.push('"'),
                     '\\' => out.push('\\'),
                     'u' => {
-                        let hex: String = b.get(*i + 1..*i + 5).ok_or("short \\u")?.iter().collect();
+                        let hex: String =
+                            b.get(*i + 1..*i + 5).ok_or("short \\u")?.iter().collect();
                         let cp = u32::from_str_radix(&hex, 16).map_err(|_| "bad \\u")?;
                         *i += 4;
                         // A high surrogate is only half a character; pair it with the low one that
                         // must follow, or the text silently loses every non-BMP codepoint.
                         if (0xD800..0xDC00).contains(&cp) && b.get(*i + 1) == Some(&'\\') {
-                            let hex2: String =
-                                b.get(*i + 3..*i + 7).ok_or("short surrogate")?.iter().collect();
+                            let hex2: String = b
+                                .get(*i + 3..*i + 7)
+                                .ok_or("short surrogate")?
+                                .iter()
+                                .collect();
                             let lo = u32::from_str_radix(&hex2, 16).map_err(|_| "bad \\u")?;
                             if (0xDC00..0xE000).contains(&lo) {
                                 *i += 6;
@@ -432,7 +440,11 @@ mod tests {
 
     #[test]
     fn non_finite_becomes_null_not_invalid_json() {
-        let v = Json::Arr(vec![Json::Num(f64::NAN), Json::Num(f64::INFINITY), Json::Num(1.0)]);
+        let v = Json::Arr(vec![
+            Json::Num(f64::NAN),
+            Json::Num(f64::INFINITY),
+            Json::Num(1.0),
+        ]);
         let out = write(&v);
         assert_eq!(out, "[null,null,1]");
         assert!(parse(&out).is_ok(), "must stay parseable");
