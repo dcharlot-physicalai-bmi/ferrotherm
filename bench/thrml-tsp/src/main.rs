@@ -2335,7 +2335,7 @@ fn energy_section(
                 )> = Vec::new();
                     let seed = w.seed0 + pair as u64 + 10_000;
                     let before = read_cpu_snap();
-                    let mut measured = measure_side(
+                    let (mut measured, watch) = measure_side(
                         probe,
                         side,
                         w,
@@ -2343,7 +2343,6 @@ fn energy_section(
                         &mut *slot,
                         device,
                         pinned,
-                        &window_rule,
                     );
                     if measured.first().map(|m| m.instrument) != Some("nvml")
                         && probe.nvml.is_some()
@@ -2357,6 +2356,8 @@ fn energy_section(
                             CounterKind::Nvml,
                         ));
                     }
+                    // The window is the trial's. NVML read beside it takes the same refusal.
+                    stamp_trial_window(&mut measured, &watch, &window_rule);
                     let after = read_cpu_snap();
                     got.push((side, measured, before, after));
                 let settle_samples = match settle_for_bracket(contended) {
@@ -3099,8 +3100,7 @@ fn measure_side(
     slot: &mut ThrmlSlot,
     device: &str,
     pinned: &[usize],
-    rule: &energy::TrialWindowRule,
-) -> Vec<SideMeasure> {
+) -> (Vec<SideMeasure>, WindowRecord) {
     INSIDE_S.with(|v| v.borrow_mut().clear());
     if side != "ferrotherm" {
         slot.ex_jit_ns.clear();
@@ -3134,20 +3134,6 @@ fn measure_side(
             Vec::new()
         }
     });
-    let (mean_max, sample_max, apply) = if cfg!(target_os = "macos") {
-        (rule.foreign_cpu_mean_max, rule.foreign_cpu_sample_max, true)
-    } else if cfg!(target_os = "linux") {
-        (rule.other_core_mean_max, rule.other_core_sample_max, true)
-    } else {
-        (f64::INFINITY, f64::INFINITY, false)
-    };
-    let refusal = if rule.enforce && apply {
-        energy::fraction_refusal(&watch.signal, mean_max, sample_max)
-            .unwrap_or("")
-            .to_string()
-    } else {
-        String::new()
-    };
     let (reps, ess_sum, window_s) = match out.first() {
         Some(row) if row.repetitions > 0 => (
             row.repetitions,
@@ -3173,15 +3159,37 @@ fn measure_side(
     });
     INSIDE_S.with(|v| v.borrow_mut().clear());
     PENDING_INSIDE.with(|v| v.borrow_mut().push(inside_mean));
+    (out, watch)
+}
+
+/// The trial window belongs to the trial. Every meter row, including a counter
+/// read beside the watched window, takes the same series and the same refusal.
+fn stamp_trial_window(
+    rows: &mut [SideMeasure],
+    watch: &WindowRecord,
+    rule: &energy::TrialWindowRule,
+) {
+    let mut meters: Vec<energy::TrialMeterRow> = rows
+        .iter()
+        .map(|row| energy::TrialMeterRow {
+            instrument: row.instrument.to_string(),
+            scope: row.scope.clone(),
+            attributable: true,
+            evidence: energy::GRADE_QUIET,
+            note: String::new(),
+            joules_per_ess: None,
+            trial_refusal: String::new(),
+        })
+        .collect();
+    energy::apply_trial_window(&mut meters, &watch.signal, rule);
     let load_txt = fmt_series(&watch.load1);
     let signal_txt = fmt_series(&watch.signal);
-    for row in &mut out {
+    for (row, meter) in rows.iter_mut().zip(&meters) {
         row.window_load1 = load_txt.clone();
         row.window_signal = signal_txt.clone();
         row.ps_attribution = watch.ps.clone();
-        row.trial_refusal = refusal.clone();
+        row.trial_refusal = meter.trial_refusal.clone();
     }
-    out
 }
 
 fn measure_hwmon(
@@ -4529,6 +4537,50 @@ mod tests {
         assert!(text.contains("\"passed\":false"));
         assert!(text.contains("\"draws\":1024,\"lever\":\"scalar\",\"pair\":7"));
         assert!(text.contains("0.052703857422"));
+    }
+
+    #[test]
+    fn a_violating_trial_window_is_stamped_on_every_meter_row() {
+        // Synthetic trial with the attempt-007 shape: mean 0.161, one sample 0.625.
+        // At pre_rewrite_sha 777f0417 the NVML row was not stamped and stayed attributable.
+        let signal = [0.625, 0.045, 0.045, 0.045, 0.045];
+        let mut rows = vec![
+            super::empty_side(1, "rapl", "package"),
+            super::empty_side(1, "rapl", "core"),
+            super::empty_side(1, "nvml", "gpu"),
+            super::empty_side(1, "macmon", "soc-telemetry"),
+            super::empty_side(1, "ina238", "vin"),
+            super::empty_side(1, "tegrastats", "board"),
+        ];
+        for row in &rows {
+            assert!(row.trial_refusal.is_empty(), "{}", row.instrument);
+        }
+        let watch = super::WindowRecord {
+            load1: vec![1.0, 1.2],
+            signal: signal.to_vec(),
+            ps: "foreign".into(),
+        };
+        super::stamp_trial_window(
+            &mut rows,
+            &watch,
+            &crate::energy::TrialWindowRule::defaults(),
+        );
+        let reason = crate::energy::trial_window_refusal(
+            &signal,
+            &crate::energy::TrialWindowRule::defaults(),
+        );
+        assert!(!reason.is_empty());
+        for row in &rows {
+            assert_eq!(row.trial_refusal, reason, "{}", row.instrument);
+            assert_eq!(row.window_signal, "0.6250,0.0450,0.0450,0.0450,0.0450");
+            assert_eq!(row.window_load1, "1.0000,1.2000");
+            assert_eq!(row.ps_attribution, "foreign");
+        }
+        assert!(
+            rows
+                .iter()
+                .any(|row| row.instrument == "nvml" && row.scope == "gpu")
+        );
     }
 
     #[test]

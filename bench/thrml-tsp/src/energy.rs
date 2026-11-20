@@ -89,8 +89,11 @@ pub const NOISE_SIGMA_K: f64 = 3.0;
 /// gate is a separate check and is not this number.
 pub const DRIFT_SIGMA_K: f64 = 3.0;
 
-/// Rules v3. See `METHODOLOGY.md`. The 3σ test above is unchanged.
-pub const RULES_VERSION: &str = "v3";
+/// Rules v3.1. See `docs/METHODOLOGY-v3.1.md`. The 3σ test above is unchanged.
+///
+/// v3.1 writes the trial-window refusal onto every meter row of the trial.
+/// The thresholds are the v3 thresholds.
+pub const RULES_VERSION: &str = "v3.1";
 
 /// Attempt-037 RAPL bracket: four 0.25 s windows. Settled package steps all
 /// pass 3σ at this length. A longer bracket would shrink sigma below the max
@@ -852,6 +855,61 @@ impl TrialWindowRule {
             other_core_sample_max: 0.15,
             foreign_cpu_mean_max: 0.15,
             foreign_cpu_sample_max: 0.50,
+        }
+    }
+}
+
+/// One meter of one trial, as the trial-window rule sees it.
+///
+/// The window belongs to the trial. RAPL package, RAPL core, NVML, macmon,
+/// ina238, and tegrastats rows of that trial take one answer.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TrialMeterRow {
+    pub instrument: String,
+    pub scope: String,
+    /// Cleared when the trial window refuses. A passing window leaves this as the caller set it.
+    pub attributable: bool,
+    pub evidence: &'static str,
+    pub note: String,
+    /// Cleared when the trial window refuses. A price needs an attributable joule.
+    pub joules_per_ess: Option<f64>,
+    /// Empty when the window passed. Otherwise the refusal text.
+    pub trial_refusal: String,
+}
+
+/// The refusal text for one trial window, or `""` when the window passes or the rule is not enforced.
+///
+/// Linux uses the other-core fraction. macOS uses the foreign-CPU fraction. Any other
+/// operating system records the series and does not refuse on it. The thresholds are `rule`.
+pub fn trial_window_refusal(signal: &[f64], rule: &TrialWindowRule) -> &'static str {
+    if !rule.enforce {
+        return "";
+    }
+    let (mean_max, sample_max) = if cfg!(target_os = "macos") {
+        (rule.foreign_cpu_mean_max, rule.foreign_cpu_sample_max)
+    } else if cfg!(target_os = "linux") {
+        (rule.other_core_mean_max, rule.other_core_sample_max)
+    } else {
+        return "";
+    };
+    fraction_refusal(signal, mean_max, sample_max).unwrap_or("")
+}
+
+/// Write the trial-window refusal onto every meter row of one trial.
+///
+/// `signal` is the 1 Hz series for that trial. A meter measured on its own counter
+/// beside the watched window does not keep a grade the window refused. A passing
+/// window leaves attribution as the caller set it. Rules v3.1. The thresholds are
+/// unchanged from v3.
+pub fn apply_trial_window(rows: &mut [TrialMeterRow], signal: &[f64], rule: &TrialWindowRule) {
+    let refusal = trial_window_refusal(signal, rule);
+    for row in rows {
+        row.trial_refusal = refusal.to_string();
+        if !refusal.is_empty() {
+            row.attributable = false;
+            row.evidence = "load_gated";
+            row.note = refusal.to_string();
+            row.joules_per_ess = None;
         }
     }
 }
@@ -3389,6 +3447,101 @@ mod tests {
         assert!(macos_drift_refuses_quiet("macos", false));
         assert!(!macos_drift_refuses_quiet("macos", true));
         assert!(!macos_drift_refuses_quiet("linux", false));
+        assert_eq!(RULES_VERSION, "v3.1");
+    }
+
+    /// jetson-hub v3 attempt-007, 64×64 GPU trial. Measured other-core mean 0.161
+    /// and core 4 at 0.625. The harness at `pre_rewrite_sha` 777f0417 refused the RAPL
+    /// rows and left the NVML row attributable at 0.0373 J/ESS. v3.1 refuses every
+    /// meter of that trial.
+    #[test]
+    fn a_violating_other_core_window_refuses_every_meter_of_the_trial() {
+        let rule = TrialWindowRule::defaults();
+        // 0.625 + 4 * 0.045 = 0.805; 0.805 / 5 = 0.161. Both gates of the unchanged rule fail.
+        let signal = [0.625, 0.045, 0.045, 0.045, 0.045];
+        let mean = signal.iter().sum::<f64>() / signal.len() as f64;
+        assert!((mean - 0.161).abs() < 1e-12);
+        assert!((signal[0] - 0.625).abs() < 1e-12);
+        let meters = [
+            ("rapl", "package"),
+            ("rapl", "core"),
+            ("nvml", "gpu"),
+            ("macmon", "soc-telemetry"),
+            ("ina238", "vin"),
+            ("tegrastats", "vin"),
+        ];
+        let mut rows: Vec<TrialMeterRow> = meters
+            .iter()
+            .map(|(instrument, scope)| TrialMeterRow {
+                instrument: (*instrument).to_string(),
+                scope: (*scope).to_string(),
+                attributable: true,
+                evidence: GRADE_QUIET,
+                note: String::new(),
+                joules_per_ess: Some(0.0373),
+                trial_refusal: String::new(),
+            })
+            .collect();
+        apply_trial_window(&mut rows, &signal, &rule);
+        let reason = trial_window_refusal(&signal, &rule);
+        assert_eq!(reason, "a sample exceeded the maximum");
+        assert_eq!(rows.len(), meters.len());
+        for row in &rows {
+            assert!(!row.attributable, "{} {}", row.instrument, row.scope);
+            assert!(
+                row.joules_per_ess.is_none(),
+                "{} {}",
+                row.instrument,
+                row.scope
+            );
+            assert_eq!(row.evidence, "load_gated");
+            assert_eq!(row.trial_refusal, reason);
+            assert_eq!(row.note, reason);
+        }
+        // The mean gate alone, every sample at or under 0.15, still refuses every meter.
+        let mean_only = [0.14, 0.14, 0.14];
+        let mut again = rows.clone();
+        for row in &mut again {
+            row.attributable = true;
+            row.evidence = GRADE_QUIET;
+            row.note.clear();
+            row.joules_per_ess = Some(0.0373);
+            row.trial_refusal.clear();
+        }
+        apply_trial_window(&mut again, &mean_only, &rule);
+        assert_eq!(
+            trial_window_refusal(&mean_only, &rule),
+            "the mean exceeded the maximum"
+        );
+        for row in &again {
+            assert!(!row.attributable, "{}", row.instrument);
+            assert!(row.joules_per_ess.is_none(), "{}", row.instrument);
+            assert_eq!(row.trial_refusal, "the mean exceeded the maximum");
+        }
+        // A window inside both gates leaves the price the caller had.
+        let mut quiet = again;
+        for row in &mut quiet {
+            row.attributable = true;
+            row.evidence = GRADE_QUIET;
+            row.note.clear();
+            row.joules_per_ess = Some(0.0373);
+            row.trial_refusal.clear();
+        }
+        apply_trial_window(&mut quiet, &[0.01, 0.04, 0.02], &rule);
+        for row in &quiet {
+            assert!(row.attributable, "{}", row.instrument);
+            assert_eq!(row.joules_per_ess, Some(0.0373));
+            assert!(row.trial_refusal.is_empty(), "{}", row.instrument);
+            assert_eq!(row.evidence, GRADE_QUIET);
+        }
+        let mut off = rule;
+        off.enforce = false;
+        apply_trial_window(&mut quiet, &signal, &off);
+        for row in &quiet {
+            assert!(row.attributable, "{}", row.instrument);
+            assert_eq!(row.joules_per_ess, Some(0.0373));
+            assert!(row.trial_refusal.is_empty());
+        }
     }
 
     #[test]
