@@ -89,11 +89,13 @@ pub const NOISE_SIGMA_K: f64 = 3.0;
 /// gate is a separate check and is not this number.
 pub const DRIFT_SIGMA_K: f64 = 3.0;
 
-/// Rules v3.1. See `docs/METHODOLOGY-v3.1.md`. The 3σ test above is unchanged.
+/// Rules v3.2. See `docs/METHODOLOGY-v3.2.md`. The 3σ test above is unchanged.
 ///
 /// v3.1 writes the trial-window refusal onto every meter row of the trial.
+/// v3.2 does not move that rule. It records the JAX binding on each row and
+/// counts a repetition only when the sampler executes.
 /// The thresholds are the v3 thresholds.
-pub const RULES_VERSION: &str = "v3.1";
+pub const RULES_VERSION: &str = "v3.2";
 
 /// Attempt-037 RAPL bracket: four 0.25 s windows. Settled package steps all
 /// pass 3σ at this length. A longer bracket would shrink sigma below the max
@@ -277,6 +279,47 @@ pub const QUIET_ATTEMPTS: usize = 15;
 /// attributable. Two seconds covers the counter's update cadence. The window's joules
 /// are then divided by the repetition count.
 pub const MIN_ENERGY_WINDOW_S: f64 = 2.0;
+
+/// How many times `once` executed before the window elapsed.
+///
+/// `once` returns whether the sampler ran. A `false` return is not a
+/// repetition and it ends the window: an empty call must not be repeated
+/// until [`MIN_ENERGY_WINDOW_S`] has passed. That loop is what retained one
+/// audit record per empty iteration.
+pub fn executions_in_window(min_s: f64, mut once: impl FnMut() -> bool) -> u32 {
+    let started = std::time::Instant::now();
+    let mut reps = 0u32;
+    loop {
+        if !once() {
+            break;
+        }
+        reps = reps.saturating_add(1);
+        if started.elapsed().as_secs_f64() >= min_s {
+            break;
+        }
+    }
+    reps
+}
+
+/// Why a reported JAX binding does not match the request, or `None` when it does.
+///
+/// An empty `platform` means no JAX process reported a binding. That is not
+/// this refusal. `cpu` matches platform `cpu`. `cuda` matches platform `gpu`.
+/// `auto` names no platform.
+pub fn device_binding_refusal(requested: &str, platform: &str) -> Option<&'static str> {
+    if platform.is_empty() {
+        return None;
+    }
+    match requested {
+        "cpu" if platform != "cpu" => Some(
+            "device refusal: cpu was requested and JAX did not bind a CPU device",
+        ),
+        "cuda" if platform != "gpu" => Some(
+            "device refusal: cuda was requested and JAX did not bind a GPU device. A CPU device is not a CUDA device.",
+        ),
+        _ => None,
+    }
+}
 
 /// Attribution needs at least this many counter advances inside the window.
 ///
@@ -1586,6 +1629,12 @@ pub struct EnergyTrial {
     pub wall_ns_per_sweep: f64,
     /// Attributable joules per sweep. None when the joules were not attributable.
     pub joules_per_sweep: Option<f64>,
+    /// `--device` for a THRML row. Empty on a ferrotherm row: that process is not JAX.
+    pub device_requested: String,
+    /// JAX platform the runner bound (`cpu` or `gpu`). Empty when no binding was reported.
+    pub jax_platform: String,
+    /// JAX device the runner bound, as JAX names it (`cpu:0`, `cuda:0`).
+    pub jax_device: String,
     /// Raw samples inside the window. For a counter this is the number of reads, which is not
     /// the number of times the counter changed.
     pub samples: u32,
@@ -1652,6 +1701,9 @@ impl EnergyTrial {
             seconds_per_sweep: f64::NAN,
             wall_ns_per_sweep: f64::NAN,
             joules_per_sweep: None,
+            device_requested: String::new(),
+            jax_platform: String::new(),
+            jax_device: String::new(),
         }
     }
 }
@@ -3447,7 +3499,46 @@ mod tests {
         assert!(macos_drift_refuses_quiet("macos", false));
         assert!(!macos_drift_refuses_quiet("macos", true));
         assert!(!macos_drift_refuses_quiet("linux", false));
-        assert_eq!(RULES_VERSION, "v3.1");
+        assert_eq!(RULES_VERSION, "v3.2");
+    }
+
+    #[test]
+    fn a_sampler_that_does_not_run_does_not_fill_the_energy_window() {
+        let started = std::time::Instant::now();
+        let reps = executions_in_window(MIN_ENERGY_WINDOW_S, || false);
+        assert_eq!(reps, 0);
+        assert!(
+            started.elapsed().as_secs_f64() < 0.25,
+            "an empty call kept the window open for {} s",
+            started.elapsed().as_secs_f64()
+        );
+    }
+
+    #[test]
+    fn executions_count_only_calls_that_ran_and_stop_at_the_window() {
+        let mut calls = 0u32;
+        let reps = executions_in_window(0.02, || {
+            calls += 1;
+            true
+        });
+        assert_eq!(reps, calls);
+        assert!(reps >= 1, "a sampler that runs is a repetition");
+        assert!(reps < 50_000_000, "the window did not stay open, reps={reps}");
+    }
+
+    #[test]
+    fn a_cpu_request_bound_to_the_gpu_is_refused_and_a_match_is_kept() {
+        let cpu_on_gpu = device_binding_refusal("cpu", "gpu").expect("cpu on gpu");
+        assert!(cpu_on_gpu.contains("cpu"), "{cpu_on_gpu}");
+        let cuda_on_cpu = device_binding_refusal("cuda", "cpu").expect("cuda on cpu");
+        assert!(
+            cuda_on_cpu.contains("CUDA") || cuda_on_cpu.contains("cuda"),
+            "{cuda_on_cpu}"
+        );
+        assert!(device_binding_refusal("cpu", "cpu").is_none());
+        assert!(device_binding_refusal("cuda", "gpu").is_none());
+        assert!(device_binding_refusal("cpu", "").is_none());
+        assert!(device_binding_refusal("auto", "gpu").is_none());
     }
 
     /// jetson-hub v3 attempt-007, 64×64 GPU trial. Measured other-core mean 0.161

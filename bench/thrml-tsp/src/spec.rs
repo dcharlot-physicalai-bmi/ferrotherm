@@ -875,6 +875,38 @@ mod tests {
     }
 
     #[test]
+    fn the_suite_spec_does_not_carry_the_grids_the_suite_server_must_not_build() {
+        let mut suite = canonical(5, 400, 2000);
+        suite.extend(scaling(5, 400, 2000));
+        assert_eq!(suite.len(), 15);
+        let text = write_spec(&suite);
+        assert!(text.contains("id=thrml_readme_ising_chain_n5 "));
+        assert!(!text.contains("grid_scale_ising_2048"), "the suite spec named side 2048");
+        assert!(!text.contains("grid_scale_ising_4096"), "the suite spec named side 4096");
+        let mut campaign = suite;
+        campaign.extend(
+            grid_scaling(5, 400, 2000)
+                .into_iter()
+                .filter(|w| {
+                    matches!(
+                        w.open_grid().map(|(side, _)| side),
+                        Some(64 | 128 | 256 | 512 | 1024 | 2048 | 4096)
+                    )
+                }),
+        );
+        assert_eq!(campaign.len(), 22);
+        let one = write_spec(std::slice::from_ref(
+            campaign
+                .iter()
+                .find(|w| w.id == "grid_scale_ising_64")
+                .unwrap(),
+        ));
+        assert!(one.contains("id=grid_scale_ising_64 "));
+        assert!(!one.contains("grid_scale_ising_4096"));
+        assert_eq!(one.matches("WORK ").count(), 1);
+    }
+
+    #[test]
     fn potts_blocks_are_the_index_scan() {
         let w = potts_path(1, 1, 1);
         assert_eq!(w.q, 3);

@@ -576,6 +576,17 @@ fn run_accuracy(
     let mut thrml_note = thrml_note;
     let mut thrml_b_ok = thrml_b_ok;
     let mut thrml_b_note = thrml_b_note;
+    if let Some(reason) = energy::device_binding_refusal(device, &meta_field(&thrml_meta, "jax_platform"))
+    {
+        thrml_ok = false;
+        thrml_note = reason.to_string();
+    }
+    if let Some(reason) =
+        energy::device_binding_refusal(device, &meta_field(&thrml_b_meta, "jax_platform"))
+    {
+        thrml_b_ok = false;
+        thrml_b_note = reason.to_string();
+    }
     for w in work {
         eprintln!("ferrotherm {}", w.id);
         let mut ft_trials = Vec::new();
@@ -2062,6 +2073,24 @@ fn bracket_refusal(which: &str, samples: &[Option<f64>]) -> Option<String> {
     ))
 }
 
+/// Spec the THRML server will warm before READY.
+///
+/// `serve` builds every workload in the file. A campaign `spec.txt` names the
+/// suite and the grids through side 4096. The suite server must not see those
+/// grids. One grid server is still restarted onto that side alone.
+fn phase_serve_spec(spec: &Path, work: &[Workload]) -> PathBuf {
+    let stem = spec.file_stem().and_then(|s| s.to_str()).unwrap_or("spec");
+    let dir = spec.parent().unwrap_or_else(|| Path::new("."));
+    let path = dir.join(format!("{stem}.serve.spec"));
+    match fs::write(&path, spec::write_spec(work)) {
+        Ok(()) => path,
+        Err(e) => {
+            eprintln!("serve spec {} was not written: {e}", path.display());
+            spec.to_path_buf()
+        }
+    }
+}
+
 fn energy_section(
     probe: &mut Probe,
     work: &[Workload],
@@ -2184,15 +2213,24 @@ fn energy_section(
     }
     // THRML is not started until the first arm sample, inside that trial window.
     // A and B are separate pairings. Their ferrotherm rows do not share a summary.
+    // The server builds every workload in its spec before READY. Hand it this
+    // phase's workloads, not the campaign file that also names the large grids.
+    let serve_spec = if thrml_ok {
+        phase_serve_spec(spec, work)
+    } else {
+        spec.to_path_buf()
+    };
     let mut slot_a = ThrmlSlot {
         session: None,
         side: spec::THRML_A_SIDE,
         baseline: "A",
         python: python.to_path_buf(),
         runner: runner.to_path_buf(),
-        spec: spec.to_path_buf(),
+        spec: serve_spec.clone(),
         device: device.to_string(),
         enabled: thrml_ok,
+        bound_platform: String::new(),
+        bound_device: String::new(),
         ex_jit_ns: Vec::new(),
         oom: false,
     };
@@ -2202,9 +2240,11 @@ fn energy_section(
         baseline: "B",
         python: python_b.to_path_buf(),
         runner: runner.to_path_buf(),
-        spec: spec.to_path_buf(),
+        spec: serve_spec,
         device: device.to_string(),
         enabled: thrml_ok && !python_b.as_os_str().is_empty(),
+        bound_platform: String::new(),
+        bound_device: String::new(),
         ex_jit_ns: Vec::new(),
         oom: false,
     };
@@ -2573,6 +2613,34 @@ fn energy_section(
                         if row.trial_refusal.starts_with("THRML_LIMIT") {
                             row.joules.attributable = false;
                             row.joules.evidence = "thrml_limit";
+                            row.joules.note = row.trial_refusal.clone();
+                            row.joules_per_ess = None;
+                        }
+                        if *side != "ferrotherm" {
+                            row.device_requested = device.to_string();
+                            row.jax_platform = slot.bound_platform.clone();
+                            row.jax_device = slot.bound_device.clone();
+                            if let Some(reason) = energy::device_binding_refusal(
+                                &row.device_requested,
+                                &row.jax_platform,
+                            ) {
+                                row.trial_refusal = if row.trial_refusal.is_empty() {
+                                    reason.to_string()
+                                } else {
+                                    format!("{reason} {}", row.trial_refusal)
+                                };
+                                row.joules.attributable = false;
+                                row.joules.evidence = "device_mismatch";
+                                row.joules.note = row.trial_refusal.clone();
+                                row.joules_per_ess = None;
+                            }
+                        }
+                        if row.repetitions == 0 && row.trial_refusal.is_empty() {
+                            row.trial_refusal =
+                                "the sampler did not run, so this window is not a measurement"
+                                    .into();
+                            row.joules.attributable = false;
+                            row.joules.evidence = "not_run";
                             row.joules.note = row.trial_refusal.clone();
                             row.joules_per_ess = None;
                         }
@@ -3616,18 +3684,21 @@ fn series_secs(
         .collect()
 }
 
-fn repeat_until_window(seed: u64, mut once: impl FnMut(u64) -> f64) -> (u32, f64) {
-    let started = Instant::now();
-    let mut reps = 0u32;
+fn repeat_until_window(seed: u64, mut once: impl FnMut(u64) -> Option<f64>) -> (u32, f64) {
     let mut ess = 0.0;
-    while reps == 0 || started.elapsed().as_secs_f64() < MIN_ENERGY_WINDOW_S {
-        ess += once(seed.wrapping_add(u64::from(reps)));
-        reps = reps.saturating_add(1);
-    }
+    let mut next = seed;
+    let reps = energy::executions_in_window(MIN_ENERGY_WINDOW_S, || match once(next) {
+        Some(v) => {
+            ess += v;
+            next = next.wrapping_add(1);
+            true
+        }
+        None => false,
+    });
     (reps, ess)
 }
 
-fn plan_ess(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe>) -> f64 {
+fn plan_ess(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe>) -> Option<f64> {
     one_plan(side, w, seed, session)
 }
 
@@ -3640,6 +3711,10 @@ struct ThrmlSlot {
     spec: PathBuf,
     device: String,
     enabled: bool,
+    /// JAX platform the running server reported. Empty until READY.
+    bound_platform: String,
+    /// JAX device the running server reported.
+    bound_device: String,
     /// Ex-jit nanoseconds per sweep from DONE lines in this side's window.
     ex_jit_ns: Vec<f64>,
     oom: bool,
@@ -3656,7 +3731,11 @@ impl ThrmlSlot {
                 &self.device,
                 self.baseline,
             ) {
-                Ok(child) => self.session = Some(child),
+                Ok(child) => {
+                    self.bound_platform = child.platform.clone();
+                    self.bound_device = child.device.clone();
+                    self.session = Some(child);
+                }
                 Err(e) => {
                     if e.contains("THRML_LIMIT") {
                         self.oom = true;
@@ -3673,12 +3752,15 @@ impl ThrmlSlot {
         self.session = None;
         self.spec = spec.to_path_buf();
         self.oom = false;
+        self.bound_platform.clear();
+        self.bound_device.clear();
         self.ex_jit_ns.clear();
     }
 }
 
-fn one_plan(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe>) -> f64 {
+fn one_plan(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe>) -> Option<f64> {
     // Rules v3: the counter window is warmup plus draws. ESS and exact laws are later.
+    // A call that does not execute the sampler is not a repetition.
     if side == "ferrotherm" {
         let (levers, threads, gpu_on) = GRID_CHOICE.with(std::cell::Cell::get);
         let t0 = std::time::Instant::now();
@@ -3691,21 +3773,29 @@ fn one_plan(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe
         } else {
             ft::sample_only(w, seed, None).is_ok()
         };
-        if ran {
-            INSIDE_S.with(|v| v.borrow_mut().push(t0.elapsed().as_secs_f64()));
+        if !ran {
+            return None;
         }
-    } else if let Some(s) = session {
-        match s.cost(w, seed) {
-            Ok(Some((seconds, sweeps))) if sweeps > 0 && seconds.is_finite() => {
-                EXJIT_NS.with(|v| v.borrow_mut().push(seconds * 1.0e9 / sweeps as f64));
-                INSIDE_S.with(|v| v.borrow_mut().push(seconds));
-            }
-            Ok(_) => {}
-            Err(e) if e.contains("THRML_LIMIT") => EXJIT_OOM.with(|c| c.set(true)),
-            Err(e) => eprintln!("THRML cost: {e}"),
+        INSIDE_S.with(|v| v.borrow_mut().push(t0.elapsed().as_secs_f64()));
+        return Some(f64::NAN);
+    }
+    let s = session?;
+    match s.cost(w, seed) {
+        Ok(Some((seconds, sweeps))) if sweeps > 0 && seconds.is_finite() => {
+            EXJIT_NS.with(|v| v.borrow_mut().push(seconds * 1.0e9 / sweeps as f64));
+            INSIDE_S.with(|v| v.borrow_mut().push(seconds));
+            Some(f64::NAN)
+        }
+        Ok(_) => None,
+        Err(e) if e.contains("THRML_LIMIT") => {
+            EXJIT_OOM.with(|c| c.set(true));
+            None
+        }
+        Err(e) => {
+            eprintln!("THRML cost: {e}");
+            None
         }
     }
-    f64::NAN
 }
 
 thread_local! {
@@ -4083,6 +4173,7 @@ fn trial_line(t: &EnergyTrial) -> String {
          \"pairing\": {}, \"fabric\": {}, \
          \"window_load1\": {}, \"window_signal\": {}, \
          \"ps_attribution\": {}, \"trial_refusal\": {}, \"settle_load1\": {}, \
+         \"device_requested\": {}, \"jax_platform\": {}, \"jax_device\": {}, \
          \"joules\": {}}}",
         json_str(t.workload),
         json_str(t.side),
@@ -4123,6 +4214,9 @@ fn trial_line(t: &EnergyTrial) -> String {
         json_str(&t.ps_attribution),
         json_str(&t.trial_refusal),
         json_str(&t.settle_load1),
+        json_opt(&t.device_requested),
+        json_opt(&t.jax_platform),
+        json_opt(&t.jax_device),
         joules_json(&t.joules),
     )
 }
@@ -4131,6 +4225,8 @@ struct ThrmlServe {
     child: std::process::Child,
     stdin: std::process::ChildStdin,
     out: BufReader<std::process::ChildStdout>,
+    platform: String,
+    device: String,
 }
 
 impl ThrmlServe {
@@ -4168,7 +4264,17 @@ impl ThrmlServe {
             }
             return Err(format!("THRML serve said {line:?}"));
         }
-        Ok(ThrmlServe { child, stdin, out })
+        let (platform, bound) = match ready_binding(&line) {
+            Ok(v) => v,
+            Err(e) => return Err(format!("THRML serve said {line:?}: {e}")),
+        };
+        Ok(ThrmlServe {
+            child,
+            stdin,
+            out,
+            platform,
+            device: bound,
+        })
     }
 
     fn read_chain(&mut self, w: &Workload) -> Result<Chain, String> {
@@ -4473,6 +4579,31 @@ fn fmt_opt(v: Option<f64>) -> String {
     }
 }
 
+fn json_opt(s: &str) -> String {
+    if s.is_empty() {
+        "null".into()
+    } else {
+        json_str(s)
+    }
+}
+
+fn ready_binding(line: &str) -> Result<(String, String), String> {
+    let platform = meta_field(line, "platform");
+    let device = meta_field(line, "device");
+    if platform.is_empty() {
+        return Err("READY did not name a platform".into());
+    }
+    Ok((platform, device))
+}
+
+fn meta_field(text: &str, key: &str) -> String {
+    let prefix = format!("{key}=");
+    text.split_whitespace()
+        .find_map(|part| part.strip_prefix(&prefix))
+        .unwrap_or("")
+        .to_string()
+}
+
 fn json_str(s: &str) -> String {
     let mut o = String::from("\"");
     for c in s.chars() {
@@ -4514,6 +4645,28 @@ mod tests {
             limits.get("grid_scale_ising_2048").map(String::as_str),
             Some("oom")
         );
+        let dir = std::env::temp_dir().join(format!("ft-serve-spec-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let campaign = dir.join("spec.txt");
+        let mut suite = super::spec::canonical(5, 400, 2000);
+        suite.extend(super::spec::scaling(5, 400, 2000));
+        let mut all = suite.clone();
+        all.extend(super::spec::grid_scaling(5, 400, 2000));
+        std::fs::write(&campaign, super::spec::write_spec(&all)).unwrap();
+        let serve = super::phase_serve_spec(&campaign, &suite);
+        let text = std::fs::read_to_string(&serve).unwrap();
+        assert!(text.contains("id=thrml_readme_ising_chain_n5 "));
+        assert!(!text.contains("grid_scale_ising_4096"));
+        assert!(!text.contains("grid_scale_ising_2048"));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (reps, _) = super::repeat_until_window(7, |_| None);
+        assert_eq!(reps, 0, "an empty sampler filled the energy window");
+        let (platform, bound) =
+            super::ready_binding("READY platform=cpu device=cpu:0 requested=cpu baseline=A")
+                .expect("ready");
+        assert_eq!(platform, "cpu");
+        assert_eq!(bound, "cpu:0");
+        assert!(super::ready_binding("READY baseline=A").is_err());
         let reason = super::thrml_limit_reason("oom");
         assert!(reason.starts_with("THRML_LIMIT oom"));
         assert!(!super::parity_blocks_exit(&[(

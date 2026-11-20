@@ -18,14 +18,21 @@ around this one, so both runners are on the same instrument.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
+
+from platform_choice import choose_platform, pin_jax_platform, requested_device
+
+# The device has to be selected before JAX initialises. A CUDA build otherwise
+# registers only the GPU, and a later jax.devices() has no CPU to bind.
+REQUESTED = requested_device(sys.argv[1:])
+pin_jax_platform(REQUESTED, os.environ)
 
 import jax
 import jax.numpy as jnp
 
 import thrml
-from platform_choice import choose_platform
 
 # A is the pinned release. B is Extropic's main at this commit, installed from git
 # into its own venv. The two are never interchangeable: B's IsingSamplingProgram is a
@@ -70,13 +77,14 @@ def main() -> int:
     if not args.out:
         raise SystemExit("--out is required unless --serve")
     lines = [
-        "META thrml={thrml} jax={jaxv} jaxlib={jaxlib} equinox={eqx} device={dev} jax_platform={plat} baseline={base} pin={pin}".format(
+        "META thrml={thrml} jax={jaxv} jaxlib={jaxlib} equinox={eqx} device={dev} jax_platform={plat} requested={req} baseline={base} pin={pin}".format(
             thrml=thrml.__version__,
             jaxv=jax.__version__,
             jaxlib=_jaxlib_version(),
             eqx=_eqx_version(),
             dev=str(device),
             plat=platform,
+            req=REQUESTED,
             base=args.baseline,
             pin=pin,
         )
@@ -182,6 +190,9 @@ def serve(workloads: list[dict], device, platform: str) -> int:
     Rules v3: COST is the metered window and holds only warmup plus draws.
     It returns no states and no energy. ESS, the energy observer, and RUN
     (states, or energies on a GRID) are scoring and stay outside that window.
+    Every workload in the spec is built and warmed before READY, which is
+    before that window. The spec must be the workloads this process will
+    sample. A campaign file that also names side 4096 does not belong here.
     This runner does not enumerate an exact law and does not precompute a
     transfer matrix; those steps are on the ferrotherm side, also outside.
     A workload that fails to build is an ERR for that id. The others still run.
@@ -201,7 +212,10 @@ def serve(workloads: list[dict], device, platform: str) -> int:
                     failed[w["id"]] = f"LIMIT oom {type(err).__name__}: {err}"
                 else:
                     failed[w["id"]] = f"{type(err).__name__}: {err}"
-        print(f"READY platform={platform} baseline={BASELINE}", flush=True)
+        print(
+            f"READY platform={platform} device={device} requested={REQUESTED} baseline={BASELINE}",
+            flush=True,
+        )
         for line in sys.stdin:
             line = line.strip()
             if not line:
@@ -455,18 +469,24 @@ def _cost_lines(w: dict, program, init, seed: int) -> list[str]:
 
 
 def _state_cost(w: dict, program, init, key) -> int:
+    """Sweeps only. States are not stacked.
+
+    `sample_states` on an empty block asks THRML 0.1.4 for `Block.node_type`,
+    which raises `ValueError` before a sweep. The harness then counted each
+    failure as a repetition. The null observer is the grid cost path: the
+    chain runs, and the only stacked value is a scalar zero.
+    """
     thin = max(1, w["thin"])
     schedule = SamplingSchedule(w["warmup"] + thin, w["draws"], thin)
-    samples = sample_states(key, program, schedule, init, [], [Block([])])
-    jax.block_until_ready(samples)
+    out = _observe(key, program, schedule, init, _NULL_OBSERVER)
+    jax.block_until_ready(out)
     return w["warmup"] + w["draws"] * thin
 
 
 def _grid_cost(w: dict, program, init, key) -> int:
     thin = max(1, w["thin"])
     schedule = SamplingSchedule(w["warmup"] + thin, w["draws"], thin)
-    observer = NullObserver()
-    out = _observe(key, program, schedule, init, observer)
+    out = _observe(key, program, schedule, init, _NULL_OBSERVER)
     jax.block_until_ready(out)
     return w["warmup"] + w["draws"] * thin
 
@@ -474,10 +494,7 @@ def _grid_cost(w: dict, program, init, key) -> int:
 def _grid_energy_lines(w: dict, program, init, seed: int, jit_s: float) -> list[str]:
     thin = max(1, w["thin"])
     schedule = SamplingSchedule(w["warmup"] + thin, w["draws"], thin)
-    side = int(w["grid"]["side"])
-    coupling = float(w["grid"]["j"])
-    nodes = _grid_nodes_cached(w)
-    observer = GridEnergyObserver(blocks_to_sample=[Block(nodes)], side=side, coupling=coupling)
+    observer = _grid_observer(w)
     key = jax.random.key(seed)
     t0 = time.perf_counter()
     _carry, energies = _observe(key, program, schedule, init, observer)
@@ -497,12 +514,27 @@ def _grid_energy_lines(w: dict, program, init, seed: int, jit_s: float) -> list[
 
 
 _GRID_NODES: dict[str, list] = {}
+_GRID_OBSERVERS: dict[str, GridEnergyObserver] = {}
 
 
 def _grid_nodes_cached(w: dict) -> list:
     if w["id"] not in _GRID_NODES:
         _GRID_NODES[w["id"]] = _nodes_spin(w["n"])
     return _GRID_NODES[w["id"]]
+
+
+def _grid_observer(w: dict) -> GridEnergyObserver:
+    """One observer per workload. A new equinox module on every ESS retraces."""
+    found = _GRID_OBSERVERS.get(w["id"])
+    if found is None:
+        nodes = _grid_nodes_cached(w)
+        found = GridEnergyObserver(
+            blocks_to_sample=[Block(nodes)],
+            side=int(w["grid"]["side"]),
+            coupling=float(w["grid"]["j"]),
+        )
+        _GRID_OBSERVERS[w["id"]] = found
+    return found
 
 
 def _grid_ising_program(w: dict):
@@ -557,6 +589,10 @@ class NullObserver(AbstractObserver):
 
     def __call__(self, program, state_free, state_clamped, carry, iteration):
         return None, jnp.array(0, dtype=jnp.float32)
+
+
+# One instance. A new equinox module on every COST is a new trace key.
+_NULL_OBSERVER = NullObserver()
 
 
 class GridEnergyObserver(AbstractObserver):
