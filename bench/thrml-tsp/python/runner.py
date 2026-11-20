@@ -23,6 +23,7 @@ import sys
 import time
 
 from platform_choice import choose_platform, pin_jax_platform, requested_device
+from sweep_count import schedule_sweeps
 
 # The device has to be selected before JAX initialises. A CUDA build otherwise
 # registers only the GPU, and a later jax.devices() has no CPU to bind.
@@ -468,27 +469,36 @@ def _cost_lines(w: dict, program, init, seed: int) -> list[str]:
     return [f"DONE id={w['id']} seed={seed} seconds={seconds:.9f} sweeps={sweeps}"]
 
 
+def _meter_schedule(w: dict) -> SamplingSchedule:
+    """The schedule COST submits. `n_warmup` is warmup plus one thin step."""
+    thin = max(1, int(w["thin"]))
+    return SamplingSchedule(int(w["warmup"]) + thin, int(w["draws"]), thin)
+
+
+def _meter_sweeps(w: dict) -> int:
+    """Block-Gibbs iterations `_meter_schedule` runs. Reported only after it returns."""
+    thin = max(1, int(w["thin"]))
+    return schedule_sweeps(int(w["warmup"]), int(w["draws"]), thin)
+
+
 def _state_cost(w: dict, program, init, key) -> int:
     """Sweeps only. States are not stacked.
 
     `sample_states` on an empty block asks THRML 0.1.4 for `Block.node_type`,
     which raises `ValueError` before a sweep. The harness then counted each
     failure as a repetition. The null observer is the grid cost path: the
-    chain runs, and the only stacked value is a scalar zero.
+    chain runs, and the only stacked value is a scalar zero. The returned
+    count is the iterations that schedule executed, not the repetition index.
     """
-    thin = max(1, w["thin"])
-    schedule = SamplingSchedule(w["warmup"] + thin, w["draws"], thin)
-    out = _observe(key, program, schedule, init, _NULL_OBSERVER)
+    out = _observe(key, program, _meter_schedule(w), init, _NULL_OBSERVER)
     jax.block_until_ready(out)
-    return w["warmup"] + w["draws"] * thin
+    return _meter_sweeps(w)
 
 
 def _grid_cost(w: dict, program, init, key) -> int:
-    thin = max(1, w["thin"])
-    schedule = SamplingSchedule(w["warmup"] + thin, w["draws"], thin)
-    out = _observe(key, program, schedule, init, _NULL_OBSERVER)
+    out = _observe(key, program, _meter_schedule(w), init, _NULL_OBSERVER)
     jax.block_until_ready(out)
-    return w["warmup"] + w["draws"] * thin
+    return _meter_sweeps(w)
 
 
 def _grid_energy_lines(w: dict, program, init, seed: int, jit_s: float) -> list[str]:

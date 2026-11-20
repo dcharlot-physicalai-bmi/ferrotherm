@@ -2655,6 +2655,28 @@ fn energy_section(
                                         row.joules_per_ess = None;
                                     }
                                 }
+                                if let Some(evidence) = energy::metered_window_refusal(
+                                    side,
+                                    &energy::MeteredWindow {
+                                        invoked: measured.sampler_invoked,
+                                        raised: measured.window_raised,
+                                        executed_sweeps: measured.executed_sweeps,
+                                    },
+                                ) {
+                                    energy::refuse_unmeasured_window(
+                                        &mut row.joules,
+                                        &mut row.joules_per_ess,
+                                        evidence,
+                                    );
+                                    if row.trial_refusal.is_empty() {
+                                        row.trial_refusal = evidence.to_string();
+                                    }
+                                    if row.joules.note.is_empty() {
+                                        row.joules.note = evidence.to_string();
+                                    } else {
+                                        row.joules.note = format!("{evidence} {}", row.joules.note);
+                                    }
+                                }
                                 if row.repetitions == 0 && row.trial_refusal.is_empty() {
                                     row.trial_refusal =
                                 "the sampler did not run, so this window is not a measurement"
@@ -3191,6 +3213,12 @@ struct SideMeasure {
     window_signal: String,
     ps_attribution: String,
     trial_refusal: String,
+    /// The sampler was called inside this window. False for `--skip-thrml`.
+    sampler_invoked: bool,
+    /// A metered command in this window returned an error.
+    window_raised: bool,
+    /// Sweeps the runner, or ferrotherm, reported that it executed.
+    executed_sweeps: u64,
 }
 
 fn measure_side(
@@ -3203,6 +3231,7 @@ fn measure_side(
     pinned: &[usize],
 ) -> (Vec<SideMeasure>, WindowRecord) {
     INSIDE_S.with(|v| v.borrow_mut().clear());
+    clear_sweep_ledger();
     if side != "ferrotherm" {
         slot.ex_jit_ns.clear();
         slot.oom = false;
@@ -3264,6 +3293,12 @@ fn measure_side(
     });
     INSIDE_S.with(|v| v.borrow_mut().clear());
     PENDING_INSIDE.with(|v| v.borrow_mut().push(inside_mean));
+    let swept = take_sweep_ledger();
+    for row in &mut out {
+        row.sampler_invoked = swept.invoked;
+        row.window_raised = swept.raised;
+        row.executed_sweeps = swept.executed_sweeps;
+    }
     (out, watch)
 }
 
@@ -3677,6 +3712,9 @@ fn finish_window(
         window_signal: String::new(),
         ps_attribution: String::new(),
         trial_refusal: String::new(),
+        sampler_invoked: false,
+        window_raised: false,
+        executed_sweeps: 0,
     }
 }
 
@@ -3701,6 +3739,9 @@ fn empty_side(repetitions: u32, instrument: &'static str, scope: &str) -> SideMe
         window_signal: String::new(),
         ps_attribution: String::new(),
         trial_refusal: String::new(),
+        sampler_invoked: false,
+        window_raised: false,
+        executed_sweeps: 0,
     }
 }
 
@@ -3795,42 +3836,63 @@ impl ThrmlSlot {
     }
 }
 
+fn ferrotherm_metered_sweeps(w: &Workload, seed: u64) -> Result<u64, String> {
+    let (levers, threads, gpu_on) = GRID_CHOICE.with(std::cell::Cell::get);
+    if w.open_grid().is_some() {
+        if gpu_on {
+            gpu_cost(w, seed)?;
+            return Ok((w.warmup + w.draws * w.thin.max(1)) as u64);
+        }
+        return ft::cost_sweeps(w, seed, Some(ft::GridChoice { levers, threads }));
+    }
+    ft::sample_only(w, seed, None)?;
+    Ok(ferrotherm::samples::Plan::new(w.warmup, w.draws, w.thin).sweeps() as u64)
+}
+
 fn one_plan(side: &str, w: &Workload, seed: u64, session: Option<&mut ThrmlServe>) -> Option<f64> {
     // Rules v3: the counter window is warmup plus draws. ESS and exact laws are later.
-    // A call that does not execute the sampler is not a repetition.
+    // A call that does not execute the sampler is not a repetition. The sweep count
+    // is what that call reported, and a raise or a zero is recorded for the refusal.
     if side == "ferrotherm" {
-        let (levers, threads, gpu_on) = GRID_CHOICE.with(std::cell::Cell::get);
         let t0 = std::time::Instant::now();
-        let ran = if w.open_grid().is_some() {
-            if gpu_on {
-                gpu_cost(w, seed).is_ok()
-            } else {
-                ft::cost_sweeps(w, seed, Some(ft::GridChoice { levers, threads })).is_ok()
+        match ferrotherm_metered_sweeps(w, seed) {
+            Ok(sweeps) if sweeps > 0 => {
+                note_ferrotherm_window(Ok(sweeps));
+                INSIDE_S.with(|v| v.borrow_mut().push(t0.elapsed().as_secs_f64()));
+                Some(f64::NAN)
             }
-        } else {
-            ft::sample_only(w, seed, None).is_ok()
-        };
-        if !ran {
-            return None;
+            Ok(sweeps) => {
+                note_ferrotherm_window(Ok(sweeps));
+                None
+            }
+            Err(_) => {
+                note_ferrotherm_window(Err(()));
+                None
+            }
         }
-        INSIDE_S.with(|v| v.borrow_mut().push(t0.elapsed().as_secs_f64()));
-        return Some(f64::NAN);
-    }
-    let s = session?;
-    match s.cost(w, seed) {
-        Ok(Some((seconds, sweeps))) if sweeps > 0 && seconds.is_finite() => {
-            EXJIT_NS.with(|v| v.borrow_mut().push(seconds * 1.0e9 / sweeps as f64));
-            INSIDE_S.with(|v| v.borrow_mut().push(seconds));
-            Some(f64::NAN)
-        }
-        Ok(_) => None,
-        Err(e) if e.contains("THRML_LIMIT") => {
-            EXJIT_OOM.with(|c| c.set(true));
-            None
-        }
-        Err(e) => {
-            eprintln!("THRML cost: {e}");
-            None
+    } else {
+        let s = session?;
+        match s.cost(w, seed) {
+            Ok(Some((seconds, sweeps))) if sweeps > 0 && seconds.is_finite() => {
+                note_sweep_reply(&energy::CostReply::Done { seconds, sweeps });
+                EXJIT_NS.with(|v| v.borrow_mut().push(seconds * 1.0e9 / sweeps as f64));
+                INSIDE_S.with(|v| v.borrow_mut().push(seconds));
+                Some(f64::NAN)
+            }
+            Ok(Some((seconds, sweeps))) => {
+                note_sweep_reply(&energy::CostReply::Done { seconds, sweeps });
+                None
+            }
+            Ok(None) => None,
+            Err(e) if e.contains("THRML_LIMIT") => {
+                EXJIT_OOM.with(|c| c.set(true));
+                None
+            }
+            Err(e) => {
+                eprintln!("THRML cost: {e}");
+                note_sweep_reply(&energy::CostReply::Raised);
+                None
+            }
         }
     }
 }
@@ -3846,6 +3908,28 @@ thread_local! {
     static OUTSIDE_S: std::cell::RefCell<Vec<(&'static str, f64)>> =
         const { std::cell::RefCell::new(Vec::new()) };
     static PENDING_INSIDE: std::cell::RefCell<Vec<f64>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SWEEP_LEDGER: std::cell::RefCell<energy::MeteredWindow> =
+        const { std::cell::RefCell::new(energy::MeteredWindow {
+            invoked: false,
+            raised: false,
+            executed_sweeps: 0,
+        }) };
+}
+
+fn clear_sweep_ledger() {
+    SWEEP_LEDGER.with(|v| *v.borrow_mut() = energy::MeteredWindow::default());
+}
+
+fn note_sweep_reply(reply: &energy::CostReply) {
+    SWEEP_LEDGER.with(|v| energy::note_cost_reply(&mut v.borrow_mut(), reply));
+}
+
+fn note_ferrotherm_window(sweeps: Result<u64, ()>) {
+    SWEEP_LEDGER.with(|v| energy::note_ferrotherm_sweeps(&mut v.borrow_mut(), sweeps));
+}
+
+fn take_sweep_ledger() -> energy::MeteredWindow {
+    SWEEP_LEDGER.with(|v| std::mem::take(&mut *v.borrow_mut()))
 }
 
 struct WindowAudit {
@@ -4379,24 +4463,10 @@ impl ThrmlServe {
         if line.starts_with("LIMIT") || thrml_oom_text(&line) {
             return Err(thrml_limit_reason("oom"));
         }
-        if !line.starts_with("DONE") {
-            return Err(format!("THRML cost said {}", line.trim()));
-        }
-        let mut seconds = None;
-        let mut sweeps = None;
-        for part in line.split_whitespace() {
-            if let Some(v) = part.strip_prefix("seconds=") {
-                seconds = v.parse().ok();
-            } else if let Some(v) = part.strip_prefix("sweeps=") {
-                sweeps = v.parse().ok();
-            }
-        }
-        match (seconds, sweeps) {
-            (Some(seconds), Some(sweeps)) => Ok(Some((seconds, sweeps))),
-            _ => Err(format!(
-                "THRML cost line had no seconds and sweeps: {}",
-                line.trim()
-            )),
+        match energy::read_cost_reply(&line) {
+            energy::CostReply::Done { seconds, sweeps } => Ok(Some((seconds, sweeps))),
+            energy::CostReply::Limit => Err(thrml_limit_reason("oom")),
+            energy::CostReply::Raised => Err(format!("THRML cost said {}", line.trim())),
         }
     }
 }

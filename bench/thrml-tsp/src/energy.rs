@@ -321,6 +321,114 @@ pub fn device_binding_refusal(requested: &str, platform: &str) -> Option<&'stati
     }
 }
 
+/// One reply from a metered THRML command. `Raised` is any line that is not a
+/// completed `DONE` and not a memory `LIMIT`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum CostReply {
+    Done { seconds: f64, sweeps: u64 },
+    Raised,
+    Limit,
+}
+
+/// Parse a `COST` reply. Sweeps are the integer the runner printed, including zero.
+pub fn read_cost_reply(line: &str) -> CostReply {
+    let line = line.trim();
+    if line.starts_with("LIMIT") {
+        return CostReply::Limit;
+    }
+    if !line.starts_with("DONE") {
+        return CostReply::Raised;
+    }
+    let mut seconds = None;
+    let mut sweeps = None;
+    for part in line.split_whitespace() {
+        if let Some(v) = part.strip_prefix("seconds=") {
+            seconds = v.parse().ok();
+        } else if let Some(v) = part.strip_prefix("sweeps=") {
+            sweeps = v.parse().ok();
+        }
+    }
+    match (seconds, sweeps) {
+        (Some(seconds), Some(sweeps)) => CostReply::Done { seconds, sweeps },
+        _ => CostReply::Raised,
+    }
+}
+
+/// Sweeps a metered window actually executed, summed from runner reports.
+///
+/// `invoked` is false when the sampler was never called, which is `--skip-thrml`
+/// and is not this refusal. `raised` is an `ERR` or a ferrotherm error from a
+/// command inside the window. `executed_sweeps` adds the counts the calls
+/// reported. It is not a repetition count.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MeteredWindow {
+    pub invoked: bool,
+    pub raised: bool,
+    pub executed_sweeps: u64,
+}
+
+/// Record one THRML reply. A memory limit is left to the `THRML_LIMIT` refusal.
+pub fn note_cost_reply(window: &mut MeteredWindow, reply: &CostReply) {
+    match reply {
+        CostReply::Done { sweeps, .. } => {
+            window.invoked = true;
+            window.executed_sweeps = window.executed_sweeps.saturating_add(*sweeps);
+        }
+        CostReply::Raised => {
+            window.invoked = true;
+            window.raised = true;
+        }
+        CostReply::Limit => {}
+    }
+}
+
+/// Record one ferrotherm sampler call. `Err` is an error returned to the window.
+pub fn note_ferrotherm_sweeps(window: &mut MeteredWindow, sweeps: Result<u64, ()>) {
+    window.invoked = true;
+    match sweeps {
+        Ok(n) => window.executed_sweeps = window.executed_sweeps.saturating_add(n),
+        Err(()) => window.raised = true,
+    }
+}
+
+/// Evidence when a metered window raised or executed no sweeps.
+///
+/// `None` when this rule keeps the row: the sampler was not invoked, or it
+/// reported a positive sweep count and no error. The string is the receipt
+/// `evidence` value.
+pub fn metered_window_refusal(side: &str, window: &MeteredWindow) -> Option<&'static str> {
+    if !window.invoked {
+        return None;
+    }
+    let ferrotherm = side == "ferrotherm";
+    if window.raised {
+        return Some(if ferrotherm {
+            "ferrotherm_window_raised"
+        } else {
+            "thrml_window_raised"
+        });
+    }
+    if window.executed_sweeps == 0 {
+        return Some(if ferrotherm {
+            "ferrotherm_zero_sweeps"
+        } else {
+            "thrml_zero_sweeps"
+        });
+    }
+    None
+}
+
+/// Stamp the refusal. The joule number stays. It is not a per-sample price.
+pub fn refuse_unmeasured_window(
+    joules: &mut Joules,
+    per_ess: &mut Option<f64>,
+    evidence: &'static str,
+) {
+    joules.attributable = false;
+    joules.evidence = evidence;
+    *per_ess = None;
+}
+
 /// Attribution needs at least this many counter advances inside the window.
 ///
 /// One tick, or none, is a collision with the update cadence. Eight is the same floor
@@ -3539,6 +3647,120 @@ mod tests {
         assert!(device_binding_refusal("cuda", "gpu").is_none());
         assert!(device_binding_refusal("cpu", "").is_none());
         assert!(device_binding_refusal("auto", "gpu").is_none());
+    }
+
+    fn kept_joule() -> Joules {
+        Joules {
+            gross: Some(1.0),
+            incremental: Some(0.5),
+            idle_watts: Some(10.0),
+            idle_sigma: Some(0.1),
+            seconds: 2.0,
+            attributable: true,
+            evidence: GRADE_QUIET,
+            instrument: "rapl".into(),
+            scope: "package".into(),
+            note: String::new(),
+            projected_prices_applied: false,
+        }
+    }
+
+    #[test]
+    fn a_cost_that_raises_is_refused() {
+        let mut window = MeteredWindow::default();
+        note_cost_reply(
+            &mut window,
+            &read_cost_reply(
+                "ERR thrml_readme_ising_chain_n5 ValueError: Block is empty and doesn't have a node type",
+            ),
+        );
+        let evidence = metered_window_refusal("thrml", &window).expect("raised");
+        assert_eq!(evidence, "thrml_window_raised");
+        assert_eq!(window.executed_sweeps, 0);
+        let mut joules = kept_joule();
+        let mut per_ess = Some(0.25);
+        refuse_unmeasured_window(&mut joules, &mut per_ess, evidence);
+        assert!(!joules.attributable);
+        assert!(per_ess.is_none());
+        assert_eq!(joules.evidence, "thrml_window_raised");
+        // An error after sweeps that did run still refuses the window.
+        let mut later = MeteredWindow::default();
+        note_cost_reply(
+            &mut later,
+            &read_cost_reply("DONE id=chain seed=1 seconds=0.2 sweeps=2400"),
+        );
+        note_cost_reply(&mut later, &read_cost_reply("ERR chain RuntimeError: boom"));
+        assert_eq!(later.executed_sweeps, 2400);
+        assert_eq!(
+            metered_window_refusal("thrml", &later),
+            Some("thrml_window_raised")
+        );
+        let mut ferro = MeteredWindow::default();
+        note_ferrotherm_sweeps(&mut ferro, Err(()));
+        assert_eq!(
+            metered_window_refusal("ferrotherm", &ferro),
+            Some("ferrotherm_window_raised")
+        );
+        // A memory LIMIT is the THRML_LIMIT refusal, not this one.
+        let mut limited = MeteredWindow::default();
+        note_cost_reply(
+            &mut limited,
+            &read_cost_reply("LIMIT grid_scale_ising_4096 oom"),
+        );
+        assert!(metered_window_refusal("thrml", &limited).is_none());
+    }
+
+    #[test]
+    fn a_window_with_0_sweeps_is_refused() {
+        let mut window = MeteredWindow::default();
+        note_cost_reply(
+            &mut window,
+            &read_cost_reply(
+                "DONE id=thrml_readme_ising_chain_n5 seed=1 seconds=0.010000000 sweeps=0",
+            ),
+        );
+        let evidence = metered_window_refusal("thrml", &window).expect("zero");
+        assert_eq!(evidence, "thrml_zero_sweeps");
+        let mut joules = kept_joule();
+        let mut per_ess = Some(1.5);
+        refuse_unmeasured_window(&mut joules, &mut per_ess, evidence);
+        assert!(!joules.attributable);
+        assert!(per_ess.is_none());
+        assert_eq!(joules.evidence, "thrml_zero_sweeps");
+        let mut ferro = MeteredWindow::default();
+        note_ferrotherm_sweeps(&mut ferro, Ok(0));
+        assert_eq!(
+            metered_window_refusal("ferrotherm", &ferro),
+            Some("ferrotherm_zero_sweeps")
+        );
+    }
+
+    #[test]
+    fn a_normal_window_is_kept() {
+        let mut window = MeteredWindow::default();
+        note_cost_reply(
+            &mut window,
+            &read_cost_reply("DONE id=chain seed=1 seconds=0.200000000 sweeps=2400"),
+        );
+        note_cost_reply(
+            &mut window,
+            &read_cost_reply("DONE id=chain seed=2 seconds=0.200000000 sweeps=2400"),
+        );
+        // Two reports of 2400. The sum is the executed sweeps, not the 2 repetitions.
+        assert_eq!(window.executed_sweeps, 4800);
+        assert!(metered_window_refusal("thrml", &window).is_none());
+        let joules = kept_joule();
+        let per_ess = Some(0.5);
+        assert!(joules.attributable);
+        assert_eq!(per_ess, Some(0.5));
+        assert_eq!(joules.evidence, GRADE_QUIET);
+        let mut ferro = MeteredWindow::default();
+        note_ferrotherm_sweeps(&mut ferro, Ok(2400));
+        note_ferrotherm_sweeps(&mut ferro, Ok(2400));
+        assert_eq!(ferro.executed_sweeps, 4800);
+        assert!(metered_window_refusal("ferrotherm", &ferro).is_none());
+        // Never invoked: --skip-thrml. This rule does not rename that row.
+        assert!(metered_window_refusal("thrml", &MeteredWindow::default()).is_none());
     }
 
     /// jetson-hub v3 attempt-007, 64×64 GPU trial. Measured other-core mean 0.161
