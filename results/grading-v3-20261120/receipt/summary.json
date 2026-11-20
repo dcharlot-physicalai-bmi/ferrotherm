@@ -1,0 +1,58 @@
+{
+ "framework-128gb-0000/rapl-core": {
+  "attempts_examined": 39,
+  "passed": 0,
+  "refused": 39,
+  "energy_phase_attempts": 1,
+  "trials_examined": 300,
+  "harness_attributable_trials": 0
+ },
+ "framework-128gb-0000/rapl-package": {
+  "attempts_examined": 39,
+  "passed": 0,
+  "refused": 39,
+  "energy_phase_attempts": 1,
+  "trials_examined": 300,
+  "harness_attributable_trials": 234
+ },
+ "jetson-hub/nvml-gpu": {
+  "attempts_examined": 15,
+  "passed": 0,
+  "refused": 15,
+  "energy_phase_attempts": 2,
+  "trials_examined": 1,
+  "harness_attributable_trials": 1
+ },
+ "jetson-hub/rapl-core": {
+  "attempts_examined": 15,
+  "passed": 0,
+  "refused": 15,
+  "energy_phase_attempts": 2,
+  "trials_examined": 1,
+  "harness_attributable_trials": 0
+ },
+ "jetson-hub/rapl-package": {
+  "attempts_examined": 15,
+  "passed": 0,
+  "refused": 15,
+  "energy_phase_attempts": 2,
+  "trials_examined": 1,
+  "harness_attributable_trials": 0
+ },
+ "m5/macmon-soc": {
+  "attempts_examined": 338,
+  "passed": 0,
+  "refused": 338,
+  "energy_phase_attempts": 42,
+  "trials_examined": 46,
+  "harness_attributable_trials": 0
+ },
+ "thor.local/ina238-2-0044-VIN": {
+  "attempts_examined": 115,
+  "passed": 0,
+  "refused": 115,
+  "energy_phase_attempts": 2,
+  "trials_examined": 0,
+  "harness_attributable_trials": 0
+ }
+}

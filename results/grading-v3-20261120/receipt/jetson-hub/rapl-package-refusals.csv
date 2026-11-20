@@ -1,0 +1,16 @@
+host,attempt,sha,grading,meter,utc_start,preflight,energy_phase,host_lock_held,trials_examined,harness_attributable,refusal_reasons
+jetson-hub,1,777f0417,native-v3,rapl-package,2026-11-13T13:52:24.020Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 9.7 > 2)"
+jetson-hub,2,777f0417,native-v3,rapl-package,2026-11-13T14:02:24.140Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 17.02 > 2)"
+jetson-hub,3,777f0417,native-v3,rapl-package,2026-11-13T14:21:32.870Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 12.24 > 2)"
+jetson-hub,4,777f0417,native-v3,rapl-package,2026-11-13T14:23:42.526Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 12.87 > 2)"
+jetson-hub,5,777f0417,native-v3,rapl-package,2026-11-13T14:32:24.021Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 8.08 > 2)"
+jetson-hub,6,777f0417,native-v3,rapl-package,2026-11-13T14:42:24.033Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 3.99 > 2)"
+jetson-hub,7,777f0417,native-v3,rapl-package,2026-11-13T14:52:24.048Z,quiet,load_gated,True,1,0,suite load_gated: idle bracket refused: load1 did not stay at or under 2 for 60 consecutive 1 Hz samples within the bound. The threshold is unchanged at 2. | grid load_gated: idle bracket refused: load1 did not stay at or under 2 for 60 consecutive 1 Hz samples within the bound. The threshold is unchanged at 2. | trial grid_scale_ising_64/ferrotherm-gpu: no adjacent THRML A or B trial (ABBA incomplete; next idle bracket refused) - no paired comparison | trial: the mean exceeded the maximum | summary grid_scale_ising_64/ferrotherm-gpu: J/ESS null (n=1)
+jetson-hub,8,777f0417,native-v3,rapl-package,2026-11-13T15:27:07.392Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 6.69 > 2)"
+jetson-hub,9,777f0417,native-v3,rapl-package,2026-11-13T15:29:16.917Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 4.82 > 2)"
+jetson-hub,10,777f0417,native-v3,rapl-package,2026-11-13T15:31:25.324Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 8.89 > 2)"
+jetson-hub,11,777f0417,native-v3,rapl-package,2026-11-13T15:33:33.568Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 7.39 > 2)"
+jetson-hub,12,777f0417,native-v3,rapl-package,2026-11-13T15:42:24.033Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 6.68 > 2)"
+jetson-hub,13,777f0417,native-v3,rapl-package,2026-11-13T15:52:24.023Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 4.02 > 2)"
+jetson-hub,14,777f0417,native-v3,rapl-package,2026-11-13T16:02:24.523Z,load_gated,not_run,True,0,0,"load_gated (preflight quiet gate, max load1 55.38 > 2)"
+jetson-hub,15,777f0417,native-v3,rapl-package,2026-11-13T16:12:24.076Z,quiet (log),incomplete,held (log),0,0,"unbracketed/ungraded: attempt never wrote report.json; THRML arm failed to start in-window throughout (JAX CPU device absent in the -cuda venv, CUDA_ERROR_NO_DEVICE, THRML_LIMIT oom SIGKILL); log last written 2026-11-14T15:21Z; driver gone after host reboot 2026-11-16 15:51 ET; no window_audit, no graded brackets"
