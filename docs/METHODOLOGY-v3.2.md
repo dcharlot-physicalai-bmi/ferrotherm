@@ -59,16 +59,42 @@ inside the window. A skipped THRML row that was metered is the joules of
 that loop.
 
 With THRML running, non-grid `COST` called `sample_states` on an empty
-block. In THRML 0.1.4, `Block.node_type` raises `ValueError` on an empty
-block, so the call failed before a sweep. The same 2 s loop counted the
-failures, and the harness then sent that many `ESS` requests. Each `ESS`
-collects states. That is the THRML server's growth. THRML and JAX are not
-modified. Grid `COST` already used a null observer and did run the sweeps.
+block. In THRML 0.1.4, `Block.node_type` raises `ValueError: Block is empty
+and doesn't have a node type` before a sweep. Measured with that pin and
+JAX 0.12.0.1, `COST` of `thrml_readme_ising_chain_n5` raises it for every
+seed tried, including seed 1, seed 0, and the energy-phase seed
+`260811615`. The seed is not the input that selects it. The observer block
+is `Block([])` on every non-grid `COST`. `RUN` and `ESS` pass the real
+even/odd blocks and do not raise, including at seed 1. `serve` catches the
+exception and prints `ERR`, so the process stays up. A log that shows the
+error on some lines of that workload and not others is `COST` versus
+`RUN`/`ESS`, not a seed that sometimes works. The same 2 s loop counted
+the failures. Grid `COST` already used a null observer and did run the sweeps.
 
 v3.2 counts an execution only when ferrotherm's warmup-plus-draws returns,
 or when THRML `COST` returns a positive sweep count. Non-grid `COST` uses
 the same null observer as grid `COST`: the sweep runs, and states are not
 stacked. There is no RSS cap and no watchdog.
+
+## A THRML server builds only the workloads it will sample
+
+`serve` builds and warms every workload in its spec before it prints
+`READY`. That warmup stays where it is: before `READY`, and `READY` is
+before any `COST`. `COST` is the metered window. v3.2 does not move the
+warmup into that window, and it does not change THRML or JAX.
+
+`--campaign` writes one `spec.txt` of 22 workloads: the 4 canonical, the
+11 in `--scale`, and `grid_scale_ising` at sides 64, 128, 256, 512, 1024,
+2048 and 4096. Side 4096 is 16,777,216 sites. The suite phase was started
+with that file, so the CPU-suite server built the 2048 and 4096 grids
+before `READY` and was killed at about 12.5 GB. The same server given only
+the 15-workload suite spec sits at about 1.3 to 1.5 GB. This is not the
+`--skip-thrml` audit growth. That one runs with no THRML process at all.
+
+v3.2 hands each server a spec of the workloads that server will sample.
+The suite server gets the suite workloads. Each grid server gets one side,
+the spec already written for that side before the process is armed. A
+server does not construct a grid it will not be asked to sample.
 
 ## What a finished receipt can contain
 
@@ -80,8 +106,10 @@ window that was already closed.
 A finished receipt can still hold biased joules. Non-grid THRML `COST` on
 v3.1 and on `777f0417` metered the exception loop, not Gibbs sweeps. A
 `--skip-thrml` row that was metered includes the empty loop's CPU. Grid
-THRML `COST` did run sweeps; that window is the sampler. v3.2 does not
-rewrite those receipts and does not regrade them.
+THRML `COST` did run sweeps; that window is the sampler. A suite server
+that was killed while building the campaign spec wrote no receipt for
+that phase. v3.2 does not rewrite those receipts and does not regrade
+them.
 
 ## Receipts
 
