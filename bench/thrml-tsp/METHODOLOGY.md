@@ -42,7 +42,7 @@ bracket, including that one.
 
 Source: `jetsonhub-c82c1e9-quiet-attempt-037-publish.tar.gz`, sha256
 `1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613`, commit
-`c82c1e96`. Three hundred RAPL package rows, fifteen workloads. The counter
+`bb174abb3ca86e997475ecb313d625444b221c67` (pre_rewrite_sha: `c82c1e96c24d6f6c292af1196cd72199b0838257`). Three hundred RAPL package rows, fifteen workloads. The counter
 bracket is four 0.25 s windows, 1.0 s. Its median sigma is 0.316246947 W, so
 3σ is 0.948740841 W.
 
@@ -62,7 +62,7 @@ runs before every bracket.
 
 ### Where v3 runs
 
-The fifteen-workload quiet suite from `c82c1e96` (the four canonical workloads
+The fifteen-workload quiet suite from `bb174abb3ca86e997475ecb313d625444b221c67` (pre_rewrite_sha: `c82c1e96c24d6f6c292af1196cd72199b0838257`) (the four canonical workloads
 plus the eleven in `--scale`) and `--grid-energy` (GPU lever and CPU
 `combined`, each against THRML A and B on JAX CUDA, sides 64 to 4096).
 `--campaign` runs both under one hold of the lock.

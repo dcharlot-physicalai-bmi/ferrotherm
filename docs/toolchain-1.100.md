@@ -1,7 +1,7 @@
 # Toolchain 1.100
 
 Record of the move onto Rust 1.100.0. `rules_version` stays `v3`.
-`METHODOLOGY.md` at `dbf9653a` is unchanged.
+`METHODOLOGY.md` at `b874f6112d1eac725deca4747f41cb02e89b047e` (pre_rewrite_sha: `dbf9653a6091543df420f9ab8a3fe5da9b00a758`) is unchanged.
 
 ## Compiler
 
@@ -20,7 +20,7 @@ LLVM version: 23.1.5
 
 No newer stable was on the channel. `rust-toolchain.toml` pins `1.100.0`.
 
-`777f0417` does not pin a compiler. Its `rust-version` is `1.96`, and that is
+`ffe89b0702553b1c70dbbe1e52b8c537d6c0bd0b` (pre_rewrite_sha: `777f0417340788428cf0525003277f9829ca6e3a`) does not pin a compiler. Its `rust-version` is `1.96`, and that is
 the compiler the parent binary was built with:
 
 ```
@@ -82,7 +82,7 @@ fork of wgpu or ureq, not an upgrade.
 | jni-sys 0.3.1 (also 0.4.1) | 0.4.1 | one parent still on 0.3 |
 | mach2 0.5.0 / redox_syscall 0.5.18 | 0.7.0 / 0.9.5 | platform support crates inside wgpu |
 
-## Accuracy receipts versus 777f0417
+## Accuracy receipts versus ffe89b0702553b1c70dbbe1e52b8c537d6c0bd0b (pre_rewrite_sha: 777f0417340788428cf0525003277f9829ca6e3a)
 
 Same command, both release binaries, THRML skipped:
 

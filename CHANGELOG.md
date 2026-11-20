@@ -14,7 +14,7 @@ current major. THRML baseline A (`thrml==0.1.4`) and baseline B
 (`2d96f4b4`) and their JAX pins are unchanged. PyPI has no THRML release
 after 0.1.4, so there is no baseline C. `docs/toolchain-1.100.md` records
 the audit result (no advisories), the transitive crates the latest wgpu and
-ureq still pin, and the accuracy-receipt diff against `777f0417`. Chain
+ureq still pin, and the accuracy-receipt diff against `ffe89b0702553b1c70dbbe1e52b8c537d6c0bd0b` (pre_rewrite_sha: `777f0417340788428cf0525003277f9829ca6e3a`). Chain
 traces match. The receipt file does not, and only in provenance and
 wall-clock fields. Zig moves to 0.17.1: `@cImport` is gone, the header is
 translated in the build, and array fills use `@splat`.
