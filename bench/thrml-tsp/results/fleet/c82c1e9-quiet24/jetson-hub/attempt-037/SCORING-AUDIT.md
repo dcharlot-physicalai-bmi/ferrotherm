@@ -1,6 +1,6 @@
 # Scoring inside the attempt-037 energy window
 
-Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit 22d3e720714c76e73389998d36e5b8159e89fe96.
+Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit a5d0e108e46cf39bb01a2569bf114522043dc95a (pre_rewrite_sha: 22d3e720714c76e73389998d36e5b8159e89fe96).
 
 This audit does not change a grade and does not replace a published J/ESS. The published figures stay the receipt means.
 

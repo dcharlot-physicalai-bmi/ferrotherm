@@ -1,10 +1,10 @@
 # Bracket drift, version 2
 
-Superseded by rules v3, with interleaved idle in ABBA. Rules v3 are frozen on `perf/large-grid`. The rule text is `bench/thrml-tsp/METHODOLOGY.md` at `dbf9653a6091543df420f9ab8a3fe5da9b00a758`. The harness that applies them is `777f0417340788428cf0525003277f9829ca6e3a`. Rules v3 scores outside the window for both sides, gives each meter its own idle bracket, and interleaves idle in ABBA. See "What is measured, separately" in that methodology file.
+Superseded by rules v3, with interleaved idle in ABBA. Rules v3 are frozen on `perf/large-grid`. The rule text is `bench/thrml-tsp/METHODOLOGY.md` at `b874f6112d1eac725deca4747f41cb02e89b047e` (pre_rewrite_sha: `dbf9653a6091543df420f9ab8a3fe5da9b00a758`). The harness that applies them is `ffe89b0702553b1c70dbbe1e52b8c537d6c0bd0b` (pre_rewrite_sha: `777f0417340788428cf0525003277f9829ca6e3a`). Rules v3 scores outside the window for both sides, gives each meter its own idle bracket, and interleaves idle in ABBA. See "What is measured, separately" in that methodology file.
 
 This note is not applied to attempt 037 or to any published grade. The 3σ test on that receipt stays as it ran. NVML for attempt 037 is ungraded: the traces have no raw NVML idle samples, so no `regrade-v3 (per-meter bracket)` was published beside the as-measured refusal.
 
-Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload, is the energy this note is about. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit 22d3e720714c76e73389998d36e5b8159e89fe96. The drift numbers below are `baseline_drift_w` on the 300 trials of each meter in that receipt. They are not a new grade.
+Intel RAPL core-domain J/ESS on jetson-hub vs THRML 0.1.4 on JAX CPU, per workload, is the energy this note is about. Tarball sha256 1df27d9f6716ca6ad0da9a0fe4c773dfc8f5a46609e5b938cc086a00d7f1b613. Publish commit a5d0e108e46cf39bb01a2569bf114522043dc95a (pre_rewrite_sha: 22d3e720714c76e73389998d36e5b8159e89fe96). The drift numbers below are `baseline_drift_w` on the 300 trials of each meter in that receipt. They are not a new grade.
 
 ## Measured drift
 
