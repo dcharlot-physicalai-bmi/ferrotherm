@@ -99,6 +99,32 @@ or when THRML `COST` returns a positive sweep count. Non-grid `COST` uses
 the same null observer as grid `COST`: the sweep runs, and states are not
 stacked. There is no RSS cap and no watchdog.
 
+## A window that raised or swept nothing is refused
+
+The sweep count on an energy row is what the metered call reported that it
+executed. It is not the repetition count, and it is not the schedule copied
+out of the spec. `runner.py` prints that count on the `DONE` line of each
+metered call, after the call returns. The count is the number of block-Gibbs
+iterations that call's schedule runs. A call that raises prints `ERR` and
+does not print a sweep count. The harness adds the reported counts. It does
+not multiply repetitions by the workload's warmup and draws.
+
+A THRML energy row is refused when its metered window saw an `ERR` from
+`COST` or from any other command inside that window, or when the executed
+sweep count is zero. The row stays in the receipt. `attributable` is false,
+`joules_per_ess` is null, and `evidence` is `thrml_window_raised` or
+`thrml_zero_sweeps`. A THRML process that was never started is not this
+refusal. That row is the sampler not running.
+
+A ferrotherm row follows the same rule. A sampler call that returns an
+error refuses the row with `ferrotherm_window_raised`. A call that returns
+and ran zero sweeps refuses it with `ferrotherm_zero_sweeps`. A window
+whose reported sweeps are positive is kept by this rule. The trial window,
+the device binding, and a THRML memory limit can still refuse it.
+
+v3 and v3.1 counted a failed non-grid `COST` as a repetition and divided
+the window by that count. v3.2 does not regrade those receipts.
+
 ## What a finished receipt can contain
 
 A receipt is written at the end of the phase. The audit allocation grows
