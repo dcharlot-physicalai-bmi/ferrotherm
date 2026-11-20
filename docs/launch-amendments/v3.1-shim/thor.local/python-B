@@ -1,0 +1,8 @@
+#!/bin/bash
+# Launch shim for THRML baseline B (thrml-main-2d96f4b4-cuda). PREPARED, NOT IN USE until approved.
+# 777f0417 runner.bind_device() uses jax.devices(), which lists only the default (GPU) backend in a
+# CUDA venv, so "--device cpu" fails. This pins JAX_PLATFORMS to the platform runner.py was asked for.
+prev=""; dev=""
+for a in "$@"; do [ "$prev" = "--device" ] && dev="$a"; prev="$a"; done
+case "$dev" in cpu) export JAX_PLATFORMS=cpu;; cuda) export JAX_PLATFORMS=cuda;; esac
+exec /home/cbio/bench-scratch/thrml-main-2d96f4b4-cuda/bin/python "$@"
